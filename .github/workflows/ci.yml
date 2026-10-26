@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full_suite:
+        description: Run the complete suite when it is available on this branch
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  documentation-policy:
+    name: Documentation and policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate documentation policy
+        run: ./scripts/check-documentation-policy.sh --root . --adoption docs/development/documentation-policy.env --inventory docs/development/migration-inventory.tsv
+      - name: Run policy regression tests
+        run: |
+          ./tests/policy/test_documentation_policy.sh
+          ./tests/policy/test_conformance_record.sh
+          ./tests/policy/test_analyzer_suppressions.sh
+          ./tests/policy/test_workflow_policy.sh
