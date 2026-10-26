@@ -1,0 +1,24 @@
+source_path	class	disposition	destination_path	tracking_url	compatibility_stub	notes
+.github/pull_request_template.md	living-current	retain	.github/pull_request_template.md	None	no	initial public documentation inventory
+CONTRIBUTING.md	living-current	retain	CONTRIBUTING.md	None	no	initial public documentation inventory
+GOVERNANCE.md	living-current	retain	GOVERNANCE.md	None	no	initial public documentation inventory
+README.md	living-current	retain	README.md	None	no	initial public documentation inventory
+SECURITY.md	living-current	retain	SECURITY.md	None	no	initial public documentation inventory
+docs/README.md	living-current	retain	docs/README.md	None	no	initial public documentation inventory
+docs/architecture.md	living-current	retain	docs/architecture.md	None	no	initial public documentation inventory
+docs/development/README.md	living-current	retain	docs/development/README.md	None	no	initial public documentation inventory
+docs/development/archive/README.md	living-current	retain	docs/development/archive/README.md	None	no	initial public documentation inventory
+docs/development/deviations/README.md	living-current	retain	docs/development/deviations/README.md	None	no	initial public documentation inventory
+docs/development/deviations/analyzer-suppressions.md	living-current	retain	docs/development/deviations/analyzer-suppressions.md	None	no	initial public documentation inventory
+docs/development/standards/ai-engineering-guidance.md	living-current	retain	docs/development/standards/ai-engineering-guidance.md	None	no	initial public documentation inventory
+docs/development/standards/conformance.md	living-current	retain	docs/development/standards/conformance.md	None	no	initial public documentation inventory
+docs/development/standards/engineering-rules.md	living-current	retain	docs/development/standards/engineering-rules.md	None	no	initial public documentation inventory
+docs/development/standards/profiles.md	living-current	retain	docs/development/standards/profiles.md	None	no	initial public documentation inventory
+docs/numerical-contract.md	living-current	retain	docs/numerical-contract.md	None	no	initial public documentation inventory
+docs/security/threat-model.md	living-current	retain	docs/security/threat-model.md	None	no	initial public documentation inventory
+docs/status.md	living-current	retain	docs/status.md	None	no	initial public documentation inventory
+docs/user-guide.md	living-current	retain	docs/user-guide.md	None	no	initial public documentation inventory
+tests/fixtures/README.md	living-current	retain	tests/fixtures/README.md	None	no	initial public documentation inventory
+docs/development/changes/1-vssmath-foundation/README.md	active-change	retain	docs/development/changes/1-vssmath-foundation/README.md	https://github.com/VirtualSensorSoft/VSSMath/issues/1	no	public bootstrap record for issue 1
+docs/development/changes/1-vssmath-foundation/specification.md	active-change	retain	docs/development/changes/1-vssmath-foundation/specification.md	https://github.com/VirtualSensorSoft/VSSMath/issues/1	no	public bootstrap record for issue 1
+docs/development/changes/1-vssmath-foundation/implementation-plan.md	active-change	retain	docs/development/changes/1-vssmath-foundation/implementation-plan.md	https://github.com/VirtualSensorSoft/VSSMath/issues/1	no	public bootstrap record for issue 1
