@@ -1,0 +1,10 @@
+build/
+build-*/
+lib/
+.vscode/
+.idea/
+compile_commands.json
+*.user
+*.swp
+.env
+.env.*
