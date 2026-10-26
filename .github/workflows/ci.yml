@@ -216,7 +216,9 @@ jobs:
       - name: Scan generated documentation for private host paths
         run: |
           private_home_pattern='/ho''me/[^/]+/'
-          if grep -RInE "${private_home_pattern}|/srv/vss-ci|/tmp/VSSMath" build-docs/docs/html; then
+          private_service_pattern='/srv''/vss-ci'
+          private_temp_pattern='/tmp/VSS''Math'
+          if grep -RInE "${private_home_pattern}|${private_service_pattern}|${private_temp_pattern}" build-docs/docs/html; then
             echo 'generated documentation contains a machine-specific path' >&2
             exit 1
           fi
