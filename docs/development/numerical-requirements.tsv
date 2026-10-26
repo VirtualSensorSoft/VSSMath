@@ -1,0 +1,96 @@
+requirement_id	contract	stable_fixtures	ctest_evidence
+NUM-GEN-001	factorizeLU, factorizeQR, factorizeCholesky, and decomposeSymmetricEigen produce owning immutable results; verification: moved-from state and deep-copy independence	LU-01,QR-01,CHO-01,EIG-01	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-002	LUFactorization::solve, QRFactorization::leastSquares, and CholeskyFactorization::solve reuse completed factors for vector and matrix RHS; verification: no refactorization; shape failures contain no value	LU-02,QR-01,CHO-02	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-003	all factorization factories borrow const input and publish only complete results; verification: input unchanged; failed Cholesky/eigen has no partial value	LU-04,QR-04,CHO-03,EIG-05	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-004	const factorization methods use per-call output and scratch; verification: thread-safe distinct-output evidence	LU-02	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-005	factors/permutations/diagnostics are public; QR/eigen expose rank; LU exposes singular pivot only; verification: policy test rejects LU rank()	LU-04,QR-04,EIG-03	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-006	ConditionReport on LU, square QR, and Cholesky; absent for triangular and rectangular QR; verification: default IllConditioned rejection	LU-05,CHO-06,QR-05	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-007	SolveOptions::AllowWithDiagnostic permits value with explicit condition classification; verification: successful outer result still reports IllConditioned	LU-05,CHO-06	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-008	Singular, RankDeficient, and IllConditioned remain distinct; verification: exact error-code assertions	LU-04,QR-04,LU-05	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-009	common nine-stage validation order applies to every public operation; verification: simultaneous-invalid cases assert earliest code	TRI-05,QR-06,DIF-07,PRO-07	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-010	appended ErrorCode values preserve six required distinctions plus NoConvergence; verification: compile-time enum presence and runtime code checks	CHO-03,CHO-05,COV-06,DIF-06,STA-05,PRO-07	math.algorithm_lifecycle,math.algorithm_failures
+NUM-GEN-011	every failure status owns non-empty contextual text; verification: messages include applicable shape/index/threshold without text parsing	TRI-05	math.algorithm_lifecycle,math.algorithm_failures
+NUM-ACC-001	TRI-*, LUFactorization::solve, QRFactorization::leastSquares, and CholeskyFactorization::solve satisfy scaled solve/optimality residuals using represented matrix; verification: residual bound failure fails test, not runtime classification	TRI-01,LU-01,QR-02,CHO-02	math.algorithm_properties
+NUM-ACC-002	factorizeLU exposes P, L, and U satisfying reconstruction; verification: scaled infinity-norm assertion	LU-01	math.algorithm_properties
+NUM-ACC-003	factorizeQR exposes permutation, R, and materialized economy Q; verification: Frobenius reconstruction and orthogonality bounds	QR-01,QR-03	math.algorithm_properties
+NUM-ACC-004	factorizeCholesky reconstructs canonical S from L; verification: scaled infinity-norm assertion	CHO-01,CHO-05	math.algorithm_properties
+NUM-ACC-005	decomposeSymmetricEigen reconstructs canonical S and orthonormal eigenspaces; verification: reconstruction, orthogonality, and projector bounds	EIG-01,EIG-02,EIG-05	math.algorithm_properties
+NUM-ACC-006	ConditionReport estimate and boundary classification are checked independently; verification: positive finite/infinite estimate and factor-two fixture bound	LU-05,CHO-02,CHO-06	math.algorithm_properties
+NUM-TRI-001	solveTriangular vector overload and solveTriangular matrix overload solve lower and upper systems for vector and one-or-more-column matrix RHS; verification: analytic solutions, scaled residuals, and exact output shapes	TRI-01,TRI-02,TRI-04	math.triangular_solve
+NUM-TRI-002	every solve selects A or A^T and explicit or unit diagonal; unit diagonal is never read or validated; verification: exact orientation; stored diagonal poison succeeds for unit mode	TRI-03,TRI-04	math.triangular_solve
+NUM-TRI-003	explicit-diagonal scale is the maximum diagonal magnitude; a diagonal not greater than threshold is singular; verification: exact equality at threshold returns Singular with no value	TRI-05,SUP-TRI-01	math.triangular_solve
+NUM-TRI-004	substitution traversal follows triangle/transpose selection and matrix RHS columns increase; verification: deterministic traversal and column-order trace	TRI-01,TRI-04	math.triangular_solve
+NUM-TRI-005	inputs remain unchanged, results own storage, and the full required fixture family is covered; verification: lower/upper/transpose/unit/matrix/singular/shape/non-finite evidence	TRI-01,TRI-05	math.triangular_solve
+NUM-LU-001	factorizeLU performs partial row pivoting and exposes P A = L U; verification: finite non-empty square validation	LU-01	math.lu
+NUM-LU-002	permutation obeys (P x)[i] = x[p[i]]; ties use lowest original row; verification: exact permutation and tie assertion	LU-01,SUP-LU-01	math.lu
+NUM-LU-003	threshold uses maximum absolute input; LU reports first unusable pivot, not rank; verification: LUFactorization::solve returns Singular; pivot index/value/threshold checked	LU-04	math.lu
+NUM-LU-004	nonsingular LU owns one-norm and deterministic condition estimate; verification: no explicit inverse; estimate fixture bound	LU-01,LU-05	math.lu
+NUM-LU-005	LUFactorization::solve supports repeated vector/matrix RHS and condition policy; verification: default reject and allowed diagnostic paths	LU-02,LU-05	math.lu
+NUM-LU-006	determinant sign and log magnitude avoid direct determinant overflow/underflow; verification: singular gives 0 and negative infinity	LU-03,LU-04	math.lu
+NUM-LU-007	LU fixture family covers all required behavior; verification: non-finite and conditioning failures included	LU-01,LU-05	math.lu
+NUM-QR-001	factorizeQR accepts m >= n >= 1 and represents A P = Q R; verification: invalid extent/shape and reconstruction evidence	QR-01	math.qr
+NUM-QR-002	column permutation and solution reversal use documented orientation; verification: exact p and recovered x checks	QR-03	math.qr
+NUM-QR-003	norm ties use lowest original column; public R diagonal is normalized non-negative; verification: exact permutation/tie/sign assertions	QR-03,SUP-QR-01,SUP-QR-02	math.qr
+NUM-QR-004	rank scale is largest absolute R diagonal; equality is unusable; verification: rank count, zero trailing norm, and strict equality boundary	QR-04,SUP-QR-03,SUP-QR-05	math.qr
+NUM-QR-005	rank-deficient factor remains diagnostic; QRFactorization::leastSquares rejects minimum-norm claim; verification: RankDeficient with no solve value	QR-04	math.qr
+NUM-QR-006	full-column-rank QRFactorization::leastSquares returns vector/matrix least-squares minimizers; verification: solve residual and optimality evidence	QR-01,QR-02	math.qr
+NUM-QR-007	square full-rank QRFactorization::leastSquares is the KKT-like stable alternative; verification: recovered square-system solution	QR-05	math.qr
+NUM-QR-008	QR fixtures cover success, permutation, rank, KKT, shape, and finite checks; verification: required failure-code assertions	QR-01,QR-06	math.qr
+NUM-QR-009	square QR has condition report; rectangular QR reports rank without condition; verification: square boundary classification and empty rectangular report	QR-02,QR-05	math.qr
+NUM-CHO-001	factorizeCholesky validates input and factors canonical positive-definite S = L L^T; verification: NotSymmetric/NotPositiveDefinite separation	CHO-01,CHO-05	math.cholesky
+NUM-CHO-002	diagonal scale and pre-root pivot threshold define positive definiteness; no jitter; verification: NotPositiveDefinite with no factor value	CHO-03,CHO-04	math.cholesky
+NUM-CHO-003	symmetry rejection precedes definiteness classification; verification: exact NotSymmetric then NotPositiveDefinite cases	CHO-03,CHO-05	math.cholesky
+NUM-CHO-004	CholeskyFactorization::solve, CholeskyFactorization::whiten, log determinant, and condition report reuse one factor; verification: condition policy and finite-result checks	CHO-02,CHO-06	math.cholesky
+NUM-CHO-005	Cholesky fixtures cover all specified success/failure modes; verification: exact code and numerical assertions	CHO-01,CHO-06	math.cholesky
+NUM-EIG-001	decomposeSymmetricEigen validates input and decomposes canonical S = Q Lambda Q^T; verification: NotSymmetric and reconstruction evidence	EIG-01,EIG-05	math.symmetric_eigen
+NUM-EIG-002	eigenvalues ascend; isolated vector signs and component ties are deterministic; verification: exact ordering/sign assertions	EIG-01	math.symmetric_eigen
+NUM-EIG-003	clustered eigenvalues are tested by invariant-subspace projectors; verification: projector bound instead of basis equality	EIG-02	math.symmetric_eigen
+NUM-EIG-004	eigen rank uses maximum magnitude scale and strict threshold; verification: exact rank and threshold evidence	EIG-03,EIG-06	math.symmetric_eigen
+NUM-EIG-005	definiteness enum applies the threshold band without hiding eigenvalues; verification: all three classifications checked	EIG-03,EIG-04,EIG-06	math.symmetric_eigen
+NUM-EIG-006	eigen fixtures cover ordering, clusters, PSD loss, indefiniteness, symmetry, and accuracy; verification: exact NoConvergence at the sweep limit	EIG-01,EIG-06,SUP-EIG-02	math.symmetric_eigen
+NUM-COV-001	analyzeCovariance validates and explicitly uses canonical S_C without repair; verification: NotSymmetric; accepted tolerance-boundary reconstruction	COV-07	math.covariance
+NUM-COV-002	PD permits Cholesky inverse actions; PSD diagnostics remain available; verification: inverse action on non-PD is rejected	COV-03,COV-05	math.covariance
+NUM-COV-003	mahalanobisSquared uses CholeskyFactorization::whiten then fixed-order z^T z; verification: no explicit inverse; condition outcome retained	COV-03	math.covariance
+NUM-COV-004	propagateCovariance computes and mirrors J S_C J^T; verification: shape, finite, symmetry, and PSD failures	COV-04	math.covariance
+NUM-COV-005	toCorrelation returns correlation and positive standard deviations; verification: zero variance is InvalidDomain	COV-01,COV-05	math.covariance
+NUM-COV-006	fromCorrelation validates canonical correlation, unit diagonal, and deviations; verification: non-unit/non-positive is InvalidDomain; non-PSD distinct	COV-02	math.covariance
+NUM-COV-007	CovarianceDiagnostics exposes class, rank, eigen bounds, threshold, condition, weak vectors; verification: optional condition/weak-output states	COV-06,COV-08	math.covariance
+NUM-COV-008	math APIs report covariance outcomes only and own no application workflow state; verification: dependency/API scan rejects workflow-state types	COV-06	math.covariance
+NUM-DIF-001	numericalGradient and numericalJacobian return gradient and m x n Jacobian; verification: orientation and extent assertions	DIF-01,DIF-02	math.finite_difference
+NUM-DIF-002	ParameterStep validates scale/step and reports representable effective steps; verification: exact adjacent-value enlargement; invalid configuration is InvalidDomain	DIF-05,SUP-DIF-01	math.finite_difference
+NUM-DIF-003	central formula is selected when both samples fit; verification: formula and evaluation-order evidence	DIF-01,DIF-02	math.finite_difference
+NUM-DIF-004	deterministic second-order forward/backward formulas honor bounds; verification: no feasible formula is InvalidDomain; no callback fallback	DIF-03,DIF-04	math.finite_difference
+NUM-DIF-005	base callback fixes output; later failure/shape/non-finite aborts without partial result; verification: CallbackFailure, DimensionMismatch, NonFiniteResult	DIF-06,DIF-07	math.finite_difference
+NUM-DIF-006	base and perturbation order is fixed; caller parameter vector is unchanged; verification: exact callback sequence and input preservation	DIF-01	math.finite_difference
+NUM-DIF-007	checkGradient and checkJacobian owns analytic/numerical/error/step/pass evidence; verification: tolerance validation and per-entry result checks	DIF-01,DIF-02	math.finite_difference
+NUM-STA-001	six STA-* functions implement the documented statistic set; verification: finite success values	STA-01,STA-03	math.descriptive_statistics
+NUM-STA-002	empty input and one-element sample behavior are distinct; verification: InvalidExtent versus InsufficientSamples	STA-04,STA-05	math.descriptive_statistics
+NUM-STA-003	population/sample divisors and non-negative roots are exact; verification: analytic expected values	STA-01	math.descriptive_statistics
+NUM-STA-004	stable fixed-order variance applies exact negative-clamp boundary; verification: both clamp sides and overflow-safe finite variance	STA-02,SUP-STA-01,SUP-STA-02	math.descriptive_statistics
+NUM-STA-005	non-finite values fail at lowest increasing index and are never skipped; verification: NonFiniteInput diagnostic index	STA-06	math.descriptive_statistics
+NUM-STA-006	public header contains no deferred broad-statistics API; verification: API inventory rejects deferred names	STA-01	math.descriptive_statistics
+NUM-PRO-001	chiSquareSurvival and chiSquareLogSurvival compute regularized upper gamma specialization; verification: independent probability values	PRO-02,PRO-03	math.probability
+NUM-PRO-002	domain is finite x >= 0, integer dof 1..10000, with exact zero case; verification: non-finite is NonFiniteInput; finite domain failure is InvalidDomain; exact zero outputs	PRO-01,PRO-07	math.probability
+NUM-PRO-003	ordinary survival stays in [0,1] and underflows only by log threshold; verification: both range-clamp sides and larger NonFiniteResult excursions	PRO-06,SUP-PRO-01	math.probability
+NUM-PRO-004	chiSquareLogSurvival computes log tail directly where required; verification: finite extreme log result when ordinary tail is zero	PRO-06	math.probability
+NUM-PRO-005	ordinary-tail accuracy follows independent fixture bounds; verification: relative and absolute error assertions	PRO-02,PRO-05	math.probability
+NUM-PRO-006	log-tail accuracy covers [-10000,0]; verification: absolute error assertion	PRO-06	math.probability
+NUM-PRO-007	public probability header excludes unrelated distributions and application-specific cost functions; verification: API inventory rejects deferred names	PRO-01	math.probability
+NUM-REP-001	every algorithm contract fixes traversal, ties, permutations, sorting, and signs; verification: repeated-order assertions	LU-01,QR-03,EIG-01,DIF-01	math.reproducibility,math.algorithm_properties
+NUM-REP-002	no mutable global option, random seed, scratch, or cache exists; verification: source-policy and concurrency checks	TRI-01	math.reproducibility,math.algorithm_properties
+NUM-REP-003	CMake and CI reject fast-math and unsafe reassociation; verification: compile-command inventory	LU-01	math.reproducibility,math.algorithm_properties
+NUM-REP-004	100-repeat same-build tests preserve status/order and tolerance-equivalent values; verification: reproducibility assertions	QR-03,EIG-01	math.reproducibility,math.algorithm_properties
+NUM-REP-005	documentation and tests claim tolerance equality, not cross-profile bit identity; verification: prohibited-claim text scan	EIG-01	math.reproducibility,math.algorithm_properties
+NUM-REP-006	fixtures separate both sides of rank/condition thresholds and record environment; verification: boundary classifications	LU-05,QR-04,CHO-06,EIG-06	math.reproducibility,math.algorithm_properties
+NUM-SIZ-001	qualified limits are encoded in performance/evidence cases; verification: all specified maximum representative dimensions run	QR-05	math.numerical_boundaries
+NUM-SIZ-002	dynamic types permit larger checked extents without performance promise; verification: overflow is SizeOverflow; no artificial cap	QR-01	math.numerical_boundaries
+NUM-SIZ-003	sparse storage and expanded dense operations are outside the current API unless separately reviewed and evidenced; verification: API/documentation inventory	QR-05	math.numerical_boundaries
+NUM-PER-001	benchmark harness fixes seed, warm-ups, calls, clock, median, allocations, metadata, configs; verification: malformed methodology fails policy	TRI-01	math.performance_gate_contract,math.algorithm_comparison
+NUM-PER-002	comparison gate uses 120%, non-increasing allocation, and at most two retries; verification: synthetic pass/fail boundary checks	LU-01	math.performance_gate_contract,math.algorithm_comparison
+NUM-PER-003	benchmark executable includes all exact operation sizes; verification: missing case fails policy	QR-05,COV-04,DIF-01	math.performance_gate_contract,math.algorithm_comparison
+NUM-PER-004	baselines require correctness and are scoped to compatible environments; verification: metadata and correctness precondition checks	CHO-01	math.performance_gate_contract,math.algorithm_comparison
+NUM-EVI-001	every family combines analytic, boundary, failure, and independent cases; verification: fixture-family completeness check	TRI-01,PRO-07	math.numerical_traceability
+NUM-EVI-002	test-only fixture catalogue records input, result, tolerance, provenance, rounding, IDs; verification: schema/completeness validation	PRO-02	math.numerical_traceability
+NUM-EVI-003	fixed constants are local; tests download or execute no external calculator; verification: dependency and network-command scan	PRO-04,PRO-06	math.numerical_traceability
+NUM-EVI-004	fixed-seed properties supplement analytic fixtures; verification: policy requires both fixture and property evidence	LU-01,QR-01,CHO-01	math.numerical_traceability
+NUM-EVI-005	fixture data is public mathematics without proprietary/domain content; verification: provenance and prohibited-content review	TRI-01,PRO-07	math.numerical_traceability
