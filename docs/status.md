@@ -1,5 +1,14 @@
 # Status and support
 
-The public repository is in its bootstrap stage. It currently contains documentation and repository-policy checks only; numerical source, a buildable CMake project, and an installable package have not yet been added. A later reviewed change will introduce them.
+The project is at version 0.1.0 and remains under active development. Treat
+the API and numerical behavior as an initial release; no long-term ABI or
+cross-compiler bitwise identity is promised.
 
-The intended initial target is Ubuntu 24.04 x86-64. No platform qualification, numerical acceptance, performance baseline, or production-readiness claim is made at this stage. Documentation describes the proposed public contracts and will be checked against the implementation before acceptance.
+Ubuntu 24.04 x86-64 is the planned initial qualification target; qualification results are recorded only after the hosted acceptance workflow completes. Other operating systems,
+architectures, compiler/standard-library combinations, and deployment
+environments require separate validation before being described as supported.
+
+The test suite covers documented numerical contracts and install consumption.
+It does not prove universal numerical correctness, safety for arbitrary
+domain-specific input, or performance on unmeasured hardware. No qualified
+performance baseline is implied by a local benchmark run.

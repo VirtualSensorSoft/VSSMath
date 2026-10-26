@@ -1,0 +1,43 @@
+#ifndef VSS_MATH_BENCHMARK_METADATA_HPP
+#define VSS_MATH_BENCHMARK_METADATA_HPP
+
+#include <string_view>
+
+namespace vss::math::benchmark_metadata {
+inline constexpr std::string_view compilerId{"@VSS_BENCHMARK_COMPILER_ID@"};
+inline constexpr std::string_view compilerVersion{
+    "@VSS_BENCHMARK_COMPILER_VERSION@"};
+inline constexpr std::string_view buildType{"@VSS_BENCHMARK_BUILD_TYPE@"};
+inline constexpr std::string_view compilerOptions{
+    "@VSS_BENCHMARK_COMPILER_OPTIONS@"};
+inline constexpr std::string_view benchmarkCommand{"@VSS_BENCHMARK_COMMAND@"};
+inline constexpr std::string_view profileId{"@VSS_BENCHMARK_PROFILE_ID@"};
+inline constexpr std::string_view packageVersion{
+    "@VSS_BENCHMARK_PACKAGE_VERSION@"};
+inline constexpr std::string_view mathCommit{"@VSS_BENCHMARK_MATH_COMMIT@"};
+inline constexpr std::string_view targetTriple{"@VSS_BENCHMARK_TARGET_TRIPLE@"};
+#define VSS_MATH_STRINGIFY_IMPL(value) #value
+#define VSS_MATH_STRINGIFY(value) VSS_MATH_STRINGIFY_IMPL(value)
+#if defined(__GLIBCXX__)
+inline constexpr std::string_view stdlibId{"libstdc++"};
+inline constexpr std::string_view stdlibVersion{
+    VSS_MATH_STRINGIFY(__GLIBCXX__)};
+#elif defined(_LIBCPP_VERSION)
+inline constexpr std::string_view stdlibId{"libc++"};
+inline constexpr std::string_view stdlibVersion{
+    VSS_MATH_STRINGIFY(_LIBCPP_VERSION)};
+#else
+#error "Unsupported C++ standard library metadata"
+#endif
+#undef VSS_MATH_STRINGIFY
+#undef VSS_MATH_STRINGIFY_IMPL
+inline constexpr std::string_view cmakeVersion{"@VSS_BENCHMARK_CMAKE_VERSION@"};
+inline constexpr std::string_view compileFlags{"@VSS_BENCHMARK_COMPILE_FLAGS@"};
+// NOLINTNEXTLINE(readability-redundant-string-init)
+inline constexpr std::string_view linkFlags{"@VSS_BENCHMARK_LINK_FLAGS@"};
+inline constexpr std::string_view sanitizers{"@VSS_BENCHMARK_SANITIZERS@"};
+inline constexpr std::string_view coverage{"@VSS_BENCHMARK_COVERAGE@"};
+inline constexpr std::string_view architecture{"@VSS_BENCHMARK_ARCHITECTURE@"};
+} // namespace vss::math::benchmark_metadata
+
+#endif // VSS_MATH_BENCHMARK_METADATA_HPP
