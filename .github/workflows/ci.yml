@@ -5,10 +5,13 @@ on:
     branches:
       - main
   pull_request:
+  schedule:
+    - cron: '30 23 * * 5'
+      timezone: Europe/Berlin
   workflow_dispatch:
     inputs:
       full_suite:
-        description: Run the complete suite when it is available on this branch
+        description: Run the complete Ubuntu suite on this ref
         required: false
         type: boolean
         default: true
@@ -16,13 +19,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'schedule' || inputs.full_suite) && 'full' || 'fast' }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' && !inputs.full_suite }}
+
 jobs:
   documentation-policy:
-    name: Documentation and policy
+    name: documentation-policy
+    if: ${{ github.event_name != 'schedule' || github.repository == 'VirtualSensorSoft/VSSMath' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
         with:
           persist-credentials: false
       - name: Validate documentation policy
@@ -32,4 +40,419 @@ jobs:
           ./tests/policy/test_documentation_policy.sh
           ./tests/policy/test_conformance_record.sh
           ./tests/policy/test_analyzer_suppressions.sh
+          ./tests/policy/test_numerical_traceability.sh
           ./tests/policy/test_workflow_policy.sh
+
+  build-and-test:
+    name: ${{ matrix.name }}
+    if: >-
+      ${{ (matrix.name == 'gcc-debug' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)) && (github.event_name != 'schedule' || github.repository == 'VirtualSensorSoft/VSSMath') }}
+    runs-on: ubuntu-24.04
+    env:
+      FULL_SUITE: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+      CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
+      CCACHE_MAXSIZE: 512M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc-debug
+            compiler: g++
+            package: g++
+            build_type: Debug
+            sanitizers: OFF
+            profile: gcc-debug
+          - name: clang-debug
+            compiler: clang++-18
+            package: clang-18
+            build_type: Debug
+            sanitizers: OFF
+            profile: clang18-debug
+          - name: gcc-sanitize
+            compiler: g++
+            package: g++
+            build_type: Debug
+            sanitizers: ON
+            profile: gcc-asan-ubsan
+          - name: gcc-release
+            compiler: g++
+            package: g++
+            build_type: Release
+            sanitizers: OFF
+            profile: gcc-release
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake ccache "${{ matrix.package }}"
+      - name: Identify compiler
+        id: compiler
+        run: |
+          if [[ "${{ matrix.compiler }}" == g++ ]]; then
+            version=$(g++ -dumpfullversion -dumpversion)
+          else
+            version=$(clang++-18 --version | sed -n '1s/.* version \([^ ]*\).*/\1/p')
+          fi
+          test -n "$version"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Show cache and compiler versions
+        run: |
+          ccache --version
+          ccache --show-stats
+      - name: Restore compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/vssmath-ccache
+          key: vssmath-${{ github.repository }}-ubuntu-24.04-x64-${{ matrix.profile }}-${{ matrix.compiler }}-${{ steps.compiler.outputs.version }}-${{ github.sha }}
+          restore-keys: |
+            vssmath-${{ github.repository }}-ubuntu-24.04-x64-${{ matrix.profile }}-${{ matrix.compiler }}-${{ steps.compiler.outputs.version }}-
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DBUILD_TESTING=ON
+          -DVSS_MATH_BUILD_DOCS=OFF
+          -DVSS_MATH_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+          '-DVSS_MATH_EVIDENCE_TOOLS=binutils'
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Prepare test evidence directory
+        run: mkdir -p build/acceptance
+      - name: Run fast tests
+        if: ${{ matrix.name == 'gcc-debug' && env.FULL_SUITE == 'false' }}
+        run: ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest-fast.xml -LE '^ci-extended$'
+      - name: Run full compiler tests
+        if: ${{ matrix.name != 'gcc-debug' || env.FULL_SUITE == 'true' }}
+        run: ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest.xml -LE '^ci-once-per-full$'
+      - name: Record compiler cache statistics
+        if: always()
+        run: ccache --show-stats | tee build/ccache-stats.txt
+      - name: Collect tool-version evidence
+        if: success()
+        run: cmake --build build --target math-tool-versions
+      - name: Upload test and tool evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
+        with:
+          name: vssmath-build-${{ matrix.name }}
+          path: |
+            build/acceptance/*.xml
+            build/acceptance/tool-versions.txt
+            build/ccache-stats.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  format:
+    name: format
+    if: ${{ github.event_name != 'schedule' || github.repository == 'VirtualSensorSoft/VSSMath' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install format tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake clang-18 clang-format-18
+      - name: Configure check-only formatter
+        run: >-
+          cmake -S . -B build-format
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++-18
+          -DBUILD_TESTING=OFF
+          -DVSS_MATH_BUILD_DOCS=OFF
+          -DVSS_MATH_ENABLE_FORMAT_CHECK=ON
+      - name: Check formatting without edits
+        run: cmake --build build-format --target format-check --parallel 2
+
+  full-suite-inventory:
+    name: extended-policy
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake g++
+      - name: Configure full test inventory
+        run: cmake -S . -B build-inventory -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++ -DBUILD_TESTING=ON -DVSS_MATH_BUILD_DOCS=OFF -DVSS_MATH_BUILD_BENCHMARKS=ON
+      - name: Build registered test programs
+        run: cmake --build build-inventory --parallel 2
+      - name: Verify full test selection and run shared tests once
+        run: |
+          python3 tests/policy/check_full_ctest_selection.py build-inventory
+          ctest --test-dir build-inventory --output-on-failure -L '^ci-once-per-full$'
+
+  documentation:
+    name: documentation
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install documentation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake doxygen graphviz g++
+      - name: Build API documentation
+        run: |
+          cmake -S . -B build-docs -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++ -DBUILD_TESTING=OFF -DVSS_MATH_BUILD_DOCS=ON
+          cmake --build build-docs --target docs --parallel 2
+      - name: Scan generated documentation for private host paths
+        run: |
+          private_home_pattern='/ho''me/[^/]+/'
+          if grep -RInE "${private_home_pattern}|/srv/vss-ci|/tmp/VSSMath" build-docs/docs/html; then
+            echo 'generated documentation contains a machine-specific path' >&2
+            exit 1
+          fi
+      - name: Upload generated documentation
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
+        with:
+          name: vssmath-api-documentation
+          path: build-docs/docs/html
+          if-no-files-found: error
+          retention-days: 30
+
+  performance-contract:
+    name: performance-contract (${{ matrix.build_type }})
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake g++
+      - name: Configure deterministic performance contracts
+        run: >-
+          cmake -S . -B build-performance-${{ matrix.build_type }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_CXX_COMPILER=g++
+          -DBUILD_TESTING=ON
+          -DVSS_MATH_BUILD_DOCS=OFF
+          -DVSS_MATH_BUILD_BENCHMARKS=ON
+      - name: Build contract targets
+        run: cmake --build build-performance-${{ matrix.build_type }} --target vss_math_benchmark test_benchmark_standard_library_metadata --parallel 2
+      - name: Run deterministic performance gate
+        run: ctest --test-dir build-performance-${{ matrix.build_type }} --output-on-failure -R '^math.performance_gate_contract$'
+
+  algorithm-performance-contract:
+    name: algorithm-performance-contract (${{ matrix.build_type }})
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build_type: Debug
+            profile_id: vssmath-ci-unqualified-gcc-debug
+          - build_type: Release
+            profile_id: vssmath-ci-unqualified-gcc-release
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake g++
+      - name: Configure hosted diagnostic profile
+        run: >-
+          cmake -S . -B build-algorithm-${{ matrix.build_type }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_CXX_COMPILER=g++
+          -DBUILD_TESTING=ON
+          -DVSS_MATH_BUILD_DOCS=OFF
+          -DVSS_MATH_BUILD_BENCHMARKS=ON
+          -DVSS_MATH_PERFORMANCE_PROFILE_ID=${{ matrix.profile_id }}
+          -DVSS_MATH_BENCHMARK_FREQUENCY_GOVERNOR=unavailable
+          -DVSS_MATH_BENCHMARK_TURBO_STATE=unavailable
+          -DVSS_MATH_BENCHMARK_RUNNER_LABEL=vssmath-github-hosted-unqualified
+      - name: Build and validate diagnostic contracts
+        run: |
+          build_dir=build-algorithm-${{ matrix.build_type }}
+          cmake --build "$build_dir" --target vss_math_algorithm_benchmark test_batch_plan_reader test_algorithm_benchmark_capture_stub test_algorithm_ci_diagnostic_stub --parallel 2
+          ctest --test-dir "$build_dir" --output-on-failure -R '^math\.(algorithm_benchmark_schema_v2|algorithm_benchmark_wrapper|algorithm_ci_diagnostic|algorithm_batch_plan_reader|algorithm_record_contract|algorithm_comparison|workflow_policy)$'
+      - name: Capture hosted timing diagnostics
+        run: |
+          build_dir="$PWD/build-algorithm-${{ matrix.build_type }}"
+          cmake -DVSS_PERF_BENCHMARK="$build_dir/benchmarks/vss_math_algorithm_benchmark" -DVSS_PERF_OUTPUT_DIR="$build_dir/performance/algorithm-ci-diagnostic" -DVSS_PERF_RECORD_PROFILE_ID=${{ matrix.profile_id }} -DVSS_PERF_FREQUENCY_GOVERNOR=unavailable -DVSS_PERF_TURBO_STATE=unavailable -DVSS_PERF_RUNNER_LABEL=vssmath-github-hosted-unqualified -P tests/performance/run_algorithm_ci_diagnostic.cmake
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
+        with:
+          name: vssmath-algorithm-diagnostic-${{ matrix.build_type }}
+          path: build-algorithm-${{ matrix.build_type }}/performance/algorithm-ci-diagnostic
+          if-no-files-found: warn
+          retention-days: 30
+
+  static-analysis:
+    name: static-analysis
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake clang-18 clang-tidy-18 g++
+      - name: Verify analyzer configuration
+        run: |
+          clang-tidy-18 --version
+          clang-tidy-18 --verify-config --config-file=.clang-tidy
+      - name: Configure analysis build without compiler cache
+        run: |
+          cmake -S . -B build-analysis -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_TESTING=ON -DVSS_MATH_BUILD_DOCS=OFF -DVSS_MATH_BUILD_BENCHMARKS=ON -DVSS_MATH_ENABLE_CLANG_TIDY=ON -DVSS_MATH_CLANG_TIDY_EXECUTABLE="$(command -v clang-tidy-18)"
+      - name: Build production, test, and benchmark code with clang-tidy
+        run: cmake --build build-analysis --parallel 2
+      - name: Run analyzed test suite
+        run: ctest --test-dir build-analysis --output-on-failure -LE '^ci-once-per-full$'
+      - name: Run policy checks
+        run: |
+          ./scripts/check-conformance-record.sh --root . --record docs/development/conformance-record.tsv
+          ./scripts/check-analyzer-suppressions.sh
+          ./scripts/check-workflow-policy.sh
+
+  coverage:
+    name: coverage
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    env:
+      CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
+      CCACHE_MAXSIZE: 512M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake g++ gcovr ccache
+      - name: Identify compiler
+        id: compiler
+        run: echo "version=$(g++ -dumpfullversion -dumpversion)" >> "$GITHUB_OUTPUT"
+      - name: Restore coverage compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/vssmath-ccache
+          key: vssmath-${{ github.repository }}-ubuntu-24.04-x64-coverage-gcc-debug-${{ steps.compiler.outputs.version }}-${{ github.sha }}
+          restore-keys: |
+            vssmath-${{ github.repository }}-ubuntu-24.04-x64-coverage-gcc-debug-${{ steps.compiler.outputs.version }}-
+      - name: Configure and build coverage profile
+        run: |
+          cmake -S . -B build-coverage -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DBUILD_TESTING=ON -DVSS_MATH_BUILD_DOCS=OFF -DVSS_MATH_ENABLE_COVERAGE=ON
+          cmake --build build-coverage --parallel 2
+      - name: Run full coverage tests and report
+        run: |
+          find build-coverage -name '*.gcda' -delete
+          ctest --test-dir build-coverage --output-on-failure -LE '^ci-once-per-full$'
+          cmake --build build-coverage --target coverage-report --parallel 2
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
+        with:
+          name: vssmath-coverage
+          path: build-coverage/coverage
+          if-no-files-found: warn
+          retention-days: 30
+
+  security:
+    name: security
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Scan source tree
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # verified in existing organization CI
+        with:
+          version: 0.69.3
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: table
+          output: trivy-source.txt
+      - name: Verify scanner version
+        run: |
+          trivy --version | grep -F 'Version: 0.69.3'
+      - name: Build and install for package scan
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake g++
+          cmake -S . -B build-security -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++ -DBUILD_TESTING=OFF -DVSS_MATH_BUILD_DOCS=OFF
+          cmake --build build-security --parallel 2
+          cmake --install build-security --prefix "$RUNNER_TEMP/vssmath-install"
+      - name: Scan installed package
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # verified in existing organization CI
+        with:
+          version: 0.69.3
+          scan-type: fs
+          scan-ref: ${{ runner.temp }}/vssmath-install
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: table
+          output: trivy-installed.txt
+      - name: Upload security results
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
+        with:
+          name: vssmath-security-results
+          path: |
+            trivy-source.txt
+            trivy-installed.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  thread-safety:
+    name: thread-safety
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install ThreadSanitizer tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends cmake g++
+      - name: Configure and build ThreadSanitizer lifecycle test
+        run: |
+          cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++ -DBUILD_TESTING=ON -DVSS_MATH_BUILD_DOCS=OFF -DVSS_MATH_BUILD_BENCHMARKS=OFF -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer -g' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=thread'
+          cmake --build build-tsan --target test_algorithm_lifecycle --parallel 2
+      - name: Run thread-safety test
+        run: ctest --test-dir build-tsan --output-on-failure -R '^math.algorithm_lifecycle$'
