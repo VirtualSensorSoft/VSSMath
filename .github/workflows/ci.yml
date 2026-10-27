@@ -435,7 +435,6 @@ jobs:
           CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
           CCACHE_MAXSIZE: 512M
           CCACHE_COMPILERCHECK: content
-          CCACHE_BASEDIR: ${{ github.workspace }}
         run: |
           cmake -S . -B build-coverage -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DBUILD_TESTING=ON -DVSS_MATH_BUILD_DOCS=OFF -DVSS_MATH_ENABLE_COVERAGE=ON
           cmake --build build-coverage --parallel 2
