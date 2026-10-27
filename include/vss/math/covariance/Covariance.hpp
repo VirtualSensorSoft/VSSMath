@@ -80,7 +80,8 @@ struct CorrelationOptions final {
 ///          inspected before reassignment or destruction. The value owns no
 ///          shared state, cache, thread, or external resource.
 /// @par Requirements
-/// VSS-MATH-COV-001, VSS-MATH-COV-002, VSS-MATH-COV-005, VSS-MATH-COV-006, and VSS-MATH-COV-008.
+/// VSS-MATH-COV-001, VSS-MATH-COV-002, VSS-MATH-COV-005,
+/// VSS-MATH-COV-006, and VSS-MATH-COV-008.
 class CovarianceDiagnostics final {
 public:
   /// @brief Default construction is unavailable; use analyzeCovariance().
