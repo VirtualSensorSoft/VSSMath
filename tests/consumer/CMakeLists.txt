@@ -17,3 +17,9 @@ if(DEFINED VSS_EXPECTED_PREFIX)
       "VirtualSensorMath resolved outside VSS_EXPECTED_PREFIX: ${VirtualSensorMath_DIR}")
   endif()
 endif()
+
+if(DEFINED VSS_PACKAGE_IDENTITY_FILE AND NOT VSS_PACKAGE_IDENTITY_FILE STREQUAL "")
+  file(WRITE "${VSS_PACKAGE_IDENTITY_FILE}"
+    "package_version=${VirtualSensorMath_VERSION}\n"
+    "config_dir=${VirtualSensorMath_DIR}\n")
+endif()

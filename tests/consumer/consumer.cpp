@@ -45,6 +45,20 @@ int main() {
   Matrix diagonal(2U, 2U);
   diagonal.at(0U, 0U) = 2.0;
   diagonal.at(1U, 1U) = 3.0;
+  Vector diagonalInput(2U);
+  diagonalInput.at(0U) = 2.0;
+  diagonalInput.at(1U) = 3.0;
+  const auto diagonalResult = multiply(diagonal.view(), diagonalInput.view());
+  if (!require(diagonalResult.hasValue(),
+               "diagonal matrix-vector multiplication failed")) {
+    return 1;
+  }
+  if (!require(diagonalResult.value().at(0U) == 4.0 &&
+                   diagonalResult.value().at(1U) == 9.0,
+               "unexpected diagonal matrix-vector result")) {
+    return 1;
+  }
+
   Vector rightHandSide(2U);
   rightHandSide.at(0U) = 4.0;
   rightHandSide.at(1U) = 9.0;
