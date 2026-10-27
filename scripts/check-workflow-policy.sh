@@ -25,6 +25,14 @@ grep -Eq '(^|[[:space:]])pull_request_target([[:space:]:]|$)' "$workflow" && \
   fail 'pull_request_target is not permitted'
 grep -Eq 'runs-on:.*self-hosted|\[[^]]*self-hosted' "$workflow" && \
   fail 'self-hosted runners are not permitted'
+if awk '
+  /^    if:/ { in_job_if = 1 }
+  in_job_if && /^    [A-Za-z0-9_-]+:/ && $0 !~ /^    if:/ { in_job_if = 0 }
+  in_job_if && /matrix[.]|matrix\[/ { invalid = 1 }
+  END { exit !invalid }
+' "$workflow"; then
+  fail 'job-level if must not reference matrix context'
+fi
 grep -Fq '${{ secrets.' "$workflow" && \
   fail 'workflow must not interpolate secrets into shell commands'
 grep -Eq 'clang-format[^#]*[[:space:]]-i([[:space:]]|$)' "$workflow" && \
@@ -106,8 +114,8 @@ home_cache_pattern='/ho''me/'
 if grep -Eq 'CCACHE_SLOPPINESS' "$workflow" || grep -Eq "CCACHE_DIR:.*${home_cache_pattern}" "$workflow"; then
   fail 'compiler cache must not use sloppiness or a home-directory cache'
 fi
-if [[ $(grep -Ec 'uses: actions/cache@' "$workflow" || true) -ne 2 ]]; then
-  fail 'only the compiler and coverage profiles may use the cache action'
+if [[ $(grep -Ec 'uses: actions/cache@' "$workflow" || true) -ne 3 ]]; then
+  fail 'only the fast compiler, full compiler, and coverage profiles may use the cache action'
 fi
 cache_block=$(awk '
   /uses: actions\/cache@/ { in_cache = 1; found = 1 }

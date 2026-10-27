@@ -45,11 +45,9 @@ jobs:
 
   build-and-test:
     name: ${{ matrix.name }}
-    if: >-
-      ${{ (matrix.name == 'gcc-debug' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)) && (github.event_name != 'schedule' || github.repository == 'VirtualSensorSoft/VSSMath') }}
+    if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     env:
-      FULL_SUITE: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
       CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
       CCACHE_MAXSIZE: 512M
       CCACHE_COMPILERCHECK: content
@@ -126,11 +124,7 @@ jobs:
         run: cmake --build build --parallel 2
       - name: Prepare test evidence directory
         run: mkdir -p build/acceptance
-      - name: Run fast tests
-        if: ${{ matrix.name == 'gcc-debug' && env.FULL_SUITE == 'false' }}
-        run: ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest-fast.xml -LE '^ci-extended$'
       - name: Run full compiler tests
-        if: ${{ matrix.name != 'gcc-debug' || env.FULL_SUITE == 'true' }}
         run: ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest.xml -LE '^ci-once-per-full$'
       - name: Record compiler cache statistics
         if: always()
@@ -143,6 +137,70 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
         with:
           name: vssmath-build-${{ matrix.name }}
+          path: |
+            build/acceptance/*.xml
+            build/acceptance/tool-versions.txt
+            build/ccache-stats.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+  gcc-debug-fast:
+    name: gcc-debug (fast PR suite)
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.full_suite) }}
+    runs-on: ubuntu-24.04
+    env:
+      CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
+      CCACHE_MAXSIZE: 512M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends cmake ccache g++
+      - name: Identify compiler
+        id: compiler
+        run: echo "version=$(g++ -dumpfullversion -dumpversion)" >> "$GITHUB_OUTPUT"
+      - name: Show cache and compiler versions
+        run: |
+          ccache --version
+          ccache --show-stats
+      - name: Restore fast GCC Debug compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/vssmath-ccache
+          key: vssmath-${{ github.repository }}-ubuntu-24.04-x64-gcc-debug-g++-${{ steps.compiler.outputs.version }}-${{ github.sha }}
+          restore-keys: |
+            vssmath-${{ github.repository }}-ubuntu-24.04-x64-gcc-debug-g++-${{ steps.compiler.outputs.version }}-
+      - name: Configure GCC Debug
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DBUILD_TESTING=ON
+          -DVSS_MATH_BUILD_DOCS=OFF
+          -DVSS_MATH_ENABLE_SANITIZERS=OFF
+          '-DVSS_MATH_EVIDENCE_TOOLS=binutils'
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Prepare test evidence directory
+        run: mkdir -p build/acceptance
+      - name: Run fast tests
+        run: ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest-fast.xml -LE '^ci-extended$'
+      - name: Record compiler cache statistics
+        if: always()
+        run: ccache --show-stats | tee build/ccache-stats.txt
+      - name: Collect tool-version evidence
+        if: success()
+        run: cmake --build build --target math-tool-versions
+      - name: Upload fast test and tool evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
+        with:
+          name: vssmath-build-gcc-debug-fast
           path: |
             build/acceptance/*.xml
             build/acceptance/tool-versions.txt
