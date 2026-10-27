@@ -6,10 +6,11 @@ arithmetic, descriptive statistics, linear factorizations and solves,
 covariance operations, finite differences, and chi-square tail functions.
 
 The implementation uses the C++ standard library and has no external
-numerical-library runtime dependency. Ubuntu 24.04 x86-64 is the planned initial
-qualification target; no platform qualification is claimed before hosted acceptance. See the
-[architecture](docs/architecture.md), [user guide](docs/user-guide.md), and
-[numerical contract](docs/numerical-contract.md) before relying on behavior.
+numerical-library runtime dependency. The current development assessment covers the exact Ubuntu 24.04 x86-64 source
+revision identified in [status and support](docs/status.md); it remains under review
+and does not establish production qualification. See the [architecture](docs/architecture.md),
+[user guide](docs/user-guide.md), and [numerical contract](docs/numerical-contract.md)
+before relying on behavior.
 
 ## Build and test
 

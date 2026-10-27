@@ -16,6 +16,11 @@ file uses CMake's same-minor compatibility rule: a request for the same major
 and minor that is not newer than the installed version is compatible. This
 policy does not claim long-term ABI stability.
 
+The current development evidence is limited to a specific Ubuntu 24.04 x86-64
+source revision and remains under review. Check [status and support](status.md)
+and the [numerical contract](numerical-contract.md) before using this package in
+production or on an unlisted platform.
+
 ## Example
 
 ```cpp
