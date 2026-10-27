@@ -1,8 +1,5 @@
 # Architecture
 
-This page describes the intended library architecture. The current bootstrap does not yet include implementation source; these descriptions are target contracts, not claims of available or qualified behavior.
-
-
 VirtualSensorMath is a compiled C++20 static library with a CMake package
 export. Its public namespace is `vss::math`; the installed target is
 `VirtualSensorSoft::math`.

@@ -53,4 +53,10 @@ printf '%s\n' \
   '          name: report' \
   '          path: report.txt' >> "$scratch/workflow.yml"
 expect_failure 'every artifact upload must specify retention-days' "$checker" "$scratch/workflow.yml"
+copy_workflow
+sed -i "s/cron: '30 23 \* \* 5'/cron: '0 0 * * 5'/" "$scratch/workflow.yml"
+expect_failure 'full suite must run on the approved Friday schedule' "$checker" "$scratch/workflow.yml"
+copy_workflow
+sed -i '/^  static-analysis:/a\    env:\n      CCACHE_DIR: runner-temp' "$scratch/workflow.yml"
+expect_failure 'static analysis must remain uncached' "$checker" "$scratch/workflow.yml"
 printf '%s\n' 'Workflow policy tests passed.'

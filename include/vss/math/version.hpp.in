@@ -1,0 +1,22 @@
+#ifndef VSS_MATH_VERSION_HPP
+#define VSS_MATH_VERSION_HPP
+
+#include <string_view>
+
+/// @brief Compile-time VirtualSensorMath version information.
+namespace vss::math::version {
+/// @brief Major project version component.
+// clang-format off
+// Keep CMake substitution tokens contiguous; formatting would change their
+// semantics before configure_file() expands them.
+inline constexpr unsigned major = @PROJECT_VERSION_MAJOR@U;
+/// @brief Minor project version component.
+inline constexpr unsigned minor = @PROJECT_VERSION_MINOR@U;
+/// @brief Patch project version component.
+inline constexpr unsigned patch = @PROJECT_VERSION_PATCH@U;
+// clang-format on
+/// @brief Complete dotted project version.
+inline constexpr std::string_view string{"@PROJECT_VERSION@"};
+} // namespace vss::math::version
+
+#endif // VSS_MATH_VERSION_HPP
