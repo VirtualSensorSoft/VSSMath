@@ -99,12 +99,31 @@ workflow_contains() {
 require_workflow_text() {
   if ! workflow_contains "$1"; then fail "$2"; fi
 }
+require_job_condition() {
+  local job_id=$1 required=$2 message=$3
+  if ! awk -v job_id="$job_id" -v required="$required" '
+    $0 == "  " job_id ":" { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { in_job = 0 }
+    in_job && /^    if:/ { in_if = 1 }
+    in_if && index($0, required) { found = 1 }
+    in_if && /^    [A-Za-z0-9_-]+:/ && $0 !~ /^    if:/ { in_if = 0 }
+    END { exit !found }
+  ' "$workflow"; then
+    fail "$message"
+  fi
+}
 
 require_workflow_text "cron: '30 23 * * 5'" 'full suite must run on the approved Friday schedule'
 require_workflow_text 'timezone: Europe/Berlin' 'weekly schedule must use Europe/Berlin time'
 require_workflow_text 'type: boolean' 'manual full_suite input must be boolean'
 require_workflow_text 'default: true' 'manual full_suite must default to full acceptance'
 require_workflow_text "github.repository == 'VirtualSensorSoft/VSSMath'" 'scheduled full runs must be restricted to the canonical repository'
+for job_id in \
+  build-and-test full-suite-inventory documentation performance-contract \
+  algorithm-performance-contract static-analysis coverage security thread-safety; do
+  require_job_condition "$job_id" "github.event_name == 'pull_request'" \
+    "$job_id must run on pull requests"
+done
 require_workflow_text "ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest-fast.xml -LE '^ci-extended$'" 'fast tests must exclude the ci-extended selection'
 require_workflow_text "-LE '^ci-once-per-full$'" 'normal full lanes must exclude once-per-full tests'
 require_workflow_text "-L '^ci-once-per-full$'" 'one shared full-suite lane must select once-per-full tests'
