@@ -35,6 +35,12 @@ copy_workflow
 sed -i 's/runs-on: ubuntu-24.04/runs-on: self-hosted/' "$scratch/workflow.yml"
 expect_failure 'self-hosted runners are not permitted' "$checker" "$scratch/workflow.yml"
 copy_workflow
+sed -i '/^  build-and-test:/a\    if: ${{ matrix.name == '\''gcc-debug'\'' }}' "$scratch/workflow.yml"
+expect_failure 'job-level if must not reference matrix context' "$checker" "$scratch/workflow.yml"
+copy_workflow
+sed -i '/^jobs:/a\  invalid-runner-context:\n    runs-on: ubuntu-24.04\n    env:\n      INVALID_CACHE_PATH: ${{ runner.temp }}' "$scratch/workflow.yml"
+expect_failure 'job-level env must not reference runner context' "$checker" "$scratch/workflow.yml"
+copy_workflow
 printf '\n  pull_request_target:\n' >> "$scratch/workflow.yml"
 expect_failure 'pull_request_target is not permitted' "$checker" "$scratch/workflow.yml"
 copy_workflow
