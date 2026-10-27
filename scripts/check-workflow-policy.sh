@@ -33,6 +33,15 @@ if awk '
 ' "$workflow"; then
   fail 'job-level if must not reference matrix context'
 fi
+if awk '
+  /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { in_job = 1; in_job_env = 0 }
+  in_job && /^    env:[[:space:]]*$/ { in_job_env = 1; next }
+  in_job_env && /^    [A-Za-z0-9_-]+:/ { in_job_env = 0 }
+  in_job_env && /runner[.]|runner\[/ { invalid = 1 }
+  END { exit !invalid }
+' "$workflow"; then
+  fail 'job-level env must not reference runner context'
+fi
 grep -Fq '${{ secrets.' "$workflow" && \
   fail 'workflow must not interpolate secrets into shell commands'
 grep -Eq 'clang-format[^#]*[[:space:]]-i([[:space:]]|$)' "$workflow" && \

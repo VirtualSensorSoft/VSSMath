@@ -47,11 +47,6 @@ jobs:
     name: ${{ matrix.name }}
     if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
-    env:
-      CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
-      CCACHE_MAXSIZE: 512M
-      CCACHE_COMPILERCHECK: content
-      CCACHE_BASEDIR: ${{ github.workspace }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,6 +95,8 @@ jobs:
           test -n "$version"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Show cache and compiler versions
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
         run: |
           ccache --version
           ccache --show-stats
@@ -121,6 +118,11 @@ jobs:
           -DVSS_MATH_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
           '-DVSS_MATH_EVIDENCE_TOOLS=binutils'
       - name: Build
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
+          CCACHE_MAXSIZE: 512M
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
         run: cmake --build build --parallel 2
       - name: Prepare test evidence directory
         run: mkdir -p build/acceptance
@@ -128,6 +130,8 @@ jobs:
         run: ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest.xml -LE '^ci-once-per-full$'
       - name: Record compiler cache statistics
         if: always()
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
         run: ccache --show-stats | tee build/ccache-stats.txt
       - name: Collect tool-version evidence
         if: success()
@@ -148,11 +152,6 @@ jobs:
     name: gcc-debug (fast PR suite)
     if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.full_suite) }}
     runs-on: ubuntu-24.04
-    env:
-      CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
-      CCACHE_MAXSIZE: 512M
-      CCACHE_COMPILERCHECK: content
-      CCACHE_BASEDIR: ${{ github.workspace }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
@@ -164,6 +163,8 @@ jobs:
         id: compiler
         run: echo "version=$(g++ -dumpfullversion -dumpversion)" >> "$GITHUB_OUTPUT"
       - name: Show cache and compiler versions
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
         run: |
           ccache --version
           ccache --show-stats
@@ -185,6 +186,11 @@ jobs:
           -DVSS_MATH_ENABLE_SANITIZERS=OFF
           '-DVSS_MATH_EVIDENCE_TOOLS=binutils'
       - name: Build
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
+          CCACHE_MAXSIZE: 512M
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
         run: cmake --build build --parallel 2
       - name: Prepare test evidence directory
         run: mkdir -p build/acceptance
@@ -192,6 +198,8 @@ jobs:
         run: ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest-fast.xml -LE '^ci-extended$'
       - name: Record compiler cache statistics
         if: always()
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
         run: ccache --show-stats | tee build/ccache-stats.txt
       - name: Collect tool-version evidence
         if: success()
@@ -403,11 +411,6 @@ jobs:
     name: coverage
     if: ${{ (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
-    env:
-      CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
-      CCACHE_MAXSIZE: 512M
-      CCACHE_COMPILERCHECK: content
-      CCACHE_BASEDIR: ${{ github.workspace }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node.js 24
@@ -428,6 +431,11 @@ jobs:
           restore-keys: |
             vssmath-${{ github.repository }}-ubuntu-24.04-x64-coverage-gcc-debug-${{ steps.compiler.outputs.version }}-
       - name: Configure and build coverage profile
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/vssmath-ccache
+          CCACHE_MAXSIZE: 512M
+          CCACHE_COMPILERCHECK: content
+          CCACHE_BASEDIR: ${{ github.workspace }}
         run: |
           cmake -S . -B build-coverage -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DBUILD_TESTING=ON -DVSS_MATH_BUILD_DOCS=OFF -DVSS_MATH_ENABLE_COVERAGE=ON
           cmake --build build-coverage --parallel 2
