@@ -1,15 +1,15 @@
 # Profile applicability review
 
-This review evaluates profile rules against the repository’s implemented API and delivery boundary. It is not a final conformance assessment; evidence is recorded against an exact revision before any release claim.
+This review evaluates profile rules against the implemented API and delivery boundary. Exclusions are scoped to the assessed revision and must be revisited when a listed trigger is introduced. The conformance table records the exclusion rationale in its evidence; it does not use a separate `Not applicable` state.
 
 ## ABI and plugin profile
 
-Not applicable to the current static-library package: the repository neither loads external modules nor defines a dynamically negotiated plugin ABI. CMake exports a normal library target. If a C ABI, dynamic module boundary, or plugin host is added, reassess this profile before that interface ships.
+The current package is a static C++ library with no C ABI, dynamically negotiated ABI, cross-library object destruction, or plugin host. CMake exports a normal namespaced library target. These boundaries are excluded from the current assessment. Reassess before introducing a C ABI, shared-library/plugin boundary, or cross-library create/destroy contract.
 
 ## Data and persistence profile
 
-Two rules apply to current behavior: public extent-based operations must reject unrepresentable size arithmetic before unsafe access/allocation, and operations must validate data before publishing a result. The library has no parser, serializer, persistent format, stored artifact, or migration interface. Rules about persistent schema/versioning, corruption recovery, cross-version compatibility, provenance fields, parser fuzzing, and stored-artifact integrity are not applicable to this API. Reassess if persistence or parsing is introduced.
+The two current data rules apply: public extent-based operations reject unrepresentable size arithmetic before unsafe access/allocation, and operations validate data before publishing a result. The library has no parser, serializer, persistent format, stored artifact, or migration interface. Persistent-schema, corruption-recovery, cross-version-data, provenance-field, parser-fuzzing, and stored-artifact controls are outside the current API. Reassess before adding persistence, parsing, or a stored interchange format.
 
 ## Concurrency profile
 
-Five profile rules are included in the public rule catalogue: documented thread-safety and caller synchronization; explicit treatment of shared mutable state; race-detection evidence for supported concurrent use; explicit ordering guarantees; and clear limits for sequential-only types. The library has no asynchronous operations, shared queues, locks, or startup/shutdown service lifecycle, so lock ordering, cancellation/timeout handling, backpressure, and service startup/shutdown rules are not applicable. Object-lifetime concurrency remains in scope because the public API permits independent objects and documented const access to be used concurrently.
+All five concurrency rules in the public catalogue apply. Public types document caller synchronization, production code has no shared mutable state, ordering is deterministic and sequential, and the hosted ThreadSanitizer job exercises concurrent lifecycle operations. The library does not create internal worker threads, asynchronous tasks, shared queues, or a service lifecycle. Reassess lock ordering, cancellation, backpressure, and startup/shutdown controls if internal parallelism, async APIs, shared mutable state, or a service lifecycle is introduced. Object-lifetime concurrency remains in scope for independent objects and documented const access.

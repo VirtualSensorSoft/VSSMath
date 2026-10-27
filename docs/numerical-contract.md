@@ -6,7 +6,7 @@ bitwise-identical results.
 
 ## Scalar, storage, and shapes
 
-The scalar is `double`. The planned initial profile requires an 8-byte
+The scalar is `double`. The assessed initial profile requires an 8-byte
 IEC 60559 binary floating-point representation with radix 2. Vectors own a
 contiguous sequence; matrices own row-major elements. Extents and indices use
 `std::size_t`; public operations check required shape and extent arithmetic
@@ -28,6 +28,16 @@ finite values; containers themselves may store them. Failed `Result<T>` values
 contain no partial result. Completed factorizations can carry singular or
 rank-deficient diagnostics where specified; solves reject unusable factors
 unless a documented option allows a value with an explicit condition report.
+
+## Allocation and exceptions
+
+Expected input and numerical failures use the documented `Result<T>` status
+contract. Allocation failures and container size failures may propagate as
+standard C++ exceptions (including `std::bad_alloc` and `std::length_error`);
+they are not converted into numerical error codes. Exceptions thrown by a
+user-supplied finite-difference callback propagate unchanged. If an exception
+escapes an operation, no partial owning result is returned; input views passed
+to numerical operations are not modified by the library.
 
 ## Tolerances and accuracy
 
