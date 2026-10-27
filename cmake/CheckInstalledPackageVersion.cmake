@@ -60,7 +60,9 @@ foreach(test_case IN LISTS vss_package_version_cases)
             "-DVirtualSensorMath_DIR=${vss_package_config_dir}"
             "-DCMAKE_PREFIX_PATH=${vss_install}"
             -DCMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE
+            -DCMAKE_FIND_USE_PACKAGE_ROOT_PATH=FALSE
             -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE
+            -DCMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH=FALSE
             -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=FALSE
     RESULT_VARIABLE configure_result
     OUTPUT_VARIABLE configure_stdout
