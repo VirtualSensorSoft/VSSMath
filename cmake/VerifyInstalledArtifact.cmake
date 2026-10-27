@@ -171,9 +171,19 @@ vss_run("consumer configure"
   "${CMAKE_COMMAND}" -S "${vss_consumer_source}" -B "${vss_consumer_build}"
   "-DCMAKE_PREFIX_PATH=${vss_install}"
   "-DVSS_EXPECTED_PREFIX=${vss_install}"
+  "-DVSS_PACKAGE_IDENTITY_FILE=${vss_evidence}/consumer-package-identity.txt"
   -DCMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE
+  -DCMAKE_FIND_USE_PACKAGE_ROOT_PATH=FALSE
   -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE
+  -DCMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH=FALSE
   -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=FALSE)
+
+vss_run("installed package version compatibility probes"
+  "${CMAKE_COMMAND}"
+  "-DVSS_MATH_INSTALL_PREFIX=${vss_install}"
+  "-DVSS_MATH_EVIDENCE_DIR=${vss_evidence}"
+  "-DVSS_MATH_PROBE_SCRATCH=${vss_evidence}/package-version-probes"
+  -P "${VSS_MATH_SOURCE_DIR}/cmake/CheckInstalledPackageVersion.cmake")
 
 file(READ "${vss_consumer_build}/CMakeCache.txt" vss_cache)
 string(REGEX MATCH "VirtualSensorMath_DIR:PATH=([^\n\r]*)" vss_dir_match
@@ -188,6 +198,79 @@ if(NOT vss_dir_inside)
   message(FATAL_ERROR
     "consumer resolved VirtualSensorMath outside isolated install: ${vss_resolved_dir}")
 endif()
+set(vss_package_identity_file "${vss_evidence}/consumer-package-identity.txt")
+if(NOT EXISTS "${vss_package_identity_file}")
+  message(FATAL_ERROR "consumer did not record the resolved package identity")
+endif()
+file(READ "${vss_package_identity_file}" vss_package_identity)
+string(REGEX MATCH "package_version=([^\n\r]+)" vss_version_match
+  "${vss_package_identity}")
+if(NOT vss_version_match)
+  message(FATAL_ERROR "consumer package identity omitted its version")
+endif()
+set(vss_package_version "${CMAKE_MATCH_1}")
+if(NOT vss_package_version STREQUAL "0.1.0")
+  message(FATAL_ERROR "consumer resolved an unexpected package version: ${vss_package_identity}")
+endif()
+string(REGEX MATCH "config_dir=([^\n\r]+)" vss_identity_dir_match
+  "${vss_package_identity}")
+if(NOT vss_identity_dir_match)
+  message(FATAL_ERROR "consumer package identity omitted its configuration directory")
+endif()
+set(vss_identity_dir "${CMAKE_MATCH_1}")
+if(NOT vss_identity_dir STREQUAL vss_resolved_dir)
+  message(FATAL_ERROR "consumer package identity differs from its CMake cache")
+endif()
+file(APPEND "${vss_package_identity_file}"
+  "request=0.1.0 EXACT CONFIG\n"
+  "expected_prefix=${vss_install}\n"
+  "prefix_provenance=PASS\n")
+
+set(vss_missing_prefix "${vss_evidence}/missing-package-prefix")
+if(EXISTS "${vss_missing_prefix}" OR IS_SYMLINK "${vss_missing_prefix}")
+  message(FATAL_ERROR "missing-prefix probe path already exists: ${vss_missing_prefix}")
+endif()
+set(vss_missing_source "${vss_evidence}/missing-prefix-probe-src")
+set(vss_missing_build "${vss_evidence}/missing-prefix-probe-build")
+file(REMOVE_RECURSE "${vss_missing_source}" "${vss_missing_build}")
+file(MAKE_DIRECTORY "${vss_missing_source}")
+file(WRITE "${vss_missing_source}/CMakeLists.txt"
+  "cmake_minimum_required(VERSION 3.28)\n"
+  "project(VirtualSensorMathMissingPrefixProbe NONE)\n"
+  "find_package(VirtualSensorMath 0.1.0 EXACT CONFIG REQUIRED)\n")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -S "${vss_missing_source}" -B "${vss_missing_build}"
+          "-DVirtualSensorMath_DIR=${vss_missing_prefix}/lib/cmake/VirtualSensorMath"
+          "-DCMAKE_PREFIX_PATH=${vss_missing_prefix}"
+          -DCMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE
+          -DCMAKE_FIND_USE_PACKAGE_ROOT_PATH=FALSE
+          -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE
+          -DCMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH=FALSE
+          -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=FALSE
+  RESULT_VARIABLE vss_missing_result
+  OUTPUT_VARIABLE vss_missing_stdout
+  ERROR_VARIABLE vss_missing_stderr)
+if("${vss_missing_result}" STREQUAL "0")
+  message(FATAL_ERROR "consumer unexpectedly resolved package from the missing-prefix probe")
+endif()
+string(CONCAT vss_missing_output "${vss_missing_stdout}" "${vss_missing_stderr}")
+string(FIND "${vss_missing_output}"
+  "Could not find a package configuration file provided by \"VirtualSensorMath\""
+  vss_missing_error_index)
+if(vss_missing_error_index EQUAL -1)
+  message(FATAL_ERROR
+    "missing-prefix probe failed for an unexpected reason:\n${vss_missing_output}")
+endif()
+file(WRITE "${vss_evidence}/missing-prefix-result.txt"
+  "request=VirtualSensorMath 0.1.0 EXACT CONFIG\n"
+  "selected_prefix=${vss_missing_prefix}\n"
+  "selected_config_dir=${vss_missing_prefix}/lib/cmake/VirtualSensorMath\n"
+  "user_package_registry=disabled\n"
+  "package_root_paths=disabled\n"
+  "system_package_registry=disabled\n"
+  "CMake_environment_paths=disabled\n"
+  "system_search_path=disabled\n"
+  "result=package-not-found-as-expected\n")
 
 vss_run("consumer build" "${CMAKE_COMMAND}" --build "${vss_consumer_build}")
 if(WIN32)

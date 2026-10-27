@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 project(VirtualSensorMathConsumer LANGUAGES CXX)
 
-find_package(VirtualSensorMath 0.1 CONFIG REQUIRED)
+find_package(VirtualSensorMath 0.1.0 EXACT CONFIG REQUIRED)
 
 add_executable(math_consumer consumer.cpp)
 target_compile_features(math_consumer PRIVATE cxx_std_20)
@@ -16,4 +16,10 @@ if(DEFINED VSS_EXPECTED_PREFIX)
     message(FATAL_ERROR
       "VirtualSensorMath resolved outside VSS_EXPECTED_PREFIX: ${VirtualSensorMath_DIR}")
   endif()
+endif()
+
+if(DEFINED VSS_PACKAGE_IDENTITY_FILE AND NOT VSS_PACKAGE_IDENTITY_FILE STREQUAL "")
+  file(WRITE "${VSS_PACKAGE_IDENTITY_FILE}"
+    "package_version=${VirtualSensorMath_VERSION}\n"
+    "config_dir=${VirtualSensorMath_DIR}\n")
 endif()
