@@ -8,6 +8,8 @@ annotations.
 
 | Path/line | Exact check | Scope | Why construct is necessary | Guard/evidence | Reviewer state |
 |---|---|---|---|---|---|
+| tests/performance/test_benchmark_standard_library_metadata.cpp:5 | cppcoreguidelines-macro-usage | Standard-library version stringification | The two-stage preprocessor expansion is required to stringify the compiler-provided version macro | Compile-time static assertions verify the resulting metadata | Reviewed |
+| tests/performance/test_benchmark_standard_library_metadata.cpp:7 | cppcoreguidelines-macro-usage | Standard-library version stringification | The outer macro expands the compiler-provided value before the inner macro stringifies it | Compile-time static assertions verify the resulting metadata | Reviewed |
 | include/vss/math/VectorView.hpp:75 | cppcoreguidelines-pro-bounds-pointer-arithmetic | Checked view access | Strided pointer indexing is the representation of the validated borrowing view | Construction checks the final offset and `at` checks both logical indices | Reviewed |
 | include/vss/math/VectorView.hpp:96 | cppcoreguidelines-pro-bounds-pointer-arithmetic | Checked mutable subview | Pointer offset creates the requested borrowing subview | Parent range and offset arithmetic are checked before construction | Reviewed |
 | include/vss/math/VectorView.hpp:182 | cppcoreguidelines-pro-bounds-pointer-arithmetic | Checked const view access | Strided pointer indexing is the representation of the validated borrowing view | Construction checks the final offset and `at` checks both logical indices | Reviewed |

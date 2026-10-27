@@ -23,6 +23,9 @@ copy_workflow() { cp "$workflow" "$scratch/workflow.yml"; }
 
 "$checker" "$workflow"
 copy_workflow
+sed -i "/^  coverage:/,/^  security:/s/github.event_name == 'pull_request' || //" "$scratch/workflow.yml"
+expect_failure 'coverage must run on pull requests' "$checker" "$scratch/workflow.yml"
+copy_workflow
 sed -i 's/^  contents: read$/  contents: write-all/' "$scratch/workflow.yml"
 expect_failure 'workflow must grant only contents: read' "$checker" "$scratch/workflow.yml"
 copy_workflow
