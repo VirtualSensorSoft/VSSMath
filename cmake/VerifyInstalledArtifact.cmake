@@ -175,6 +175,13 @@ vss_run("consumer configure"
   -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE
   -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=FALSE)
 
+vss_run("installed package version compatibility probes"
+  "${CMAKE_COMMAND}"
+  "-DVSS_MATH_INSTALL_PREFIX=${vss_install}"
+  "-DVSS_MATH_EVIDENCE_DIR=${vss_evidence}"
+  "-DVSS_MATH_PROBE_SCRATCH=${vss_evidence}/package-version-probes"
+  -P "${VSS_MATH_SOURCE_DIR}/cmake/CheckInstalledPackageVersion.cmake")
+
 file(READ "${vss_consumer_build}/CMakeCache.txt" vss_cache)
 string(REGEX MATCH "VirtualSensorMath_DIR:PATH=([^\n\r]*)" vss_dir_match
   "${vss_cache}")

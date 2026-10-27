@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 project(VirtualSensorMathConsumer LANGUAGES CXX)
 
-find_package(VirtualSensorMath 0.1 CONFIG REQUIRED)
+find_package(VirtualSensorMath 0.1.0 EXACT CONFIG REQUIRED)
 
 add_executable(math_consumer consumer.cpp)
 target_compile_features(math_consumer PRIVATE cxx_std_20)

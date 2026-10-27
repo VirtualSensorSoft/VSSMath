@@ -8,9 +8,13 @@ cmake --build build --parallel 2
 cmake --install build --prefix "$PWD/install"
 ```
 
-Consumers can then add the prefix to `CMAKE_PREFIX_PATH`, use
-`find_package(VirtualSensorMath CONFIG REQUIRED)`, and link the exported
-`VirtualSensorSoft::math` target.
+Consumers add the prefix to `CMAKE_PREFIX_PATH` and request the exact
+development package with
+`find_package(VirtualSensorMath 0.1.0 EXACT CONFIG REQUIRED)`, then link the
+exported `VirtualSensorSoft::math` target. Before 1.0.0, the package version
+file uses CMake's same-minor compatibility rule: a request for the same major
+and minor that is not newer than the installed version is compatible. This
+policy does not claim long-term ABI stability.
 
 ## Example
 
