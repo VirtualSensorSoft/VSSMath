@@ -123,7 +123,11 @@ for job_id in \
   algorithm-performance-contract static-analysis coverage security thread-safety; do
   require_job_condition "$job_id" "github.event_name == 'pull_request'" \
     "$job_id must run on pull requests"
+  require_job_condition "$job_id" "github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main'" \
+    "$job_id must run on canonical main pushes"
 done
+require_job_condition gcc-debug-fast "github.repository != 'VirtualSensorSoft/VSSMath'" \
+  'fast GCC job must remain limited to fork pushes and manual fast runs'
 require_workflow_text "ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest-fast.xml -LE '^ci-extended$'" 'fast tests must exclude the ci-extended selection'
 require_workflow_text "-LE '^ci-once-per-full$'" 'normal full lanes must exclude once-per-full tests'
 require_workflow_text "-L '^ci-once-per-full$'" 'one shared full-suite lane must select once-per-full tests'

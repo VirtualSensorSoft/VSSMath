@@ -26,6 +26,12 @@ copy_workflow
 sed -i "/^  coverage:/,/^  security:/s/github.event_name == 'pull_request' || //" "$scratch/workflow.yml"
 expect_failure 'coverage must run on pull requests' "$checker" "$scratch/workflow.yml"
 copy_workflow
+sed -i "/^  coverage:/,/^  security:/s/(github.event_name == 'push' && github.repository == 'VirtualSensorSoft\/VSSMath' && github.ref == 'refs\/heads\/main') || //" "$scratch/workflow.yml"
+expect_failure 'coverage must run on canonical main pushes' "$checker" "$scratch/workflow.yml"
+copy_workflow
+sed -i "s/github.repository != 'VirtualSensorSoft\/VSSMath'/github.repository == 'VirtualSensorSoft\/VSSMath'/" "$scratch/workflow.yml"
+expect_failure 'fast GCC job must remain limited to fork pushes and manual fast runs' "$checker" "$scratch/workflow.yml"
+copy_workflow
 sed -i 's/^  contents: read$/  contents: write-all/' "$scratch/workflow.yml"
 expect_failure 'workflow must grant only contents: read' "$checker" "$scratch/workflow.yml"
 copy_workflow
