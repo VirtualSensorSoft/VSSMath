@@ -465,7 +465,7 @@ jobs:
       - name: Scan source tree
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # verified in existing organization CI
         with:
-          version: 0.69.3
+          version: v0.69.3
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret,misconfig
@@ -486,7 +486,7 @@ jobs:
       - name: Scan installed package
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # verified in existing organization CI
         with:
-          version: 0.69.3
+          version: v0.69.3
           scan-type: fs
           scan-ref: ${{ runner.temp }}/vssmath-install
           scanners: vuln,secret,misconfig

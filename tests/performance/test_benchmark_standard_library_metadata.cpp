@@ -2,7 +2,9 @@
 
 #include <string_view>
 
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage): required stringification.
 #define VSS_MATH_STRINGIFY_IMPL(value) #value
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage): expands version macro.
 #define VSS_MATH_STRINGIFY(value) VSS_MATH_STRINGIFY_IMPL(value)
 
 #if defined(__GLIBCXX__)

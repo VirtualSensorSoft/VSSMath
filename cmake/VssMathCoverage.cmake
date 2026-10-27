@@ -31,7 +31,9 @@ function(vss_math_enable_coverage target)
       "VSS_MATH_ENABLE_COVERAGE requires the gcovr executable")
   endif()
 
-  target_compile_options(${target} PRIVATE --coverage -O0 -g)
+  # GCC otherwise stores source paths relative to the build working directory;
+  # gcovr can then fail to resolve them when it runs from the source tree.
+  target_compile_options(${target} PRIVATE --coverage -O0 -g -fprofile-abs-path)
   target_link_options(${target} PRIVATE --coverage)
 
   if(TARGET coverage-report)
