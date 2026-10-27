@@ -20,8 +20,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'schedule' || github.event_name == 'pull_request' || inputs.full_suite) && 'full' || 'fast' }}
-  cancel-in-progress: ${{ github.event_name != 'schedule' && !inputs.full_suite }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'schedule' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || inputs.full_suite) && 'full' || 'fast' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.full_suite) || (github.event_name == 'push' && github.repository != 'VirtualSensorSoft/VSSMath') }}
 
 jobs:
   documentation-policy:
@@ -45,7 +45,7 @@ jobs:
 
   build-and-test:
     name: ${{ matrix.name }}
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -149,8 +149,8 @@ jobs:
           retention-days: 30
 
   gcc-debug-fast:
-    name: gcc-debug (fast push suite)
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.full_suite) }}
+    name: gcc-debug (fast fork/manual suite)
+    if: ${{ (github.event_name == 'push' && github.repository != 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && !inputs.full_suite) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -242,7 +242,7 @@ jobs:
 
   full-suite-inventory:
     name: extended-policy
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -264,7 +264,7 @@ jobs:
 
   documentation:
     name: documentation
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -298,7 +298,7 @@ jobs:
 
   performance-contract:
     name: performance-contract (${{ matrix.build_type }})
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -328,7 +328,7 @@ jobs:
 
   algorithm-performance-contract:
     name: algorithm-performance-contract (${{ matrix.build_type }})
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -379,7 +379,7 @@ jobs:
 
   static-analysis:
     name: static-analysis
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -409,7 +409,7 @@ jobs:
 
   coverage:
     name: coverage
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -454,7 +454,7 @@ jobs:
 
   security:
     name: security
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -506,7 +506,7 @@ jobs:
 
   thread-safety:
     name: thread-safety
-    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
+    if: ${{ (github.event_name == 'push' && github.repository == 'VirtualSensorSoft/VSSMath' && github.ref == 'refs/heads/main') || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'VirtualSensorSoft/VSSMath') || (github.event_name == 'workflow_dispatch' && inputs.full_suite) }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
