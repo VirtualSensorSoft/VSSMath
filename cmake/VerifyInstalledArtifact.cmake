@@ -47,6 +47,70 @@ function(vss_run description)
   endif()
 endfunction()
 
+function(vss_probe_reject_foreign_target_origin case_name include_path library_path expected_diagnostic)
+  set(probe_root "${vss_evidence}/imported-target-provenance/${case_name}")
+  set(probe_prefix "${probe_root}/selected-prefix")
+  set(probe_config_dir "${probe_prefix}/lib/cmake/VirtualSensorMath")
+  set(probe_build "${probe_root}/consumer-build")
+  if(EXISTS "${probe_root}" OR IS_SYMLINK "${probe_root}")
+    file(REMOVE_RECURSE "${probe_root}")
+  endif()
+  file(MAKE_DIRECTORY "${probe_config_dir}" "${probe_prefix}/include"
+    "${probe_prefix}/lib" "${probe_root}/foreign/include"
+    "${probe_root}/foreign/lib")
+  file(WRITE "${probe_prefix}/include/probe.hpp" "// selected prefix\n")
+  file(WRITE "${probe_root}/foreign/include/probe.hpp" "// foreign prefix\n")
+  file(COPY_FILE "${vss_archive}" "${probe_prefix}/lib/libvss_math.a")
+  file(COPY_FILE "${vss_archive}" "${probe_root}/foreign/lib/libvss_math.a")
+  file(WRITE "${probe_config_dir}/VirtualSensorMathConfig.cmake"
+    "set(VirtualSensorMath_VERSION 0.1.0)\n"
+    "include(\"${probe_config_dir}/VirtualSensorMathTargets.cmake\")\n")
+  file(WRITE "${probe_config_dir}/VirtualSensorMathConfigVersion.cmake"
+    "set(PACKAGE_VERSION \"0.1.0\")\n"
+    "if(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)\n"
+    "  set(PACKAGE_VERSION_EXACT TRUE)\n"
+    "  set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
+    "endif()\n")
+  file(WRITE "${probe_config_dir}/VirtualSensorMathTargets.cmake"
+    "add_library(VirtualSensorSoft::math STATIC IMPORTED)\n"
+    "set_target_properties(VirtualSensorSoft::math PROPERTIES\n"
+    "  INTERFACE_INCLUDE_DIRECTORIES \"${include_path}\"\n"
+    "  IMPORTED_CONFIGURATIONS RELEASE\n"
+    "  IMPORTED_LOCATION_RELEASE \"${library_path}\")\n")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}" -S "${vss_consumer_source}" -B "${probe_build}"
+      "-DCMAKE_PREFIX_PATH=${probe_prefix}"
+      "-DVirtualSensorMath_DIR=${probe_config_dir}"
+      "-DVSS_EXPECTED_PREFIX=${probe_prefix}"
+      -DCMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE
+      -DCMAKE_FIND_USE_PACKAGE_ROOT_PATH=FALSE
+      -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE
+      -DCMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH=FALSE
+      -DCMAKE_FIND_USE_CMAKE_SYSTEM_PATH=FALSE
+    RESULT_VARIABLE probe_result
+    OUTPUT_VARIABLE probe_stdout
+    ERROR_VARIABLE probe_stderr)
+  set(probe_output "${probe_stdout}${probe_stderr}")
+  file(WRITE "${vss_evidence}/imported-target-provenance-${case_name}.txt"
+    "case=${case_name}\n"
+    "selected_prefix=${probe_prefix}\n"
+    "expected_diagnostic=${expected_diagnostic}\n"
+    "result=${probe_result}\n${probe_output}")
+  if(probe_result EQUAL 0)
+    message(FATAL_ERROR
+      "installed consumer accepted foreign ${case_name} origin; expected: "
+      "${expected_diagnostic}")
+  endif()
+  string(REGEX REPLACE "[ \t\r\n]+" " " probe_output_normalized
+    "${probe_output}")
+  string(FIND "${probe_output_normalized}" "${expected_diagnostic}" diagnostic_index)
+  if(diagnostic_index EQUAL -1)
+    message(FATAL_ERROR
+      "foreign ${case_name} probe failed for an unexpected reason; expected: "
+      "${expected_diagnostic}; output: ${probe_output}")
+  endif()
+endfunction()
+
 set(vss_expected_files
   include/vss/math/Core.hpp
   include/vss/math/Error.hpp
@@ -166,6 +230,21 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --version
   OUTPUT_VARIABLE cmake_version OUTPUT_STRIP_TRAILING_WHITESPACE)
 file(WRITE "${vss_evidence}/verifier-tool-versions.txt"
   "${cmake_version}\n${strings_version}\n")
+
+set(vss_foreign_include_root
+  "${vss_evidence}/imported-target-provenance/foreign-include")
+vss_probe_reject_foreign_target_origin(
+  foreign-include
+  "${vss_foreign_include_root}/foreign/include"
+  "${vss_foreign_include_root}/selected-prefix/lib/libvss_math.a"
+  "VSSMath INTERFACE_INCLUDE_DIRECTORIES path resolves outside VSS_EXPECTED_PREFIX")
+set(vss_foreign_library_root
+  "${vss_evidence}/imported-target-provenance/foreign-library")
+vss_probe_reject_foreign_target_origin(
+  foreign-library
+  "${vss_foreign_library_root}/selected-prefix/include"
+  "${vss_foreign_library_root}/foreign/lib/libvss_math.a"
+  "VSSMath imported library location resolves outside VSS_EXPECTED_PREFIX")
 
 vss_run("consumer configure"
   "${CMAKE_COMMAND}" -S "${vss_consumer_source}" -B "${vss_consumer_build}"

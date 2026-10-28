@@ -131,6 +131,9 @@ require_job_condition gcc-debug-fast "github.repository != 'VirtualSensorSoft/VS
 require_workflow_text "ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest-fast.xml -LE '^ci-extended$'" 'fast tests must exclude the ci-extended selection'
 require_workflow_text "-LE '^ci-once-per-full$'" 'normal full lanes must exclude once-per-full tests'
 require_workflow_text "-L '^ci-once-per-full$'" 'one shared full-suite lane must select once-per-full tests'
+require_workflow_text 'bash scripts/record-standard-library.sh' 'compiler/standard-library evidence capture step is missing'
+require_workflow_text 'bash tests/policy/test_standard_library_evidence.sh' 'compiler/standard-library evidence self-check is missing'
+require_workflow_text 'build/acceptance/standard-library.txt' 'standard-library identity must be uploaded with compiler evidence'
 
 for required in \
   'CCACHE_MAXSIZE: 512M' \
