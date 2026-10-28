@@ -75,6 +75,9 @@ copy_workflow
 sed -i '/^  static-analysis:/a\    env:\n      CCACHE_DIR: runner-temp' "$scratch/workflow.yml"
 expect_failure 'static analysis must remain uncached' "$checker" "$scratch/workflow.yml"
 copy_workflow
+sed -i '/^  static-analysis:/,/^  coverage:/ { /fetch-depth: 0/d; }' "$scratch/workflow.yml"
+expect_failure 'static-analysis must fetch full history for conformance source validation' "$checker" "$scratch/workflow.yml"
+copy_workflow
 sed -i '/bash scripts\/record-standard-library.sh/d' "$scratch/workflow.yml"
 expect_failure 'compiler/standard-library evidence capture step is missing' "$checker" "$scratch/workflow.yml"
 copy_workflow
