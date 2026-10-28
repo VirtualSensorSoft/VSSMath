@@ -1,5 +1,5 @@
-record_status	Under-review
-source_commit	Not assessed
+record_status	Final
+source_commit	3d00dd8ddd7a443ce46fba9f7ccb125245443593
 rule_id	assessment	evidence	deviation
 ENG-CPP-001	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-002	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
@@ -31,7 +31,7 @@ ENG-CPP-027	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessmen
 ENG-CPP-028	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-029	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-030	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
-ENG-CPP-031	Pending	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
+ENG-CPP-031	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-032	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-033	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-034	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
@@ -64,7 +64,7 @@ ENG-CPP-060	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessmen
 ENG-CPP-061	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-062	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-063	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
-ENG-CPP-064	Pending	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
+ENG-CPP-064	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-065	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-066	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None
 ENG-CPP-067	Passed	changes/1-vssmath-foundation/evidence.md#rule-level-assessment	None

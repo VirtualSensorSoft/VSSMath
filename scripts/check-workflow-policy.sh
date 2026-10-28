@@ -169,6 +169,9 @@ analysis_block=$(awk '
 if grep -Eq 'actions/cache@|CCACHE_DIR|CMAKE_CXX_COMPILER_LAUNCHER=ccache' <<<"$analysis_block"; then
   fail 'static analysis must remain uncached'
 fi
+if ! grep -Eq '^[[:space:]]*fetch-depth:[[:space:]]*0[[:space:]]*$' <<<"$analysis_block"; then
+  fail 'static-analysis must fetch full history for conformance source validation'
+fi
 if grep -Eq 'test[_ -]result cache|cache.*ctest|ctest.*cache' "$workflow"; then
   fail 'test results must never be cached'
 fi
