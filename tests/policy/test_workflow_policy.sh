@@ -74,4 +74,10 @@ expect_failure 'full suite must run on the approved Friday schedule' "$checker" 
 copy_workflow
 sed -i '/^  static-analysis:/a\    env:\n      CCACHE_DIR: runner-temp' "$scratch/workflow.yml"
 expect_failure 'static analysis must remain uncached' "$checker" "$scratch/workflow.yml"
+copy_workflow
+sed -i '/bash scripts\/record-standard-library.sh/d' "$scratch/workflow.yml"
+expect_failure 'compiler/standard-library evidence capture step is missing' "$checker" "$scratch/workflow.yml"
+copy_workflow
+sed -i '\#build/acceptance/standard-library.txt#d' "$scratch/workflow.yml"
+expect_failure 'standard-library identity must be uploaded with compiler evidence' "$checker" "$scratch/workflow.yml"
 printf '%s\n' 'Workflow policy tests passed.'

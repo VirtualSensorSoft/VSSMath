@@ -126,6 +126,10 @@ jobs:
         run: cmake --build build --parallel 2
       - name: Prepare test evidence directory
         run: mkdir -p build/acceptance
+      - name: Record compiler and standard-library identity
+        run: bash scripts/record-standard-library.sh '${{ matrix.compiler }}' build/acceptance/standard-library.txt
+      - name: Test compiler and standard-library evidence capture
+        run: bash tests/policy/test_standard_library_evidence.sh '${{ matrix.compiler }}'
       - name: Run full compiler tests
         run: ctest --test-dir build --output-on-failure --output-junit build/acceptance/ctest.xml -LE '^ci-once-per-full$'
       - name: Record compiler cache statistics
@@ -143,6 +147,7 @@ jobs:
           name: vssmath-build-${{ matrix.name }}
           path: |
             build/acceptance/*.xml
+            build/acceptance/standard-library.txt
             build/acceptance/tool-versions.txt
             build/ccache-stats.txt
           if-no-files-found: warn
