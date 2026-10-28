@@ -53,6 +53,15 @@ bool finite(ConstMatrixView matrix) noexcept {
   return true;
 }
 
+bool finite(ConstVectorView vector) noexcept {
+  for (Index index = 0U; index < vector.size(); ++index) {
+    if (!std::isfinite(vector.at(index))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 Result<Scalar> matrixOneNorm(ConstMatrixView matrix) {
   Scalar norm = 0.0;
   for (Index column = 0U; column < matrix.columns(); ++column) {
@@ -339,6 +348,11 @@ LUFactorization::solve(ConstVectorView rightHandSide,
         ErrorCode::DimensionMismatch,
         "LU factorization and right-hand side dimensions differ");
   }
+  if (!finite(rightHandSide)) {
+    return Result<SolveOutcome<Vector>>::failure(
+        ErrorCode::NonFiniteInput,
+        "LU right-hand side contains a non-finite value");
+  }
   if (singular_) {
     return Result<SolveOutcome<Vector>>::failure(
         ErrorCode::Singular, "cannot solve with a singular LU factorization");
@@ -376,6 +390,16 @@ LUFactorization::solve(ConstMatrixView rightHandSides,
     return Result<SolveOutcome<Matrix>>::failure(
         ErrorCode::DimensionMismatch,
         "LU factorization and right-hand side dimensions differ");
+  }
+  if (rightHandSides.columns() == 0U) {
+    return Result<SolveOutcome<Matrix>>::failure(
+        ErrorCode::InvalidExtent,
+        "LU matrix right-hand side must have at least one column");
+  }
+  if (!finite(rightHandSides)) {
+    return Result<SolveOutcome<Matrix>>::failure(
+        ErrorCode::NonFiniteInput,
+        "LU matrix right-hand side contains a non-finite value");
   }
   if (singular_) {
     return Result<SolveOutcome<Matrix>>::failure(
