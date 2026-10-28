@@ -329,6 +329,65 @@ void validationFailuresAndEmptyRightHandSide() {
                ErrorCode::InvalidExtent);
 }
 
+void invalidRightHandSidePrecedesFactorClassification() {
+  const Matrix singularInput = matrix({{1.0, 2.0}, {2.0, 4.0}});
+  const auto singularResult =
+      vss::math::linear::factorizeLU(singularInput.view());
+  VSS_CHECK(singularResult.hasValue());
+  const auto& singular = singularResult.value();
+
+  checkFailure(
+      singular.solve(
+          vector({std::numeric_limits<Scalar>::quiet_NaN(), 1.0}).view()),
+      ErrorCode::NonFiniteInput);
+  checkFailure(
+      singular.solve(
+          vector({1.0, std::numeric_limits<Scalar>::infinity()}).view()),
+      ErrorCode::NonFiniteInput);
+  const Matrix nanRightHandSides =
+      matrix({{1.0, std::numeric_limits<Scalar>::quiet_NaN()}, {2.0, 3.0}});
+  checkFailure(singular.solve(nanRightHandSides.view()),
+               ErrorCode::NonFiniteInput);
+  const Matrix infiniteRightHandSides =
+      matrix({{1.0, std::numeric_limits<Scalar>::infinity()}, {2.0, 3.0}});
+  checkFailure(singular.solve(infiniteRightHandSides.view()),
+               ErrorCode::NonFiniteInput);
+
+  const Matrix emptyColumns(2U, 0U);
+  checkFailure(singular.solve(emptyColumns.view()), ErrorCode::InvalidExtent);
+  const Matrix wrongRows(1U, 2U);
+  checkFailure(singular.solve(wrongRows.view()), ErrorCode::DimensionMismatch);
+  const Matrix wrongRowsWithNan =
+      matrix({{1.0, std::numeric_limits<Scalar>::quiet_NaN()}});
+  checkFailure(singular.solve(wrongRowsWithNan.view()),
+               ErrorCode::DimensionMismatch);
+
+  SolveOptions invalidOptions;
+  invalidOptions.illConditionedPolicy =
+      invalidEnumValue<IllConditionedSolvePolicy>();
+  checkFailure(
+      singular.solve(
+          vector({std::numeric_limits<Scalar>::quiet_NaN(), 1.0}).view(),
+          invalidOptions),
+      ErrorCode::InvalidDomain);
+
+  const Matrix illConditionedInput = matrix({{1.0, 0.0}, {0.0, 1.0e-11}});
+  const auto illConditionedResult =
+      vss::math::linear::factorizeLU(illConditionedInput.view());
+  VSS_CHECK(illConditionedResult.hasValue());
+  const auto& illConditioned = illConditionedResult.value();
+  VSS_CHECK(illConditioned.conditionReport().classification ==
+            ConditionClassification::IllConditioned);
+  checkFailure(
+      illConditioned.solve(
+          vector({std::numeric_limits<Scalar>::quiet_NaN(), 1.0}).view()),
+      ErrorCode::NonFiniteInput);
+  checkFailure(illConditioned.solve(infiniteRightHandSides.view()),
+               ErrorCode::NonFiniteInput);
+  checkFailure(illConditioned.solve(emptyColumns.view()),
+               ErrorCode::InvalidExtent);
+}
+
 void pivotTieUsesLowestOriginalRow() {
   const Matrix input = matrix({{1.0, 1.0}, {1.0, 2.0}});
   const auto result = vss::math::linear::factorizeLU(input.view());
@@ -368,6 +427,7 @@ int main() { // NOLINT(bugprone-exception-escape): test failures use exit
   illConditionedPolicyBoundary();
   invalidSolvePolicy();
   validationFailuresAndEmptyRightHandSide();
+  invalidRightHandSidePrecedesFactorClassification();
   pivotTieUsesLowestOriginalRow();
 }
 
