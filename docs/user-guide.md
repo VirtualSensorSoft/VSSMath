@@ -10,7 +10,7 @@ cmake --install build --prefix "$PWD/install"
 
 Consumers add the prefix to `CMAKE_PREFIX_PATH` and request the exact
 development package with
-`find_package(VirtualSensorMath 0.1.0 EXACT CONFIG REQUIRED)`, then link the
+`find_package(VirtualSensorMath 0.1.1 EXACT CONFIG REQUIRED)`, then link the
 exported `VirtualSensorSoft::math` target. Before 1.0.0, the package version
 file uses CMake's same-minor compatibility rule: a request for the same major
 and minor that is not newer than the installed version is compatible. This

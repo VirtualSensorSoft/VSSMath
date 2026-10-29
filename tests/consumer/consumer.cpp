@@ -1,4 +1,5 @@
 #include <iostream>
+#include <limits>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Operations.hpp>
 #include <vss/math/Vector.hpp>
@@ -13,6 +14,12 @@ bool require(bool condition, const char* message) {
     return false;
   }
   return true;
+}
+
+template <class ResultType>
+bool requireError(const ResultType& result, vss::math::ErrorCode code,
+                  const char* message) {
+  return require(!result.hasValue() && result.status().code() == code, message);
 }
 
 } // namespace
@@ -77,6 +84,62 @@ int main() {
   }
   if (!require(solved.value().conditionReport().has_value(),
                "LU solve did not return condition diagnostics")) {
+    return 1;
+  }
+
+  Matrix singular(2U, 2U);
+  const auto singularFactor = linear::factorizeLU(singular.view());
+  if (!require(singularFactor.hasValue() && singularFactor.value().isSingular(),
+               "zero matrix did not produce a singular LU diagnostic")) {
+    return 1;
+  }
+  Vector nanVector(2U);
+  nanVector.at(0U) = std::numeric_limits<Scalar>::quiet_NaN();
+  nanVector.at(1U) = 1.0;
+  if (!requireError(singularFactor.value().solve(nanVector.view()),
+                    ErrorCode::NonFiniteInput,
+                    "singular vector solve did not prioritize NaN input")) {
+    return 1;
+  }
+  Matrix infiniteMatrix(2U, 1U);
+  infiniteMatrix.at(0U, 0U) = std::numeric_limits<Scalar>::infinity();
+  infiniteMatrix.at(1U, 0U) = 1.0;
+  if (!requireError(singularFactor.value().solve(infiniteMatrix.view()),
+                    ErrorCode::NonFiniteInput,
+                    "singular matrix solve did not prioritize infinity")) {
+    return 1;
+  }
+  Matrix emptyColumns(2U, 0U);
+  if (!requireError(singularFactor.value().solve(emptyColumns.view()),
+                    ErrorCode::InvalidExtent,
+                    "singular matrix solve accepted an empty RHS")) {
+    return 1;
+  }
+
+  Matrix illConditionedInput(2U, 2U);
+  illConditionedInput.at(0U, 0U) = 1.0;
+  illConditionedInput.at(1U, 1U) = 1.0e-8;
+  linear::FactorizationOptions factorizationOptions;
+  factorizationOptions.conditionLimit = 2.0;
+  const auto illConditionedFactor =
+      linear::factorizeLU(illConditionedInput.view(), factorizationOptions);
+  if (!require(
+          illConditionedFactor.hasValue() &&
+              illConditionedFactor.value().conditionReport().classification ==
+                  linear::ConditionClassification::IllConditioned,
+          "configured ill-conditioned LU factorization did not succeed")) {
+    return 1;
+  }
+  if (!requireError(
+          illConditionedFactor.value().solve(nanVector.view()),
+          ErrorCode::NonFiniteInput,
+          "ill-conditioned vector solve did not prioritize NaN input")) {
+    return 1;
+  }
+  if (!requireError(
+          illConditionedFactor.value().solve(infiniteMatrix.view()),
+          ErrorCode::NonFiniteInput,
+          "ill-conditioned matrix solve did not prioritize infinity")) {
     return 1;
   }
 

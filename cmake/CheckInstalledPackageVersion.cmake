@@ -34,10 +34,13 @@ endif()
 file(MAKE_DIRECTORY "${vss_probe_scratch}")
 
 set(vss_package_version_cases
-  "0.1.0|EXACT|TRUE"
+  "0.1.1|EXACT|TRUE"
   "0.1||TRUE"
+  "0.1.0||TRUE"
+  "0.1.0|EXACT|FALSE"
   "0.0.9||FALSE"
-  "0.1.1|EXACT|FALSE"
+  "0.1.2||FALSE"
+  "0.1.2|EXACT|FALSE"
   "0.2.0||FALSE")
 
 foreach(test_case IN LISTS vss_package_version_cases)

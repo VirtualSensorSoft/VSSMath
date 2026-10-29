@@ -12,6 +12,9 @@ This directory is the repository's local source of documentation policy, enginee
 - [Analyzer suppressions](deviations/analyzer-suppressions.md)
 - [Numerical requirement map](numerical-requirements.tsv)
 - [Development-release evidence](changes/1-vssmath-foundation/evidence.md)
+- [0.1.1 correction release records](changes/v0.1.1-release/README.md)
+- [0.1.1 correction specification](changes/v0.1.1-release/specification.md)
+- [0.1.1 correction implementation plan](changes/v0.1.1-release/implementation-plan.md)
 - [Archive](archive/README.md)
 
 ## Dependencies and toolchain updates
