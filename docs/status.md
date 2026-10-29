@@ -1,21 +1,18 @@
 # Status and support
 
-The 0.1.1 correction source is under review and has not been released or
-installed. The current conformance record is therefore marked Under-review;
-its prior 0.1.0 evidence remains historical and is not carried forward as an
-assessment of 0.1.1. The immutable 0.1.0 release/install remains affected by the
-LU validation defect corrected in the 0.1.1 source. No release, production,
-ISO-certification, or qualified timing claim is made for 0.1.1.
+The merged 0.1.1 source candidate at commit `cf98e60530da9ce403741e38b894ae4989625aa7` passed all 16
+required canonical hosted CI jobs. The source assessment and conformance record are prepared for
+documentation review; no 0.1.1 release, tag, or installation has been published. The immutable 0.1.0
+artifact remains affected by the LU validation defect corrected in the 0.1.1 source. No production,
+ISO-certification, or qualified timing claim is made.
 
-The last completed supported-evidence profile is limited to the exact source
-revision and configurations listed in the [0.1.0 development-release evidence](development/changes/1-vssmath-foundation/evidence.md).
-Other operating systems, architectures, compiler/standard-library combinations,
-and deployment environments require separate validation before being described
-as supported. The captured profiles do not establish Clang with libc++.
+The current assessment is limited to Ubuntu 24.04.5 x86-64, GCC 13.3.0 with libstdc++ release 13,
+and Clang 18.1.3 with libstdc++ release 14. The captured profiles do not establish Clang with
+libc++, another operating system, another architecture, or another deployment environment. See the
+[0.1.1 source assessment](development/changes/v0.1.1-release/evidence.md) for exact job selections,
+results, scanner limitations, and rule-level evidence.
 
-The test suite covers documented numerical contracts and install consumption.
-CI selections are configuration-specific; the reported selected-test counts do
-not represent the full registered inventory. Tests do not prove universal
-numerical correctness, safety for arbitrary domain-specific input, or performance
-on unmeasured hardware. No qualified performance baseline is implied by the
-current development-only timing exception.
+CI selection counts are configuration-specific and do not represent the full registered test
+inventory. Tests do not prove universal numerical correctness, safety for arbitrary domain-specific
+input, or performance on unmeasured hardware. The approved 0.1.1 development timing exception does
+not establish a qualified performance baseline.

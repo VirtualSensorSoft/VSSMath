@@ -15,6 +15,8 @@ This directory is the repository's local source of documentation policy, enginee
 - [0.1.1 correction release records](changes/v0.1.1-release/README.md)
 - [0.1.1 correction specification](changes/v0.1.1-release/specification.md)
 - [0.1.1 correction implementation plan](changes/v0.1.1-release/implementation-plan.md)
+- [0.1.1 source assessment and evidence](changes/v0.1.1-release/evidence.md)
+- [0.1.1 development source notes](changes/v0.1.1-release/release-notes.md)
 - [Archive](archive/README.md)
 
 ## Dependencies and toolchain updates
