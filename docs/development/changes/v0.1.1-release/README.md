@@ -1,26 +1,24 @@
 # VSSMath 0.1.1 development correction
 
-Status: under review; no 0.1.1 release or installation has been published.
+Status: merged source candidate; evidence PR under review. No 0.1.1 release or installation has been
+published.
 
 - [Specification](specification.md)
 - [Implementation plan](implementation-plan.md)
-- [Source evidence](evidence.md)
+- [Source assessment and evidence](evidence.md)
+- [Development source notes](release-notes.md)
 
-This patch aligns package metadata with version `0.1.1`, retains the LU solve
-input-validation correction, and adds an independent installed-consumer check
-for singular and ill-conditioned LU error precedence. It preserves the existing
-package name, target, namespace, C++20 interface, and dependency profile.
+This patch aligns package metadata with version `0.1.1`, retains the LU solve input-validation
+correction, and adds an independent installed-consumer check for singular and ill-conditioned LU
+error precedence. The package name, target, namespace, C++20 interface, public API and runtime
+dependency profile are unchanged.
 
-The immutable 0.1.0 artifact is unchanged and remains affected by the LU defect.
-The current assessment and evidence are not finalized until the implementation
-is merged and its canonical hosted CI run is reviewed. See public tracking issue
-[#21](https://github.com/VirtualSensorSoft/VSSMath/issues/21), existing LU issue
-[#16](https://github.com/VirtualSensorSoft/VSSMath/issues/16), correction PR
-[#20](https://github.com/VirtualSensorSoft/VSSMath/pull/20), and timing review
-issue [#19](https://github.com/VirtualSensorSoft/VSSMath/issues/19).
+The immutable 0.1.0 artifact is unchanged and remains affected by the LU defect. The exact 0.1.1
+source candidate and hosted evidence are recorded in the linked assessment. The separate timing
+exception applies only to `ENG-CPP-076`; no qualified timing or production claim is made. Release
+publication and installation require a separately approved exact artifact packet.
 
-The separately scoped [0.1.1 timing exception](../../deviations/development-timing-0.1.1.md)
-does not waive correctness, sanitizers, allocation contracts, thread-safety,
-static analysis, coverage, security, or hosted performance diagnostics. Release
-publication and installation require a separately approved exact artifact
-packet.
+Tracking: public issue [#21](https://github.com/VirtualSensorSoft/VSSMath/issues/21), LU issue
+[#16](https://github.com/VirtualSensorSoft/VSSMath/issues/16), source correction PR
+[#22](https://github.com/VirtualSensorSoft/VSSMath/pull/22), and timing review issue
+[#19](https://github.com/VirtualSensorSoft/VSSMath/issues/19).
