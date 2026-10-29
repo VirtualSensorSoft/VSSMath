@@ -23,7 +23,7 @@ cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
 ```
 
-The project version is `0.1.0`. The installed CMake package is
+The project version under review is `0.1.1`. The installed CMake package is
 `VirtualSensorMath`, and the exported target is
 `VirtualSensorSoft::math`.
 
