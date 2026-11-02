@@ -13,9 +13,8 @@ namespace vss::math {
 class Tensor final {
 public:
   /// @brief Creates filled storage when shape and resource limit permit it.
-  [[nodiscard]] static Result<Tensor> create(const TensorShape& shape,
-                                             Scalar fill,
-                                             const TensorLimits& limits);
+  [[nodiscard]] static Result<Tensor>
+  create(const TensorShape& shape, Scalar fill, const TensorLimits& limits);
   /// @brief Deep-copies the shape and scalar storage.
   Tensor(const Tensor&) = default;
   /// @brief Replaces this value with a deep copy.
@@ -38,6 +37,7 @@ public:
   [[nodiscard]] Scalar* data() noexcept;
   /// @brief Returns immutable contiguous row-major storage.
   [[nodiscard]] const Scalar* data() const noexcept;
+
 private:
   Tensor(TensorShape shape, std::vector<Scalar> values) noexcept;
   [[nodiscard]] Index linearIndex(std::span<const Index> indices) const;

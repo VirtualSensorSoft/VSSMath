@@ -1,9 +1,8 @@
-#include <vss/math/Tensor.hpp>
+#include "Test.hpp"
 
 #include <array>
 #include <stdexcept>
-
-#include "Test.hpp"
+#include <vss/math/Tensor.hpp>
 
 int main() {
   using vss::math::ErrorCode;

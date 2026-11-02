@@ -1,8 +1,8 @@
 #ifndef VSS_MATH_VECTOR_HPP
 #define VSS_MATH_VECTOR_HPP
 
-#include <vector>
 #include <span>
+#include <vector>
 #include <vss/math/Core.hpp>
 
 namespace vss::math {

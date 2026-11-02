@@ -1,8 +1,7 @@
-#include <vss/math/Tensor.hpp>
-
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vss/math/Tensor.hpp>
 
 namespace vss::math {
 Tensor::Tensor(TensorShape shape, std::vector<Scalar> values) noexcept
@@ -12,14 +11,17 @@ Result<Tensor> Tensor::create(const TensorShape& shape, Scalar fill,
                               const TensorLimits& limits) {
   const Status status = limits.validate(shape.elementCount());
   if (!status.ok()) {
-    return Result<Tensor>::failure(status.code(), std::string{status.message()});
+    return Result<Tensor>::failure(status.code(),
+                                   std::string{status.message()});
   }
   return Result<Tensor>::success(
       Tensor(shape, std::vector<Scalar>(shape.elementCount(), fill)));
 }
 
 const TensorShape& Tensor::shape() const noexcept { return shape_; }
-Extent Tensor::size() const noexcept { return static_cast<Extent>(values_.size()); }
+Extent Tensor::size() const noexcept {
+  return static_cast<Extent>(values_.size());
+}
 Scalar* Tensor::data() noexcept { return values_.data(); }
 const Scalar* Tensor::data() const noexcept { return values_.data(); }
 

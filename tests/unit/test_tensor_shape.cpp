@@ -1,11 +1,10 @@
-#include <vss/math/TensorShape.hpp>
+#include "Test.hpp"
 
 #include <array>
 #include <limits>
 #include <span>
 #include <vector>
-
-#include "Test.hpp"
+#include <vss/math/TensorShape.hpp>
 
 int main() {
   using vss::math::ErrorCode;
@@ -28,8 +27,8 @@ int main() {
   VSS_CHECK(empty.hasValue());
   VSS_CHECK(empty.value().elementCount() == 0U);
 
-  auto overflow = TensorShape::create(std::array<std::size_t, 2>{
-      std::numeric_limits<std::size_t>::max(), 2U});
+  auto overflow = TensorShape::create(
+      std::array<std::size_t, 2>{std::numeric_limits<std::size_t>::max(), 2U});
   VSS_CHECK(!overflow.hasValue());
   VSS_CHECK(overflow.status().code() == ErrorCode::SizeOverflow);
 
