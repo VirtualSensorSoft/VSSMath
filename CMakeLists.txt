@@ -33,6 +33,9 @@ vss_math_add_format_check()
 add_library(vss_math STATIC
   src/Error.cpp
   src/Matrix.cpp
+  src/Tensor.cpp
+  src/TensorLimits.cpp
+  src/TensorShape.cpp
   src/Operations.cpp
   src/covariance/Covariance.cpp
   src/differentiation/FiniteDifference.cpp

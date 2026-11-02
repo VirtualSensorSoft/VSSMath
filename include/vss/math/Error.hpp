@@ -47,7 +47,9 @@ enum class ErrorCode : std::uint8_t {
   /// @brief A user callback reported an operation failure.
   CallbackFailure,
   /// @brief An iterative operation did not meet its convergence contract.
-  NoConvergence
+  NoConvergence,
+  /// @brief A configured numerical storage limit would be exceeded.
+  ResourceLimit
 };
 
 /// @brief Describes success or failure without throwing for normal outcomes.

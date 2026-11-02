@@ -1,7 +1,9 @@
+#include <array>
 #include <iostream>
 #include <limits>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Operations.hpp>
+#include <vss/math/Tensor.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/linear/LU.hpp>
 #include <vss/math/version.hpp>
@@ -26,6 +28,19 @@ bool requireError(const ResultType& result, vss::math::ErrorCode code,
 
 int main() {
   using namespace vss::math;
+
+  const std::array<Extent, 2> tensorExtents{2U, 2U};
+  const auto tensorShape = TensorShape::create(tensorExtents);
+  if (!require(tensorShape.hasValue(), "tensor shape construction failed")) {
+    return 1;
+  }
+  auto tensor = Tensor::create(tensorShape.value(), 0.0, TensorLimits{4U});
+  if (!require(tensor.hasValue(), "tensor allocation failed"))
+    return 1;
+  tensor.value().at(std::array<Index, 2>{1U, 1U}) = 5.0;
+  if (!require(tensor.value().at(std::array<Index, 2>{1U, 1U}) == 5.0,
+               "installed tensor access failed"))
+    return 1;
 
   Matrix matrix(2U, 2U);
   matrix.at(0U, 0U) = 1.0;

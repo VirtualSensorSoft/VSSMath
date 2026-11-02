@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -21,7 +22,8 @@ void checkIndex(Index index, Extent size) {
 
 Vector::Vector(Extent size, Scalar value) : values_(size, value) {}
 
-Vector::Vector(std::vector<Scalar> values) : values_(std::move(values)) {}
+Vector::Vector(std::span<const Scalar> values)
+    : values_(values.begin(), values.end()) {}
 
 Vector::Vector(Vector&& other) noexcept : values_(std::move(other.values_)) {
   other.values_.clear();

@@ -119,6 +119,9 @@ set(vss_expected_files
   include/vss/math/Operations.hpp
   include/vss/math/Result.hpp
   include/vss/math/Tolerance.hpp
+  include/vss/math/Tensor.hpp
+  include/vss/math/TensorLimits.hpp
+  include/vss/math/TensorShape.hpp
   include/vss/math/Vector.hpp
   include/vss/math/VectorView.hpp
   include/vss/math/covariance/Covariance.hpp
