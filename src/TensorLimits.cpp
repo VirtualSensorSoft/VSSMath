@@ -1,3 +1,5 @@
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
 #include <vss/math/TensorLimits.hpp>
 
 namespace vss::math {

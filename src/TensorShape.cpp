@@ -1,7 +1,11 @@
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
+#include <vss/math/Core.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/TensorShape.hpp>
 
 namespace vss::math {

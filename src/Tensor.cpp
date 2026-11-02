@@ -1,7 +1,13 @@
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
+#include <vss/math/Core.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
+#include <vss/math/TensorLimits.hpp>
+#include <vss/math/TensorShape.hpp>
 
 namespace vss::math {
 Tensor::Tensor(TensorShape shape, std::vector<Scalar> values) noexcept
