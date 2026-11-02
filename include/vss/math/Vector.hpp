@@ -2,6 +2,7 @@
 #define VSS_MATH_VECTOR_HPP
 
 #include <vector>
+#include <span>
 #include <vss/math/Core.hpp>
 
 namespace vss::math {
@@ -34,12 +35,10 @@ public:
   /// @note Complexity: Linear initialization time and O(size) storage.
   explicit Vector(Extent size, Scalar value = 0.0);
 
-  /// @brief Takes ownership of the supplied values.
-  /// @param values Values to move into contiguous storage.
-  /// @post The vector owns the supplied sequence; the argument remains valid
-  ///       but its contents are unspecified by the standard move operation.
-  /// @note Complexity: Constant time under the standard vector move contract.
-  explicit Vector(std::vector<Scalar> values);
+  /// @brief Copies values from a contiguous borrowed range.
+  /// @param values Values to copy; no alias to the range is retained.
+  /// @throws std::bad_alloc if owned storage cannot be allocated.
+  explicit Vector(std::span<const Scalar> values);
 
   /// @brief Performs a deep copy.
   /// @post Both vectors own independent storage with equal values.
