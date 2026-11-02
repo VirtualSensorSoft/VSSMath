@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>

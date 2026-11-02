@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 #include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/TensorShape.hpp>
 

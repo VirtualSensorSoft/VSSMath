@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 #include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/TensorLimits.hpp>
@@ -42,7 +43,7 @@ Index Tensor::linearIndex(std::span<const Index> indices) const {
       throw std::out_of_range("IndexOutOfRange: tensor axis " +
                               std::to_string(axis));
     }
-    offset = offset * axisExtent + indices[axis];
+    offset = (offset * axisExtent) + indices[axis];
   }
   return offset;
 }
