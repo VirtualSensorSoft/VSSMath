@@ -87,6 +87,8 @@ const char* errorCodeName(ErrorCode code) noexcept {
     return "CallbackFailure";
   case ErrorCode::NoConvergence:
     return "NoConvergence";
+  case ErrorCode::ResourceLimit:
+    return "ResourceLimit";
   }
   return "Unknown";
 }
