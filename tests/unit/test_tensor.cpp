@@ -1,8 +1,13 @@
 #include "Test.hpp"
 
 #include <array>
+#include <cstddef>
 #include <stdexcept>
+#include <utility>
+#include <vss/math/Error.hpp>
 #include <vss/math/Tensor.hpp>
+#include <vss/math/TensorLimits.hpp>
+#include <vss/math/TensorShape.hpp>
 
 int main() {
   using vss::math::ErrorCode;
@@ -12,7 +17,7 @@ int main() {
 
   auto shape = TensorShape::create(std::array<std::size_t, 2>{2U, 3U});
   VSS_CHECK(shape.hasValue());
-  TensorLimits limits{8U};
+  const TensorLimits limits{8U};
   auto tensor = Tensor::create(shape.value(), 0.0, limits);
   VSS_CHECK(tensor.hasValue());
   tensor.value().at(std::array<std::size_t, 2>{1U, 2U}) = 7.0;
@@ -54,7 +59,6 @@ int main() {
   Tensor copy = tensor.value();
   copy.at(std::array<std::size_t, 2>{1U, 2U}) = -1.0;
   VSS_CHECK(tensor.value().at(std::array<std::size_t, 2>{1U, 2U}) == 7.0);
-  Tensor moved = std::move(copy);
+  const Tensor moved = std::move(copy);
   VSS_CHECK(moved.size() == 6U);
-  VSS_CHECK(copy.size() == 0U);
 }

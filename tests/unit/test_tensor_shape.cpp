@@ -1,9 +1,11 @@
 #include "Test.hpp"
 
 #include <array>
+#include <cstddef>
 #include <limits>
 #include <span>
 #include <vector>
+#include <vss/math/Error.hpp>
 #include <vss/math/TensorShape.hpp>
 
 int main() {
