@@ -172,7 +172,7 @@ Result<Scalar> MultivariateMoments::componentSkewness(Index component) const {
   }
   const Scalar variance = tensorValue(second_->tensor(), component, 2U);
   const Scalar third = tensorValue(third_->tensor(), component, 3U);
-  const Scalar skewness = third / (variance * std::sqrt(variance));
+  const Scalar skewness = (third / variance) / std::sqrt(variance);
   if (!isFinite(skewness)) {
     return resultFailure(ErrorCode::NonFiniteResult,
                          "component skewness is not finite");
@@ -192,7 +192,7 @@ Result<Scalar> MultivariateMoments::componentKurtosis(Index component) const {
   }
   const Scalar variance = tensorValue(second_->tensor(), component, 2U);
   const Scalar fourth = tensorValue(fourth_->tensor(), component, 4U);
-  const Scalar kurtosis = fourth / (variance * variance);
+  const Scalar kurtosis = (fourth / variance) / variance;
   if (!isFinite(kurtosis)) {
     return resultFailure(ErrorCode::NonFiniteResult,
                          "component kurtosis is not finite");

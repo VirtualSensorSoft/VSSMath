@@ -114,4 +114,22 @@ int main() {
   VSS_CHECK(aggregate.setFirstMoment(zero_mean.value()).ok());
   expectError(aggregate.componentSkewness(0U), ErrorCode::InvalidDomain);
   expectError(aggregate.componentKurtosis(0U), ErrorCode::InvalidDomain);
+
+  auto large_aggregate_result = MultivariateMoments::create(1U);
+  VSS_CHECK(large_aggregate_result.hasValue());
+  auto large_mean = FirstMoment::create(makeTensor<1, 1>({1U}, {1.0}));
+  auto large_variance =
+      SecondMoment::create(makeTensor<2, 1>({1U, 1U}, {1.0e250}));
+  auto large_third =
+      ThirdMoment::create(makeTensor<3, 1>({1U, 1U, 1U}, {1.0e300}));
+  auto large_fourth =
+      FourthMoment::create(makeTensor<4, 1>({1U, 1U, 1U, 1U}, {1.0e300}));
+  VSS_CHECK(large_mean && large_variance && large_third && large_fourth);
+  auto& large_aggregate = large_aggregate_result.value();
+  VSS_CHECK(large_aggregate.setFirstMoment(large_mean.value()).ok());
+  VSS_CHECK(large_aggregate.setSecondMoment(large_variance.value()).ok());
+  VSS_CHECK(large_aggregate.setThirdMoment(large_third.value()).ok());
+  VSS_CHECK(large_aggregate.setFourthMoment(large_fourth.value()).ok());
+  VSS_CHECK(large_aggregate.componentSkewness(0U).value() > 0.0);
+  VSS_CHECK(large_aggregate.componentKurtosis(0U).value() > 0.0);
 }
