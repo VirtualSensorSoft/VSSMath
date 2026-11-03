@@ -54,12 +54,12 @@ Status validateMomentTensor(const Tensor& tensor, Extent order,
   }
 
   std::array<Index, 4U> permutation{0U, 1U, 2U, 3U};
-  std::span<Index> active_permutation{permutation.data(), order};
+  const std::span<Index> active_permutation{permutation.data(), order};
   bool has_permutation = true;
   while (has_permutation) {
     for (Index linear = 0U; linear < elements.size(); ++linear) {
       std::array<Index, 4U> coordinates{};
-      std::span<Index> active_coordinates{coordinates.data(), order};
+      const std::span<Index> active_coordinates{coordinates.data(), order};
       Index remainder = linear;
       for (Index axis = order; axis > 0U; --axis) {
         const Index component = axis - 1U;
