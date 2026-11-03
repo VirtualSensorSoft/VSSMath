@@ -66,8 +66,7 @@ template <class T> T unwrap(Result<T> result) {
   if (result.hasValue()) {
     return std::move(result).value();
   }
-  throw NumericalError(result.status().code(),
-                       std::string(result.status().message()));
+  throw NumericalError(result.status().code(), result.status().message());
 }
 
 } // namespace

@@ -1,9 +1,10 @@
+#include <algorithm>
+#include <span>
 #include <string>
 #include <utility>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/NumericalError.hpp>
-#include <vss/math/Operations.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/TensorLimits.hpp>
@@ -38,13 +39,17 @@ bool sameShape(const Tensor& lhs, const Tensor& rhs) {
   return true;
 }
 
+std::span<const Scalar> elements(const Tensor& tensor) {
+  return {tensor.data(), tensor.size()};
+}
+
+std::span<Scalar> elements(Tensor& tensor) {
+  return {tensor.data(), tensor.size()};
+}
+
 bool finite(const Tensor& tensor) {
-  for (Extent index = 0U; index < tensor.size(); ++index) {
-    if (!isFinite(tensor.data()[index])) {
-      return false;
-    }
-  }
-  return true;
+  return std::ranges::all_of(elements(tensor),
+                             [](Scalar value) { return isFinite(value); });
 }
 
 template <class Operation>
@@ -67,12 +72,15 @@ Result<Tensor> binaryOperation(const Tensor& lhs, const Tensor& rhs,
   if (!result.hasValue()) {
     return fromStatus<Tensor>(result.status());
   }
-  for (Extent index = 0U; index < lhs.size(); ++index) {
-    const Scalar value = operation(lhs.data()[index], rhs.data()[index]);
+  const auto lhsValues = elements(lhs);
+  const auto rhsValues = elements(rhs);
+  auto resultValues = elements(result.value());
+  for (Extent index = 0U; index < lhsValues.size(); ++index) {
+    const Scalar value = operation(lhsValues[index], rhsValues[index]);
     if (options.requireFinite && !isFinite(value)) {
       return failure<Tensor>(ErrorCode::NonFiniteResult, label);
     }
-    result.value().data()[index] = value;
+    resultValues[index] = value;
   }
   return result;
 }
@@ -81,8 +89,7 @@ template <class T> T unwrap(Result<T> result) {
   if (result.hasValue()) {
     return std::move(result).value();
   }
-  throw NumericalError(result.status().code(),
-                       std::string(result.status().message()));
+  throw NumericalError(result.status().code(), result.status().message());
 }
 
 } // namespace
@@ -117,13 +124,15 @@ Result<Tensor> scale(const Tensor& value, Scalar factor, TensorLimits limits,
   if (!result.hasValue()) {
     return fromStatus<Tensor>(result.status());
   }
-  for (Extent index = 0U; index < value.size(); ++index) {
-    const Scalar scaled = value.data()[index] * factor;
+  const auto inputValues = elements(value);
+  auto resultValues = elements(result.value());
+  for (Extent index = 0U; index < inputValues.size(); ++index) {
+    const Scalar scaled = inputValues[index] * factor;
     if (options.requireFinite && !isFinite(scaled)) {
       return failure<Tensor>(ErrorCode::NonFiniteResult,
                              "tensor scale produced a non-finite result");
     }
-    result.value().data()[index] = scaled;
+    resultValues[index] = scaled;
   }
   return result;
 }

@@ -2,7 +2,7 @@
 #define VSS_MATH_NUMERICAL_ERROR_HPP
 
 #include <stdexcept>
-#include <string>
+#include <string_view>
 #include <vss/math/Error.hpp>
 
 namespace vss::math {
@@ -16,7 +16,7 @@ public:
   /// @param code Original failure code; it must not be ErrorCode::None.
   /// @param message Diagnostic text from the failed checked operation.
   /// @throws std::invalid_argument when @p code is ErrorCode::None.
-  NumericalError(ErrorCode code, std::string message);
+  NumericalError(ErrorCode code, std::string_view message);
 
   /// @brief Returns the error code carried from the checked operation.
   [[nodiscard]] ErrorCode code() const noexcept;
