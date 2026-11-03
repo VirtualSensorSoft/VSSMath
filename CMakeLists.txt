@@ -35,6 +35,8 @@ add_library(vss_math STATIC
   src/Matrix.cpp
   src/FirstMoment.cpp
   src/FourthMoment.cpp
+  src/MultivariateMoments.cpp
+  src/PrintOptions.cpp
   src/NumericalError.cpp
   src/MomentValidation.cpp
   src/SecondMoment.cpp

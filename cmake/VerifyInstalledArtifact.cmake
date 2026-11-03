@@ -118,6 +118,8 @@ set(vss_expected_files
   include/vss/math/FourthMoment.hpp
   include/vss/math/Matrix.hpp
   include/vss/math/MatrixView.hpp
+  include/vss/math/MultivariateMoments.hpp
+  include/vss/math/PrintOptions.hpp
   include/vss/math/NumericalError.hpp
   include/vss/math/Operations.hpp
   include/vss/math/Result.hpp

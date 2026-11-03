@@ -1,8 +1,13 @@
 #include <array>
 #include <iostream>
 #include <limits>
+#include <sstream>
+#include <string>
+#include <vss/math/FirstMoment.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/MultivariateMoments.hpp>
 #include <vss/math/Operations.hpp>
+#include <vss/math/PrintOptions.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/linear/LU.hpp>
@@ -51,6 +56,42 @@ int main() {
   Vector vector(2U);
   vector.at(0U) = 5.0;
   vector.at(1U) = 6.0;
+
+  PrintOptions printOptions;
+  printOptions.maxElements = 2U;
+  std::ostringstream formatted;
+  print(formatted, tensor.value(), printOptions);
+  if (!require(formatted.str().find("2 omitted") != std::string::npos,
+               "installed bounded tensor printing failed")) {
+    return 1;
+  }
+  const std::array<Extent, 1> scalarExtents{1U};
+  const auto scalarShape = TensorShape::create(scalarExtents);
+  if (!require(scalarShape.hasValue(), "scalar shape construction failed")) {
+    return 1;
+  }
+  auto scalarTensor =
+      Tensor::create(scalarShape.value(), 12.0, TensorLimits{1U});
+  if (!require(scalarTensor.hasValue(), "scalar tensor allocation failed")) {
+    return 1;
+  }
+  auto firstMoment = FirstMoment::create(scalarTensor.value());
+  auto moments = MultivariateMoments::create(1U);
+  if (!require(firstMoment.hasValue() && moments.hasValue(),
+               "installed moment API construction failed")) {
+    return 1;
+  }
+  if (!require(moments.value().setFirstMoment(firstMoment.value()).ok(),
+               "installed moment setter failed")) {
+    return 1;
+  }
+  formatted << vector << matrix << tensor.value() << tensorShape.value()
+            << firstMoment.value() << moments.value();
+  if (!require(formatted.str().find("MultivariateMoments(") !=
+                   std::string::npos,
+               "installed stream insertion symbols failed to link")) {
+    return 1;
+  }
 
   const auto result = multiply(matrix.view(), vector.view());
   if (!require(result.hasValue(), "matrix-vector multiplication failed")) {

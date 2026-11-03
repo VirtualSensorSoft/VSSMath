@@ -1,8 +1,10 @@
 #ifndef VSS_MATH_MATRIX_HPP
 #define VSS_MATH_MATRIX_HPP
 
+#include <iosfwd>
 #include <vector>
 #include <vss/math/Core.hpp>
+#include <vss/math/PrintOptions.hpp>
 
 namespace vss::math {
 
@@ -131,6 +133,14 @@ private:
   std::vector<Scalar> values_;
 };
 
+} // namespace vss::math
+
+namespace vss::math {
+/// @brief Writes a bounded textual representation without flushing the stream.
+std::ostream& print(std::ostream& stream, const Matrix& matrix,
+                    const PrintOptions& options);
+/// @brief Writes a Matrix using default print options without flushing.
+std::ostream& operator<<(std::ostream& stream, const Matrix& matrix);
 } // namespace vss::math
 
 #endif // VSS_MATH_MATRIX_HPP

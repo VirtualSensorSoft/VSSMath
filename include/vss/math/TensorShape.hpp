@@ -1,6 +1,7 @@
 #ifndef VSS_MATH_TENSOR_SHAPE_HPP
 #define VSS_MATH_TENSOR_SHAPE_HPP
 
+#include <iosfwd>
 #include <span>
 #include <vector>
 #include <vss/math/Core.hpp>
@@ -29,6 +30,13 @@ private:
   Extent elementCount_;
 };
 
+} // namespace vss::math
+
+namespace vss::math {
+/// @brief Writes the rank and extents without flushing the stream.
+std::ostream& print(std::ostream& stream, const TensorShape& shape);
+/// @brief Writes a TensorShape without flushing the stream.
+std::ostream& operator<<(std::ostream& stream, const TensorShape& shape);
 } // namespace vss::math
 
 #endif // VSS_MATH_TENSOR_SHAPE_HPP

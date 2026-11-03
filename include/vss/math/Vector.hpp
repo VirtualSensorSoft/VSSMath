@@ -1,9 +1,11 @@
 #ifndef VSS_MATH_VECTOR_HPP
 #define VSS_MATH_VECTOR_HPP
 
+#include <iosfwd>
 #include <span>
 #include <vector>
 #include <vss/math/Core.hpp>
+#include <vss/math/PrintOptions.hpp>
 
 namespace vss::math {
 
@@ -124,6 +126,14 @@ private:
   std::vector<Scalar> values_;
 };
 
+} // namespace vss::math
+
+namespace vss::math {
+/// @brief Writes a bounded textual representation without flushing the stream.
+std::ostream& print(std::ostream& stream, const Vector& vector,
+                    const PrintOptions& options);
+/// @brief Writes a Vector using default print options without flushing.
+std::ostream& operator<<(std::ostream& stream, const Vector& vector);
 } // namespace vss::math
 
 #endif // VSS_MATH_VECTOR_HPP
