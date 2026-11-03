@@ -1,6 +1,7 @@
 #ifndef VSS_MATH_TENSOR_OPERATIONS_HPP
 #define VSS_MATH_TENSOR_OPERATIONS_HPP
 
+#include <span>
 #include <vss/math/NumericalError.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
@@ -43,6 +44,39 @@ subtract(const Tensor& lhs, const Tensor& rhs,
 scale(const Tensor& value, Scalar factor,
       TensorLimits limits = TensorLimits{1'048'576U},
       OperationOptions options = {});
+
+/// @brief Forms the outer product, concatenating the operand shapes.
+/// @param lhs Left input tensor.
+/// @param rhs Right input tensor.
+/// @param limits Maximum permitted elements for the result.
+/// @param options Finite-value validation policy.
+/// @return An owning tensor with shape `lhs.shape() + rhs.shape()`, or a
+///         failure with no value.
+/// @throws std::bad_alloc if result storage cannot be allocated.
+[[nodiscard]] Result<Tensor>
+outer(const Tensor& lhs, const Tensor& rhs,
+      TensorLimits limits = TensorLimits{1'048'576U},
+      OperationOptions options = {});
+
+/// @brief Contracts paired axes of two tensors by summing their products.
+/// @details Axis pairs are processed in the caller-provided order. The result
+///          axes are the uncontracted left axes followed by the uncontracted
+///          right axes, each retaining its original relative order. Empty axis
+///          lists therefore compute an outer product. Rank-zero operands
+///          follow scalar rules.
+/// @param lhs Left input tensor.
+/// @param rhs Right input tensor.
+/// @param lhsAxes Axes to contract in the left operand.
+/// @param rhsAxes Corresponding axes to contract in the right operand.
+/// @param limits Maximum permitted elements for the result.
+/// @param options Finite-value validation policy.
+/// @return An owning contracted tensor, or a failure with no value.
+/// @throws std::bad_alloc if result storage cannot be allocated.
+[[nodiscard]] Result<Tensor>
+contract(const Tensor& lhs, const Tensor& rhs, std::span<const Index> lhsAxes,
+         std::span<const Index> rhsAxes,
+         TensorLimits limits = TensorLimits{1'048'576U},
+         OperationOptions options = {});
 
 /// @brief Adds equal-shaped tensors; a checked failure throws NumericalError.
 [[nodiscard]] Tensor operator+(const Tensor& lhs, const Tensor& rhs);

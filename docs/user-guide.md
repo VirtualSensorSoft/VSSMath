@@ -54,3 +54,44 @@ outlive or overlap mutation of that storage.
 
 See the public headers and [numerical contract](numerical-contract.md) for
 algorithm-specific behavior and limitations.
+
+## Tensor products
+
+The checked tensor product API forms an outer product by concatenating shapes.
+Contracted axes are supplied as paired zero-based lists; the result retains
+uncontracted left axes first, followed by uncontracted right axes. An empty
+pair of axis lists is equivalent to `outer`, and a rank-zero tensor behaves as
+a scalar.
+
+```cpp
+#include <array>
+#include <vss/math/Tensor.hpp>
+#include <vss/math/TensorLimits.hpp>
+#include <vss/math/TensorOperations.hpp>
+#include <vss/math/TensorShape.hpp>
+
+using namespace vss::math;
+const std::array<Extent, 1> extents{2U};
+const std::array<Scalar, 2> left_values{1.0, 2.0};
+const std::array<Scalar, 2> right_values{3.0, 4.0};
+const auto shape = TensorShape::create(extents);
+if (!shape) return 1;
+auto left = Tensor::create(shape.value(), 0.0, TensorLimits{16U});
+auto right = Tensor::create(shape.value(), 0.0, TensorLimits{16U});
+if (!left || !right) return 1;
+for (Index i = 0U; i < extents[0]; ++i) {
+  left.value().at(std::array<Index, 1>{i}) = left_values[i];
+  right.value().at(std::array<Index, 1>{i}) = right_values[i];
+}
+
+const auto matrix = outer(left.value(), right.value(), TensorLimits{16U});
+const std::array<Index, 1> axis{0U};
+const auto dot = contract(left.value(), right.value(), axis, axis,
+                          TensorLimits{1U});
+if (!matrix || !dot) return 1;
+// matrix has shape [2, 2] and values [3, 4, 6, 8]; dot is rank zero with 11.
+```
+
+Both operations return `Result<Tensor>`, honor the caller's element limit, and
+reject incompatible or repeated contraction axes. By default, non-finite input
+and output values are reported as checked failures.
