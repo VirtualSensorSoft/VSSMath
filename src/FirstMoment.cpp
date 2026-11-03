@@ -5,6 +5,8 @@
 #include <vss/math/Error.hpp>
 #include <vss/math/FirstMoment.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Tensor.hpp>
+#include <vss/math/Tolerance.hpp>
 
 namespace vss::math {
 FirstMoment::FirstMoment(Tensor tensor) noexcept : tensor_(std::move(tensor)) {}

@@ -5,6 +5,8 @@
 #include <vss/math/Error.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/SecondMoment.hpp>
+#include <vss/math/Tensor.hpp>
+#include <vss/math/Tolerance.hpp>
 
 namespace vss::math {
 SecondMoment::SecondMoment(Tensor tensor) noexcept

@@ -4,7 +4,9 @@
 #include <utility>
 #include <vss/math/Error.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Tensor.hpp>
 #include <vss/math/ThirdMoment.hpp>
+#include <vss/math/Tolerance.hpp>
 
 namespace vss::math {
 ThirdMoment::ThirdMoment(Tensor tensor) noexcept : tensor_(std::move(tensor)) {}

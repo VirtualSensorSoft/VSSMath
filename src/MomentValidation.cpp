@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <span>
-#include <string>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Tensor.hpp>
