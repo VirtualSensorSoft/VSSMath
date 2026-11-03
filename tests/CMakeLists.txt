@@ -63,6 +63,8 @@ vss_math_add_test(test_vector unit/test_vector.cpp math.vector)
 vss_math_add_test(test_matrix unit/test_matrix.cpp math.matrix)
 vss_math_add_test(test_tensor_shape unit/test_tensor_shape.cpp math.tensor_shape)
 vss_math_add_test(test_tensor unit/test_tensor.cpp math.tensor)
+vss_math_add_test(test_tensor_operations unit/test_tensor_operations.cpp
+                  math.tensor_arithmetic)
 vss_math_add_test(test_vector_view unit/test_vector_view.cpp math.vector_view)
 vss_math_add_test(test_matrix_view unit/test_matrix_view.cpp math.matrix_view)
 vss_math_add_test(test_operations unit/test_operations.cpp math.operations)
