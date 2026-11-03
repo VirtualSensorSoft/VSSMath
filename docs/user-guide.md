@@ -129,5 +129,26 @@ if (!second) return 1;
 ```
 
 The wrappers represent present moment values, including an all-zero tensor.
-Optional availability belongs to `MultivariateMoments`, which is introduced in
-the following implementation step.
+Optional availability belongs to `MultivariateMoments`:
+
+```cpp
+#include <vss/math/MultivariateMoments.hpp>
+
+auto moments = vss::math::MultivariateMoments::create(1U);
+if (!moments) return 1;
+// first and second are validated FirstMoment and SecondMoment results.
+if (!moments.value().setFirstMoment(first.value()).ok()) return 1;
+if (!moments.value().setSecondMoment(second.value()).ok()) return 1;
+const auto width = moments.value().componentStandardDeviation(0U);
+if (!width) return 1;
+```
+
+The aggregate owns each optional wrapper by value. A getter returns a const
+pointer, or `nullptr` when that order is unavailable; clear operations restore
+that unavailable state. Rejected dimension changes leave the previous moment
+unchanged. Component standard deviation is the square root of the diagonal
+second central moment. Component skewness and ordinary/excess kurtosis are
+available only when their required moments and a mean are present; zero
+variance is an invalid domain for standardized ratios. These component queries
+do not invent a single scalar multivariate skewness or prove distribution
+realizability.

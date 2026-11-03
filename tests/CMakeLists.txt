@@ -68,6 +68,8 @@ vss_math_add_test(test_tensor_operations unit/test_tensor_operations.cpp
 vss_math_add_test(test_tensor_products unit/test_tensor_products.cpp
                   math.tensor_products)
 vss_math_add_test(test_moments unit/test_moments.cpp math.moments_wrappers)
+vss_math_add_test(test_moments_aggregate unit/test_moments_aggregate.cpp
+                  math.moments_aggregate)
 vss_math_add_test(test_vector_view unit/test_vector_view.cpp math.vector_view)
 vss_math_add_test(test_matrix_view unit/test_matrix_view.cpp math.matrix_view)
 vss_math_add_test(test_operations unit/test_operations.cpp math.operations)
