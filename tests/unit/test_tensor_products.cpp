@@ -21,6 +21,14 @@ using vss::math::Tensor;
 using vss::math::TensorLimits;
 using vss::math::TensorShape;
 
+std::span<const Scalar> tensorValues(const Tensor& tensor) {
+  return {tensor.data(), tensor.size()};
+}
+
+std::span<Scalar> tensorValues(Tensor& tensor) {
+  return {tensor.data(), tensor.size()};
+}
+
 Tensor makeTensor(std::span<const Extent> extents,
                   std::span<const Scalar> values) {
   const auto shape = TensorShape::create(extents);
@@ -28,8 +36,9 @@ Tensor makeTensor(std::span<const Extent> extents,
   auto tensor = Tensor::create(shape.value(), 0.0, TensorLimits{64U});
   VSS_CHECK(tensor.hasValue());
   VSS_CHECK(tensor.value().size() == values.size());
+  auto storedValues = tensorValues(tensor.value());
   for (Extent index = 0U; index < values.size(); ++index) {
-    tensor.value().data()[index] = values[index];
+    storedValues[index] = values[index];
   }
   return std::move(tensor).value();
 }
@@ -61,14 +70,16 @@ int main() {
   const auto dot = contract(lhs, rhs, lhs_axis, rhs_axis, TensorLimits{1U});
   VSS_CHECK(dot.hasValue());
   VSS_CHECK(dot.value().shape().rank() == 0U);
-  VSS_CHECK(dot.value().data()[0] == 11.0);
+  VSS_CHECK(tensorValues(dot.value())[0] == 11.0);
 
   const auto no_axes = contract(lhs, rhs, std::span<const Extent>{},
                                 std::span<const Extent>{}, TensorLimits{4U});
   VSS_CHECK(no_axes.hasValue());
   VSS_CHECK(no_axes.value().shape().rank() == 2U);
+  const auto no_axes_values = tensorValues(no_axes.value());
+  const auto product_values = tensorValues(product.value());
   for (Extent index = 0U; index < product.value().size(); ++index) {
-    VSS_CHECK(no_axes.value().data()[index] == product.value().data()[index]);
+    VSS_CHECK(no_axes_values[index] == product_values[index]);
   }
 
   const auto over_budget = outer(lhs, rhs, TensorLimits{3U});
@@ -129,7 +140,7 @@ int main() {
       std::array<Extent, 2>{0U, 1U}, TensorLimits{1U});
   VSS_CHECK(reordered_full_contraction.hasValue());
   VSS_CHECK(reordered_full_contraction.value().shape().rank() == 0U);
-  VSS_CHECK(reordered_full_contraction.value().data()[0] == 86.0);
+  VSS_CHECK(tensorValues(reordered_full_contraction.value())[0] == 86.0);
   const auto contraction_over_budget =
       contract(left_matrix, right_matrix, std::array<Extent, 1>{1U},
                std::array<Extent, 1>{0U}, TensorLimits{7U});
@@ -139,18 +150,19 @@ int main() {
 
   const Tensor scalar =
       makeTensor(std::span<const Extent>{}, std::array<Scalar, 1>{2.0});
-  const auto scalar_product = outer(scalar, lhs, TensorLimits{2U});
+  const auto scalar_product = outer(lhs, scalar, TensorLimits{2U});
   VSS_CHECK(scalar_product.hasValue());
   VSS_CHECK(scalar_product.value().shape().extents().size() == 1U);
-  VSS_CHECK(scalar_product.value().data()[0] == 2.0);
-  VSS_CHECK(scalar_product.value().data()[1] == 4.0);
+  const auto scalar_product_values = tensorValues(scalar_product.value());
+  VSS_CHECK(scalar_product_values[0] == 2.0);
+  VSS_CHECK(scalar_product_values[1] == 4.0);
 
   const auto scalar_contract =
-      contract(scalar, lhs, std::span<const Extent>{},
+      contract(lhs, scalar, std::span<const Extent>{},
                std::span<const Extent>{}, TensorLimits{2U});
   VSS_CHECK(scalar_contract.hasValue());
   VSS_CHECK(scalar_contract.value().shape().rank() == 1U);
-  VSS_CHECK(scalar_contract.value().data()[1] == 4.0);
+  VSS_CHECK(tensorValues(scalar_contract.value())[1] == 4.0);
 
   const Tensor zero_extent =
       makeTensor(std::array<Extent, 1>{0U}, std::span<const Scalar>{});
