@@ -3,6 +3,7 @@
 
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MatrixView.hpp>
+#include <vss/math/NumericalError.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tolerance.hpp>
 #include <vss/math/Vector.hpp>
@@ -104,6 +105,71 @@ namespace vss::math {
 ///       from the returned matrix.
 [[nodiscard]] Result<Matrix> transpose(ConstMatrixView value,
                                        OperationOptions options = {});
+
+/// @brief Adds equally shaped matrices without mutating either operand.
+/// @param lhs Borrowed left-hand matrix.
+/// @param rhs Borrowed right-hand matrix with identical row and column counts.
+/// @param options Tolerance validation and finite-value policy.
+/// @return An owning result, or a dimension/numerical failure without a value.
+/// @pre Both views remain valid and unmodified for the duration of the call.
+/// @throws std::bad_alloc if result storage cannot be allocated.
+[[nodiscard]] Result<Matrix> add(ConstMatrixView lhs, ConstMatrixView rhs,
+                                 OperationOptions options = {});
+
+/// @brief Subtracts equally shaped matrices without mutating either operand.
+/// @param lhs Borrowed left-hand matrix.
+/// @param rhs Borrowed right-hand matrix with identical row and column counts.
+/// @param options Tolerance validation and finite-value policy.
+/// @return An owning result, or a dimension/numerical failure without a value.
+/// @pre Both views remain valid and unmodified for the duration of the call.
+/// @throws std::bad_alloc if result storage cannot be allocated.
+[[nodiscard]] Result<Matrix> subtract(ConstMatrixView lhs, ConstMatrixView rhs,
+                                      OperationOptions options = {});
+
+/// @brief Multiplies every matrix element by a scalar.
+/// @param value Borrowed matrix.
+/// @param factor Scalar multiplier.
+/// @param options Tolerance validation and finite-value policy.
+/// @return An owning result, or a numerical failure without a value.
+/// @pre The view remains valid and unmodified for the duration of the call.
+/// @throws std::bad_alloc if result storage cannot be allocated.
+[[nodiscard]] Result<Matrix> scale(ConstMatrixView value, Scalar factor,
+                                   OperationOptions options = {});
+
+/// @brief Adds equal-sized vectors; failed checked operations throw
+///        NumericalError carrying their original ErrorCode.
+/// @throws NumericalError if dimensions or numerical inputs are invalid.
+[[nodiscard]] Vector operator+(const Vector& lhs, const Vector& rhs);
+/// @brief Subtracts equal-sized vectors; failed checked operations throw
+///        NumericalError carrying their original ErrorCode.
+/// @throws NumericalError if dimensions or numerical inputs are invalid.
+[[nodiscard]] Vector operator-(const Vector& lhs, const Vector& rhs);
+/// @brief Scales a vector and returns independent storage.
+/// @throws NumericalError if numerical inputs or the result are non-finite.
+[[nodiscard]] Vector operator*(const Vector& value, Scalar factor);
+/// @brief Scales a vector and returns independent storage.
+/// @throws NumericalError if numerical inputs or the result are non-finite.
+[[nodiscard]] Vector operator*(Scalar factor, const Vector& value);
+
+/// @brief Adds equally shaped matrices and returns independent storage.
+/// @throws NumericalError if dimensions or numerical inputs are invalid.
+[[nodiscard]] Matrix operator+(const Matrix& lhs, const Matrix& rhs);
+/// @brief Subtracts equally shaped matrices and returns independent storage.
+/// @throws NumericalError if dimensions or numerical inputs are invalid.
+[[nodiscard]] Matrix operator-(const Matrix& lhs, const Matrix& rhs);
+/// @brief Scales a matrix and returns independent storage.
+/// @throws NumericalError if numerical inputs or the result are non-finite.
+[[nodiscard]] Matrix operator*(const Matrix& value, Scalar factor);
+/// @brief Scales a matrix and returns independent storage.
+/// @throws NumericalError if numerical inputs or the result are non-finite.
+[[nodiscard]] Matrix operator*(Scalar factor, const Matrix& value);
+/// @brief Multiplies matrices; incompatible dimensions throw NumericalError.
+/// @throws NumericalError if dimensions or numerical inputs are invalid.
+[[nodiscard]] Matrix operator*(const Matrix& lhs, const Matrix& rhs);
+/// @brief Multiplies a matrix by a vector; incompatible dimensions throw
+///        NumericalError.
+/// @throws NumericalError if dimensions or numerical inputs are invalid.
+[[nodiscard]] Vector operator*(const Matrix& matrix, const Vector& vector);
 
 } // namespace vss::math
 

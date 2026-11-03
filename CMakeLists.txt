@@ -33,10 +33,12 @@ vss_math_add_format_check()
 add_library(vss_math STATIC
   src/Error.cpp
   src/Matrix.cpp
+  src/NumericalError.cpp
   src/Tensor.cpp
   src/TensorLimits.cpp
   src/TensorShape.cpp
   src/Operations.cpp
+  src/TensorOperations.cpp
   src/covariance/Covariance.cpp
   src/differentiation/FiniteDifference.cpp
   src/probability/ChiSquare.cpp

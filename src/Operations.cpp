@@ -7,6 +7,7 @@
 #include <vss/math/Error.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MatrixView.hpp>
+#include <vss/math/NumericalError.hpp>
 #include <vss/math/Operations.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tolerance.hpp>
@@ -59,6 +60,13 @@ template <class T> Result<T> validateOptions(OperationOptions options) {
     return fromValidation<T>(validation);
   }
   return Result<T>::success(T{});
+}
+
+template <class T> T unwrap(Result<T> result) {
+  if (result.hasValue()) {
+    return std::move(result).value();
+  }
+  throw NumericalError(result.status().code(), result.status().message());
 }
 
 } // namespace
@@ -289,6 +297,127 @@ Result<Matrix> transpose(ConstMatrixView value, OperationOptions options) {
     }
   }
   return Result<Matrix>::success(std::move(result));
+}
+
+Result<Matrix> add(ConstMatrixView lhs, ConstMatrixView rhs,
+                   OperationOptions options) {
+  auto option_check = validateOptions<Matrix>(options);
+  if (!option_check.status().ok()) {
+    return option_check;
+  }
+  if (lhs.rows() != rhs.rows() || lhs.columns() != rhs.columns()) {
+    return failure<Matrix>(ErrorCode::DimensionMismatch,
+                           "matrix dimensions do not match");
+  }
+  Extent result_size = 0U;
+  if (!checkedElementCount(lhs.rows(), lhs.columns(), result_size)) {
+    return failure<Matrix>(ErrorCode::SizeOverflow,
+                           "SizeOverflow: matrix sum element count");
+  }
+  if (options.requireFinite && (!finite(lhs) || !finite(rhs))) {
+    return failure<Matrix>(ErrorCode::NonFiniteInput,
+                           "matrix input is non-finite");
+  }
+  Matrix result(lhs.rows(), lhs.columns());
+  for (Index row = 0U; row < lhs.rows(); ++row) {
+    for (Index column = 0U; column < lhs.columns(); ++column) {
+      result.at(row, column) = lhs.at(row, column) + rhs.at(row, column);
+      if (options.requireFinite && !isFinite(result.at(row, column))) {
+        return failure<Matrix>(ErrorCode::NonFiniteResult,
+                               "matrix addition produced a non-finite result");
+      }
+    }
+  }
+  return Result<Matrix>::success(std::move(result));
+}
+
+Result<Matrix> subtract(ConstMatrixView lhs, ConstMatrixView rhs,
+                        OperationOptions options) {
+  auto option_check = validateOptions<Matrix>(options);
+  if (!option_check.status().ok()) {
+    return option_check;
+  }
+  if (lhs.rows() != rhs.rows() || lhs.columns() != rhs.columns()) {
+    return failure<Matrix>(ErrorCode::DimensionMismatch,
+                           "matrix dimensions do not match");
+  }
+  Extent result_size = 0U;
+  if (!checkedElementCount(lhs.rows(), lhs.columns(), result_size)) {
+    return failure<Matrix>(ErrorCode::SizeOverflow,
+                           "SizeOverflow: matrix difference element count");
+  }
+  if (options.requireFinite && (!finite(lhs) || !finite(rhs))) {
+    return failure<Matrix>(ErrorCode::NonFiniteInput,
+                           "matrix input is non-finite");
+  }
+  Matrix result(lhs.rows(), lhs.columns());
+  for (Index row = 0U; row < lhs.rows(); ++row) {
+    for (Index column = 0U; column < lhs.columns(); ++column) {
+      result.at(row, column) = lhs.at(row, column) - rhs.at(row, column);
+      if (options.requireFinite && !isFinite(result.at(row, column))) {
+        return failure<Matrix>(
+            ErrorCode::NonFiniteResult,
+            "matrix subtraction produced a non-finite result");
+      }
+    }
+  }
+  return Result<Matrix>::success(std::move(result));
+}
+
+Result<Matrix> scale(ConstMatrixView value, Scalar factor,
+                     OperationOptions options) {
+  auto option_check = validateOptions<Matrix>(options);
+  if (!option_check.status().ok()) {
+    return option_check;
+  }
+  Extent result_size = 0U;
+  if (!checkedElementCount(value.rows(), value.columns(), result_size)) {
+    return failure<Matrix>(ErrorCode::SizeOverflow,
+                           "SizeOverflow: matrix scale element count");
+  }
+  if (options.requireFinite && (!finite(value) || !isFinite(factor))) {
+    return failure<Matrix>(ErrorCode::NonFiniteInput,
+                           "matrix scale input is non-finite");
+  }
+  Matrix result(value.rows(), value.columns());
+  for (Index row = 0U; row < value.rows(); ++row) {
+    for (Index column = 0U; column < value.columns(); ++column) {
+      result.at(row, column) = value.at(row, column) * factor;
+      if (options.requireFinite && !isFinite(result.at(row, column))) {
+        return failure<Matrix>(ErrorCode::NonFiniteResult,
+                               "matrix scale produced a non-finite result");
+      }
+    }
+  }
+  return Result<Matrix>::success(std::move(result));
+}
+
+Vector operator+(const Vector& lhs, const Vector& rhs) {
+  return unwrap(add(lhs.view(), rhs.view()));
+}
+Vector operator-(const Vector& lhs, const Vector& rhs) {
+  return unwrap(subtract(lhs.view(), rhs.view()));
+}
+Vector operator*(const Vector& value, Scalar factor) {
+  return unwrap(scale(value.view(), factor));
+}
+Vector operator*(Scalar factor, const Vector& value) { return value * factor; }
+
+Matrix operator+(const Matrix& lhs, const Matrix& rhs) {
+  return unwrap(add(lhs.view(), rhs.view()));
+}
+Matrix operator-(const Matrix& lhs, const Matrix& rhs) {
+  return unwrap(subtract(lhs.view(), rhs.view()));
+}
+Matrix operator*(const Matrix& value, Scalar factor) {
+  return unwrap(scale(value.view(), factor));
+}
+Matrix operator*(Scalar factor, const Matrix& value) { return value * factor; }
+Matrix operator*(const Matrix& lhs, const Matrix& rhs) {
+  return unwrap(multiply(lhs.view(), rhs.view()));
+}
+Vector operator*(const Matrix& matrix, const Vector& vector) {
+  return unwrap(multiply(matrix.view(), vector.view()));
 }
 
 } // namespace vss::math
