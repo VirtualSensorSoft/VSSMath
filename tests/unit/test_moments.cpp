@@ -1,10 +1,12 @@
 #include "Test.hpp"
 
 #include <array>
+#include <cstddef>
 #include <limits>
 #include <span>
 #include <type_traits>
 #include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/FirstMoment.hpp>
 #include <vss/math/FourthMoment.hpp>
@@ -33,9 +35,10 @@ Tensor makeTensor(const std::array<Extent, Rank>& extents,
   VSS_CHECK(tensor.hasValue());
   auto storage =
       std::span<Scalar>{tensor.value().data(), tensor.value().size()};
+  const std::span<const Scalar> input_values{values};
   VSS_CHECK(storage.size() == values.size());
   for (Extent index = 0U; index < values.size(); ++index) {
-    storage[index] = values[index];
+    storage[index] = input_values[index];
   }
   return std::move(tensor).value();
 }
