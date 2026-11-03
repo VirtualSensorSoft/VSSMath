@@ -1,6 +1,10 @@
 #include "Test.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
+#include <exception>
+#include <iostream>
 #include <span>
 #include <utility>
 #include <vss/math/Core.hpp>
@@ -27,11 +31,9 @@ Tensor makeTensor(const std::array<Extent, Rank>& extents,
   auto tensor =
       Tensor::create(shape.value(), 0.0, vss::math::TensorLimits{Count});
   VSS_CHECK(tensor.hasValue());
-  std::span<Scalar> storage{tensor.value().data(), tensor.value().size()};
+  const std::span<Scalar> storage{tensor.value().data(), tensor.value().size()};
   VSS_CHECK(storage.size() == values.size());
-  for (Extent index = 0U; index < values.size(); ++index) {
-    storage[index] = values[index];
-  }
+  std::ranges::copy(values, storage.begin());
   return std::move(tensor).value();
 }
 
@@ -42,7 +44,7 @@ void expectError(const ResultType& result, vss::math::ErrorCode code) {
 }
 } // namespace
 
-int main() {
+int main() try {
   using vss::math::ErrorCode;
   using vss::math::FirstMoment;
   using vss::math::FourthMoment;
@@ -97,7 +99,8 @@ int main() {
   VSS_CHECK(!mismatch.ok());
   VSS_CHECK(mismatch.code() == ErrorCode::DimensionMismatch);
   VSS_CHECK(aggregate.getFirstMoment() != nullptr);
-  VSS_CHECK(aggregate.getFirstMoment()->tensor().data()[0] == 12.0);
+  const std::array<vss::math::Index, 1U> first_component{0U};
+  VSS_CHECK(aggregate.getFirstMoment()->tensor().at(first_component) == 12.0);
   expectError(aggregate.componentStandardDeviation(1U),
               ErrorCode::IndexOutOfRange);
 
@@ -132,4 +135,7 @@ int main() {
   VSS_CHECK(large_aggregate.setFourthMoment(large_fourth.value()).ok());
   VSS_CHECK(large_aggregate.componentSkewness(0U).value() > 0.0);
   VSS_CHECK(large_aggregate.componentKurtosis(0U).value() > 0.0);
+} catch (const std::exception& exception) {
+  std::cerr << "Unexpected exception: " << exception.what() << '\n';
+  return 1;
 }

@@ -1,8 +1,10 @@
 #include <algorithm>
+#include <exception>
 #include <ios>
 #include <ostream>
 #include <span>
 #include <string_view>
+#include <vss/math/Core.hpp>
 #include <vss/math/FirstMoment.hpp>
 #include <vss/math/FourthMoment.hpp>
 #include <vss/math/Matrix.hpp>
@@ -24,6 +26,8 @@ public:
 
   StreamStateGuard(const StreamStateGuard&) = delete;
   StreamStateGuard& operator=(const StreamStateGuard&) = delete;
+  StreamStateGuard(StreamStateGuard&&) = delete;
+  StreamStateGuard& operator=(StreamStateGuard&&) = delete;
 
   ~StreamStateGuard() noexcept {
     try {
@@ -32,7 +36,8 @@ public:
       stream_.fill(fill_);
       stream_.width(width_);
     } catch (...) {
-      // Preserve the stream's original exception during stack unwinding.
+      // A formatting-state restoration failure leaves the stream unusable.
+      std::terminate();
     }
   }
 
@@ -55,21 +60,23 @@ void writeExtents(std::ostream& stream, std::span<const Extent> extents) {
   stream << ']';
 }
 
-void writeValues(std::ostream& stream, const Scalar* data, Extent count,
+void writeValues(std::ostream& stream, std::span<const Scalar> values,
                  const PrintOptions& options) {
-  const Extent shown = std::min(count, options.maxElements);
+  const Extent shown = std::min(values.size(), options.maxElements);
   stream << '[';
-  for (Extent index = 0U; index < shown; ++index) {
+  Extent index = 0U;
+  for (const Scalar value : values.first(shown)) {
     if (index != 0U) {
       stream << ',';
     }
-    stream << data[index];
+    stream << value;
+    ++index;
   }
-  if (shown < count) {
+  if (shown < values.size()) {
     if (shown != 0U) {
       stream << ", ";
     }
-    stream << "... (" << (count - shown) << " omitted)";
+    stream << "... (" << (values.size() - shown) << " omitted)";
   }
   stream << ']';
 }
@@ -81,7 +88,8 @@ std::ostream& printNamedTensor(std::ostream& stream, std::string_view name,
   stream << name << "(shape=";
   writeExtents(stream, tensor.shape().extents());
   stream << ", values=";
-  writeValues(stream, tensor.data(), tensor.size(), options);
+  writeValues(stream, std::span<const Scalar>{tensor.data(), tensor.size()},
+              options);
   stream << ')';
   return stream;
 }
@@ -91,7 +99,8 @@ std::ostream& print(std::ostream& stream, const Vector& vector,
                     const PrintOptions& options) {
   const StreamStateGuard guard{stream};
   stream << "Vector(shape=[" << vector.size() << "], values=";
-  writeValues(stream, vector.data(), vector.size(), options);
+  writeValues(stream, std::span<const Scalar>{vector.data(), vector.size()},
+              options);
   stream << ')';
   return stream;
 }
@@ -105,7 +114,8 @@ std::ostream& print(std::ostream& stream, const Matrix& matrix,
   const StreamStateGuard guard{stream};
   stream << "Matrix(shape=[" << matrix.rows() << ',' << matrix.columns()
          << "], values=";
-  writeValues(stream, matrix.data(), matrix.size(), options);
+  writeValues(stream, std::span<const Scalar>{matrix.data(), matrix.size()},
+              options);
   stream << ')';
   return stream;
 }
