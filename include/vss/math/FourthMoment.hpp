@@ -1,6 +1,8 @@
 #ifndef VSS_MATH_FOURTH_MOMENT_HPP
 #define VSS_MATH_FOURTH_MOMENT_HPP
 
+#include <iosfwd>
+#include <vss/math/PrintOptions.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/Tolerance.hpp>
@@ -43,6 +45,14 @@ private:
   Tensor tensor_;
 };
 
+} // namespace vss::math
+
+namespace vss::math {
+/// @brief Writes the named moment tensor with the requested value bound.
+std::ostream& print(std::ostream& stream, const FourthMoment& moment,
+                    const PrintOptions& options);
+/// @brief Writes a FourthMoment using default print options.
+std::ostream& operator<<(std::ostream& stream, const FourthMoment& moment);
 } // namespace vss::math
 
 #endif // VSS_MATH_FOURTH_MOMENT_HPP

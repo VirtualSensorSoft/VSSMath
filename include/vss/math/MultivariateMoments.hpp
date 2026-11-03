@@ -1,10 +1,12 @@
 #ifndef VSS_MATH_MULTIVARIATE_MOMENTS_HPP
 #define VSS_MATH_MULTIVARIATE_MOMENTS_HPP
 
+#include <iosfwd>
 #include <optional>
 #include <vss/math/Core.hpp>
 #include <vss/math/FirstMoment.hpp>
 #include <vss/math/FourthMoment.hpp>
+#include <vss/math/PrintOptions.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/SecondMoment.hpp>
 #include <vss/math/Tensor.hpp>
@@ -25,10 +27,15 @@ public:
   /// @return The aggregate, or InvalidExtent for a zero dimension.
   [[nodiscard]] static Result<MultivariateMoments> create(Extent dimension);
 
+  /// @brief Deep-copies the dimension and all present moments.
   MultivariateMoments(const MultivariateMoments&) = default;
+  /// @brief Replaces this aggregate with a deep copy.
   MultivariateMoments& operator=(const MultivariateMoments&) = default;
+  /// @brief Transfers the dimension and owned moments.
   MultivariateMoments(MultivariateMoments&&) noexcept = default;
+  /// @brief Replaces this aggregate by transferring its owned moments.
   MultivariateMoments& operator=(MultivariateMoments&&) noexcept = default;
+  /// @brief Destroys this aggregate and its owned moments.
   ~MultivariateMoments() = default;
 
   /// @brief Returns the fixed number of components.
@@ -95,6 +102,15 @@ private:
   std::optional<FourthMoment> fourth_;
 };
 
+} // namespace vss::math
+
+namespace vss::math {
+/// @brief Writes all moment orders, marking each unavailable order as absent.
+std::ostream& print(std::ostream& stream, const MultivariateMoments& moments,
+                    const PrintOptions& options);
+/// @brief Writes a MultivariateMoments using default print options.
+std::ostream& operator<<(std::ostream& stream,
+                         const MultivariateMoments& moments);
 } // namespace vss::math
 
 #endif // VSS_MATH_MULTIVARIATE_MOMENTS_HPP

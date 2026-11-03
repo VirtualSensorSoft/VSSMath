@@ -1,9 +1,11 @@
 #ifndef VSS_MATH_TENSOR_HPP
 #define VSS_MATH_TENSOR_HPP
 
+#include <iosfwd>
 #include <span>
 #include <vector>
 #include <vss/math/Core.hpp>
+#include <vss/math/PrintOptions.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/TensorLimits.hpp>
 #include <vss/math/TensorShape.hpp>
@@ -44,6 +46,14 @@ private:
   TensorShape shape_;
   std::vector<Scalar> values_;
 };
+} // namespace vss::math
+
+namespace vss::math {
+/// @brief Writes a bounded textual representation without flushing the stream.
+std::ostream& print(std::ostream& stream, const Tensor& tensor,
+                    const PrintOptions& options);
+/// @brief Writes a Tensor using default print options without flushing.
+std::ostream& operator<<(std::ostream& stream, const Tensor& tensor);
 } // namespace vss::math
 
 #endif // VSS_MATH_TENSOR_HPP

@@ -152,3 +152,26 @@ available only when their required moments and a mean are present; zero
 variance is an invalid domain for standardized ratios. These component queries
 do not invent a single scalar multivariate skewness or prove distribution
 realizability.
+
+## Numerical stream output
+
+Vectors, matrices, tensors, tensor shapes, typed moments, and moment aggregates
+can be inserted into an output stream for diagnostics. Insertions do not
+explicitly flush the stream. `PrintOptions::maxElements` bounds emitted scalar
+values; omitted values are reported by count. The library restores the caller's
+format flags, precision, fill character, and width after formatting. The
+numerical library prints numeric values and moment availability; formatting
+booleans, escaped strings, or product objects belongs to the higher-level
+framework.
+
+```cpp
+#include <iostream>
+#include <vss/math/MultivariateMoments.hpp>
+#include <vss/math/PrintOptions.hpp>
+#include <vss/math/Tensor.hpp>
+
+vss::math::PrintOptions options;
+options.maxElements = 2U;
+vss::math::print(std::cout, tensor, options);
+std::cout << moments;
+```
