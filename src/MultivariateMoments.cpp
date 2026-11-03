@@ -1,11 +1,18 @@
 #include <array>
 #include <cmath>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/FirstMoment.hpp>
+#include <vss/math/FourthMoment.hpp>
 #include <vss/math/MultivariateMoments.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SecondMoment.hpp>
 #include <vss/math/Tensor.hpp>
+#include <vss/math/ThirdMoment.hpp>
 #include <vss/math/Tolerance.hpp>
 
 namespace vss::math {
@@ -20,9 +27,7 @@ Result<Scalar> resultFailure(ErrorCode code, std::string message) {
 
 Scalar tensorValue(const Tensor& tensor, Index component, Extent rank) {
   std::array<Index, 4U> indices{};
-  for (Extent axis = 0U; axis < rank; ++axis) {
-    indices[axis] = component;
-  }
+  indices.fill(component);
   return tensor.at(std::span<const Index>{indices.data(), rank});
 }
 } // namespace
@@ -50,7 +55,7 @@ Status MultivariateMoments::validateDimension(const Tensor& tensor) const {
 }
 
 Status MultivariateMoments::setFirstMoment(const FirstMoment& moment) {
-  const Status status = validateDimension(moment.tensor());
+  Status status = validateDimension(moment.tensor());
   if (!status.ok()) {
     return status;
   }
@@ -60,7 +65,7 @@ Status MultivariateMoments::setFirstMoment(const FirstMoment& moment) {
 }
 
 Status MultivariateMoments::setSecondMoment(const SecondMoment& moment) {
-  const Status status = validateDimension(moment.tensor());
+  Status status = validateDimension(moment.tensor());
   if (!status.ok()) {
     return status;
   }
@@ -70,7 +75,7 @@ Status MultivariateMoments::setSecondMoment(const SecondMoment& moment) {
 }
 
 Status MultivariateMoments::setThirdMoment(const ThirdMoment& moment) {
-  const Status status = validateDimension(moment.tensor());
+  Status status = validateDimension(moment.tensor());
   if (!status.ok()) {
     return status;
   }
@@ -80,7 +85,7 @@ Status MultivariateMoments::setThirdMoment(const ThirdMoment& moment) {
 }
 
 Status MultivariateMoments::setFourthMoment(const FourthMoment& moment) {
-  const Status status = validateDimension(moment.tensor());
+  Status status = validateDimension(moment.tensor());
   if (!status.ok()) {
     return status;
   }
@@ -166,6 +171,10 @@ Result<Scalar> MultivariateMoments::componentSkewness(Index component) const {
     return Result<Scalar>::failure(input_status.code(),
                                    std::string{input_status.message()});
   }
+  if (!second_) {
+    return resultFailure(ErrorCode::InvalidDomain,
+                         "second central moment is unavailable");
+  }
   if (!third_) {
     return resultFailure(ErrorCode::InvalidDomain,
                          "third central moment is unavailable");
@@ -185,6 +194,10 @@ Result<Scalar> MultivariateMoments::componentKurtosis(Index component) const {
   if (!input_status.ok()) {
     return Result<Scalar>::failure(input_status.code(),
                                    std::string{input_status.message()});
+  }
+  if (!second_) {
+    return resultFailure(ErrorCode::InvalidDomain,
+                         "second central moment is unavailable");
   }
   if (!fourth_) {
     return resultFailure(ErrorCode::InvalidDomain,
