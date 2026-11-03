@@ -21,7 +21,7 @@ std::span<const Scalar> values(const Tensor& tensor) {
 
 Status validateMomentTensor(const Tensor& tensor, Extent order,
                             Tolerance tolerance) {
-  const Status tolerance_status = validate(tolerance);
+  Status tolerance_status = validate(tolerance);
   if (!tolerance_status.ok()) {
     return tolerance_status;
   }
@@ -54,20 +54,23 @@ Status validateMomentTensor(const Tensor& tensor, Extent order,
   }
 
   std::array<Index, 4U> permutation{0U, 1U, 2U, 3U};
-  do {
+  std::span<Index> active_permutation{permutation.data(), order};
+  bool has_permutation = true;
+  while (has_permutation) {
     for (Index linear = 0U; linear < elements.size(); ++linear) {
       std::array<Index, 4U> coordinates{};
+      std::span<Index> active_coordinates{coordinates.data(), order};
       Index remainder = linear;
       for (Index axis = order; axis > 0U; --axis) {
         const Index component = axis - 1U;
-        coordinates[component] = remainder % dimension;
+        active_coordinates[component] = remainder % dimension;
         remainder /= dimension;
       }
 
       Index permuted_linear = 0U;
       for (Index axis = 0U; axis < order; ++axis) {
-        permuted_linear =
-            (permuted_linear * dimension) + coordinates[permutation[axis]];
+        permuted_linear = (permuted_linear * dimension) +
+                          active_coordinates[active_permutation[axis]];
       }
       if (!nearlyEqual(elements[linear], elements[permuted_linear],
                        tolerance)) {
@@ -75,8 +78,9 @@ Status validateMomentTensor(const Tensor& tensor, Extent order,
                        "moment tensor is not permutation-symmetric");
       }
     }
-  } while (
-      std::next_permutation(permutation.begin(), permutation.begin() + order));
+    has_permutation = std::next_permutation(active_permutation.begin(),
+                                            active_permutation.end());
+  }
 
   return Status::success();
 }
