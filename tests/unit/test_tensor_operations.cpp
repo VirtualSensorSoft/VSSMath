@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <span>
 #include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/NumericalError.hpp>
@@ -30,8 +31,11 @@ Tensor makeTensor(Extent extent, std::array<Scalar, N> values) {
   VSS_CHECK(shape.hasValue());
   auto tensor = Tensor::create(shape.value(), 0.0, TensorLimits{16U});
   VSS_CHECK(tensor.hasValue());
-  for (Extent index = 0U; index < values.size(); ++index) {
-    tensor.value().at(std::array<Extent, 1>{index}) = values[index];
+  const std::span<const Scalar> inputValues{values};
+  const std::span<Scalar> tensorValues{tensor.value().data(),
+                                       tensor.value().size()};
+  for (Extent index = 0U; index < inputValues.size(); ++index) {
+    tensorValues[index] = inputValues[index];
   }
   return std::move(tensor).value();
 }
