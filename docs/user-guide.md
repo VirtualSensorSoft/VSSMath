@@ -95,3 +95,39 @@ if (!matrix || !dot) return 1;
 Both operations return `Result<Tensor>`, honor the caller's element limit, and
 reject incompatible or repeated contraction axes. By default, non-finite input
 and output values are reported as checked failures.
+
+## Moment wrappers
+
+`FirstMoment`, `SecondMoment`, `ThirdMoment`, and `FourthMoment` own validated
+copies of `Tensor` values with shapes `[d]`, `[d,d]`, `[d,d,d]`, and
+`[d,d,d,d]`, respectively, where `d` is positive. The first moment represents
+the mean; orders two through four represent central moments. Every element must
+be finite, and orders two through four must be symmetric under all axis
+permutations. This structural validation does not claim that the tensors are
+positive semidefinite or that they define a realizable distribution. Each
+wrapper exposes only a const reference to its owned tensor; mutating the input
+tensor after creation does not change the wrapper.
+
+```cpp
+#include <array>
+#include <vss/math/SecondMoment.hpp>
+#include <vss/math/Tensor.hpp>
+#include <vss/math/TensorLimits.hpp>
+#include <vss/math/TensorShape.hpp>
+
+using namespace vss::math;
+const auto shape = TensorShape::create(std::array<Extent, 2>{2U, 2U});
+if (!shape) return 1;
+auto covariance = Tensor::create(shape.value(), 0.0, TensorLimits{4U});
+if (!covariance) return 1;
+covariance.value().at(std::array<Index, 2>{0U, 0U}) = 4.0;
+covariance.value().at(std::array<Index, 2>{0U, 1U}) = 1.0;
+covariance.value().at(std::array<Index, 2>{1U, 0U}) = 1.0;
+covariance.value().at(std::array<Index, 2>{1U, 1U}) = 9.0;
+const auto second = SecondMoment::create(covariance.value());
+if (!second) return 1;
+```
+
+The wrappers represent present moment values, including an all-zero tensor.
+Optional availability belongs to `MultivariateMoments`, which is introduced in
+the following implementation step.

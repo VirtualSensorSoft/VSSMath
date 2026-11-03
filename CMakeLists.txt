@@ -33,7 +33,11 @@ vss_math_add_format_check()
 add_library(vss_math STATIC
   src/Error.cpp
   src/Matrix.cpp
+  src/FirstMoment.cpp
+  src/FourthMoment.cpp
   src/NumericalError.cpp
+  src/MomentValidation.cpp
+  src/SecondMoment.cpp
   src/Tensor.cpp
   src/TensorLimits.cpp
   src/TensorShape.cpp
@@ -49,6 +53,7 @@ add_library(vss_math STATIC
   src/linear/SymmetricEigen.cpp
   src/linear/TriangularSolve.cpp
   src/Tolerance.cpp
+  src/ThirdMoment.cpp
   src/Vector.cpp
   src/version.cpp)
 add_library(VirtualSensorSoft::math ALIAS vss_math)
