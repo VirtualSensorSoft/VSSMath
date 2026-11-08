@@ -1,9 +1,10 @@
 # VirtualSensorMath
 
 VirtualSensorMath is a standalone C++20 library of small dense numerical
-primitives. It provides owning vectors and matrices, non-owning views,
-arithmetic, descriptive statistics, linear factorizations and solves,
-covariance operations, finite differences, and chi-square tail functions.
+primitives. It provides owning vectors, matrices and N-dimensional tensors,
+non-owning views, arithmetic, descriptive statistics, validated moments,
+bounded stream output, linear factorizations and solves, covariance
+operations, finite differences, and chi-square tail functions.
 
 The implementation uses the C++ standard library and has no external
 numerical-library runtime dependency. The current development assessment covers the exact Ubuntu 24.04 x86-64 source
@@ -23,7 +24,8 @@ cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
 ```
 
-The project version under review is `0.1.1`. The installed CMake package is
+The current development version is `0.2.0`; it has not been tagged or released.
+The installed CMake package is
 `VirtualSensorMath`, and the exported target is
 `VirtualSensorSoft::math`.
 
