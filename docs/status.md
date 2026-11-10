@@ -1,10 +1,13 @@
 # Status and support
 
 The merged 0.1.1 source candidate at commit `cf98e60530da9ce403741e38b894ae4989625aa7` passed all 16
-required canonical hosted CI jobs. The source assessment and conformance record are prepared for
-documentation review; no 0.1.1 release, tag, or installation has been published. The immutable 0.1.0
-artifact remains affected by the LU validation defect corrected in the 0.1.1 source. No production,
-ISO-certification, or qualified timing claim is made.
+required canonical hosted CI jobs. It was published as the 0.1.1 development source prerelease, and
+native installation acceptance of the verified package was completed and recorded on
+[issue #21](https://github.com/VirtualSensorSoft/VSSMath/issues/21). The immutable 0.1.0 artifact
+remains affected by the LU validation defect corrected in the 0.1.1 source. Neither development
+prerelease makes a production, ISO-certification, or qualified timing claim.
+
+The current 0.2.0 source is under release review and has not been tagged, published, or installed.
 
 The current assessment is limited to Ubuntu 24.04.5 x86-64, GCC 13.3.0 with libstdc++ release 13,
 and Clang 18.1.3 with libstdc++ release 14. The captured profiles do not establish Clang with
