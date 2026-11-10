@@ -1,7 +1,6 @@
 # VSSMath 0.2.0 development-source release review
 
-Status: review packet prepared; the source release has not been tagged, published,
-or installed. This packet records the candidate evidence for owner review and
+Status: review packet submitted as [PR #42](https://github.com/VirtualSensorSoft/VSSMath/pull/42); the source release has not been tagged, published, or installed. This packet records the candidate evidence for owner review and
 makes no production, safety-certification, universal-correctness, or real-time
 performance claim.
 

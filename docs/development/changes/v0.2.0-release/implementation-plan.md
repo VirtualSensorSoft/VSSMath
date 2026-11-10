@@ -6,7 +6,7 @@
 - Scope: Assemble a public, evidence-backed review packet for the candidate 0.2.0 development-source release.
 - Tracking issue: https://github.com/VirtualSensorSoft/VSSMath/issues/19
 - Specification: docs/development/changes/v0.2.0-release/specification.md
-- Implementation pull request(s): Pending PR creation
+- Implementation pull request(s): https://github.com/VirtualSensorSoft/VSSMath/pull/42
 
 ## Ordered work
 

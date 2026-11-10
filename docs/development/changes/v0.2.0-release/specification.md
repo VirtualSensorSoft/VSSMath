@@ -5,8 +5,8 @@
 - Owner: VirtualSensorSoft maintainers
 - Scope: Record release-candidate identity, canonical CI, completed controlled timing qualification, proposed release notes, and explicit limits for a possible 0.2.0 development-source release.
 - Tracking issue: https://github.com/VirtualSensorSoft/VSSMath/issues/19
-- Approval pull request: Pending owner review
-- Implementation pull request(s): Pending PR creation
+- Approval pull request: https://github.com/VirtualSensorSoft/VSSMath/pull/42
+- Implementation pull request(s): https://github.com/VirtualSensorSoft/VSSMath/pull/42
 - Candidate source: `6def6b1fc8bfd39e11fdfb51dd23237d2ec22d37`
 - Created: 2026-11-11
 - Supersedes: None
