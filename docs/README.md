@@ -6,6 +6,7 @@
 - [Numerical contract](numerical-contract.md)
 - [0.1.0 development source release notes](development/changes/1-vssmath-foundation/release-notes.md)
 - [0.1.1 development correction release](development/archive/changes/v0.1.1-release/README.md)
+- [0.2.0 development-source release review](development/changes/v0.2.0-release/README.md)
 - [0.1.1 correction specification](development/archive/changes/v0.1.1-release/specification.md)
 - [0.1.1 correction implementation plan](development/archive/changes/v0.1.1-release/implementation-plan.md)
 - [0.1.1 source assessment and evidence](development/archive/changes/v0.1.1-release/evidence.md)
