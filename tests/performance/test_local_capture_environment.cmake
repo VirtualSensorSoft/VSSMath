@@ -147,6 +147,20 @@ function(run_case name trace expected_status expected_token)
 endfunction()
 
 run_case(boundary "${trace_pass}" PASS preflight_pass)
+
+# A real host CPU model must be accepted when it matches this capture's
+# immutable profile. Synthetic identity is for fixtures, not production policy.
+make_fixture(real-cpu-model)
+set(real_cpu_model "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz")
+file(WRITE "${real-cpu-model_root}/proc/cpuinfo"
+  "processor : 0\nmodel name : ${real_cpu_model}\n"
+  "processor : 4\nmodel name : ${real_cpu_model}\n")
+file(READ "${real-cpu-model_profile}" real_profile_content)
+string(REPLACE "Synthetic test processor" "${real_cpu_model}"
+  real_profile_content "${real_profile_content}")
+file(WRITE "${real-cpu-model_profile}" "${real_profile_content}")
+run_case(real-cpu-model "${trace_pass}" PASS preflight_pass)
+
 run_case(load-boundary "${trace_high_load}" FAIL preflight_failed)
 run_case(middle-reset "${trace_reset}" FAIL preflight_failed)
 run_case(timeout "${trace_timeout}" FAIL preflight_failed)
