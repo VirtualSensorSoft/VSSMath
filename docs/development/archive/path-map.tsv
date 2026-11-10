@@ -1,1 +1,6 @@
 old_path	new_path	move_commit	tracking_url	compatibility_stub
+docs/development/changes/v0.1.1-release/README.md	docs/development/archive/changes/v0.1.1-release/README.md	e92ac527bba164fd6af4dd4e57787fb78a47a8d0	https://github.com/VirtualSensorSoft/VSSMath/issues/36	no
+docs/development/changes/v0.1.1-release/evidence.md	docs/development/archive/changes/v0.1.1-release/evidence.md	e92ac527bba164fd6af4dd4e57787fb78a47a8d0	https://github.com/VirtualSensorSoft/VSSMath/issues/36	no
+docs/development/changes/v0.1.1-release/implementation-plan.md	docs/development/archive/changes/v0.1.1-release/implementation-plan.md	e92ac527bba164fd6af4dd4e57787fb78a47a8d0	https://github.com/VirtualSensorSoft/VSSMath/issues/36	no
+docs/development/changes/v0.1.1-release/release-notes.md	docs/development/archive/changes/v0.1.1-release/release-notes.md	e92ac527bba164fd6af4dd4e57787fb78a47a8d0	https://github.com/VirtualSensorSoft/VSSMath/issues/36	no
+docs/development/changes/v0.1.1-release/specification.md	docs/development/archive/changes/v0.1.1-release/specification.md	e92ac527bba164fd6af4dd4e57787fb78a47a8d0	https://github.com/VirtualSensorSoft/VSSMath/issues/36	no
