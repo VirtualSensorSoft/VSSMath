@@ -11,7 +11,7 @@
   allocation contracts, thread-safety checks, static analysis, coverage review,
   and hosted Debug/Release performance diagnostics. Diagnostics are not a
   qualified baseline and waive no correctness or allocation requirement.
-- Accountable owner: Yasser Radkhorrami.
+- Accountable role: repository maintainer.
 - Review by: 2027-01-31, before `0.2.0`, or before any production/stable-release
   claim, whichever occurs first. This exception does not reset the deadline.
 - Required review outcome: complete controlled timing qualification, approve a
