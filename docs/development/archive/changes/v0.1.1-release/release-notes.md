@@ -1,6 +1,7 @@
 # VSSMath 0.1.1 development source notes
 
-Status: merged source candidate; not a published release or installed package.
+Status: published development source prerelease; native installation acceptance is recorded on
+[issue #21](https://github.com/VirtualSensorSoft/VSSMath/issues/21).
 
 ## Correction
 
@@ -23,10 +24,10 @@ Canonical hosted CI at source commit
 8e60530da9ce403741e38b894ae4989625aa7) passed its 16 required jobs. The exact tested configurations
 and limitations are in the [0.1.1 source assessment](evidence.md). This candidate makes no qualified
 timing, production, or cross-platform claim. The approved [development-only timing
-exception](../../deviations/development-timing-0.1.1.md) remains limited to `0.1.1` and
+exception](../../../deviations/development-timing-0.1.1.md) remains limited to `0.1.1` and
 `ENG-CPP-076`.
 
 The `0.1.0` artifact and its history remain immutable and are still affected by the LU validation
-defect. These notes describe merged source only; they do not announce publication, installation, or
+defect. These notes document the published 0.1.1 development prerelease; they do not announce
 replacement of `0.1.0`. VSSMath retains its existing rights-reservation notice; these changes add no
 license grant.

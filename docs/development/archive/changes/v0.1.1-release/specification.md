@@ -1,14 +1,14 @@
 # VSSMath 0.1.1 correction release specification
 
 - Record ID: 2
-- Status: Implementing
-- Owner: Yasser Radkhorrami
+- Status: Completed
+- Owner: VSSMath maintainers
 - Scope: Version and validate the merged LU error-precedence correction as a standalone VSSMath 0.1.1 development source package.
 - Tracking issue: https://github.com/VirtualSensorSoft/VSSMath/issues/21
-- Approval pull request: https://github.com/VirtualSensorSoft/VSSDoc/pull/117
-- Implementation pull request(s): Not opened
+- Approval pull request: Not recorded in this repository
+- Implementation pull request(s): [#20](https://github.com/VirtualSensorSoft/VSSMath/pull/20), [#22](https://github.com/VirtualSensorSoft/VSSMath/pull/22), and [#23](https://github.com/VirtualSensorSoft/VSSMath/pull/23)
 - Created: 2026-10-29
-- Last updated: 2026-10-29
+- Last updated: 2026-11-10
 - Supersedes: None
 - Superseded by: None
 

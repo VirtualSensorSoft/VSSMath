@@ -1,9 +1,11 @@
 # VSSMath 0.1.1 source assessment and evidence
 
 This is the final engineering assessment for the merged 0.1.1 source candidate at commit
-`cf98e60530da9ce403741e38b894ae4989625aa7`. It is not a release attestation, installed-artifact
-record, production acceptance, timing qualification, or ISO certification. No 0.1.1 release or
-installation has been published.
+`cf98e60530da9ce403741e38b894ae4989625aa7`. It is not a release attestation, complete installed-
+artifact record, production acceptance, timing qualification, or ISO certification. The separately
+approved development prerelease is published at
+[tag 0.1.1](https://github.com/VirtualSensorSoft/VSSMath/releases/tag/0.1.1); native installation
+acceptance is recorded on [issue #21](https://github.com/VirtualSensorSoft/VSSMath/issues/21).
 
 ## Assessed Identity
 
@@ -70,7 +72,7 @@ The Debug and Release algorithm diagnostic artifacts both report `diagnostic_com
 `compatible_pass` for their reviewed diagnostic comparisons. These are diagnostic comparisons, not a
 controlled timing baseline or a qualified performance claim. The approved, version-limited
 `ENG-CPP-076` deviation remains recorded in
-[development-timing-0.1.1.md](../../deviations/development-timing-0.1.1.md); it waives no
+[development-timing-0.1.1.md](../../../deviations/development-timing-0.1.1.md); it waives no
 correctness, sanitizer, allocation, thread-safety, analysis, coverage, security-governance, or CI
 requirements.
 
@@ -86,8 +88,8 @@ dependency, or deployable image is introduced.
 
 The table gives the same 83 rule IDs as the public engineering catalogue. Group-level evidence is
 summarized in the sections below; scope exclusions use [profile
-applicability](../../standards/profiles.md). Security-governance process evidence is intentionally
-described without private operational details.
+applicability](../../../standards/profiles.md). Security-governance evidence is limited to the stated
+control assessment.
 
 | Rule | Assessment | Evidence group |
 |---|---|---|
@@ -191,8 +193,8 @@ package-version probes at the assessed source.
 and documentation-policy jobs; counts are configuration-specific as shown above.
 - **SECURITY:** pinned workflow/action policy, successful Trivy job, and the scanner-input
 limitation stated above. The result is not a vulnerability-free claim.
-- **SECURITY-GOVERNANCE:** owner-approved private process evidence is reused from the prior
-assessment; confidential details are not reproduced.
+- **SECURITY-GOVERNANCE:** evidence for unchanged controls is reused from the prior assessment;
+  no additional governance claim is made.
 - **NUMERICAL:** all 95 requirement IDs remain mapped; the affected LU validation-order mapping
 now includes `math.lu`. GCC, Clang, sanitizer and extended-policy tests passed as listed.
 - **CONCURRENCY:** all five profile rules apply; hosted ThreadSanitizer lifecycle evidence passed.
@@ -207,5 +209,5 @@ not an ISO/IEC 14882 certification, universal numerical correctness proof, safet
 certification, production-readiness claim, qualified performance baseline, or evidence for other
 operating systems, architectures, compilers, standard libraries, or deployment environments. The
 immutable 0.1.0 artifact remains affected by the LU defect; this source candidate does not alter or
-replace that artifact. Release publication and installation require the separate exact artifact
-packet and owner approval.
+replace that artifact. The subsequent 0.1.1 prerelease publication and native acceptance are
+recorded separately; neither establishes production readiness or broader platform support.

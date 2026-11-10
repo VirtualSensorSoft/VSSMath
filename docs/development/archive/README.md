@@ -1,3 +1,5 @@
 # Development archive
 
-There are no archived development records at this initial foundation. Future records are moved here only when they are superseded or completed and the current navigation is updated.
+Completed and superseded development records are retained here for historical reference.
+
+- [Completed 0.1.1 correction release](changes/v0.1.1-release/README.md)

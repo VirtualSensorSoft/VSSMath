@@ -1,13 +1,13 @@
 # VSSMath 0.1.1 correction release implementation plan
 
 - Record ID: 2
-- Status: Implementing
-- Owner: Yasser Radkhorrami
+- Status: Completed
+- Owner: VSSMath maintainers
 - Scope: Implement and validate the approved VSSMath 0.1.1 source correction.
 - Tracking issue: https://github.com/VirtualSensorSoft/VSSMath/issues/21
-- Approval pull request: https://github.com/VirtualSensorSoft/VSSDoc/pull/117
-- Implementation pull request(s): Not opened
-- Specification: docs/development/changes/v0.1.1-release/specification.md
+- Approval pull request: Not recorded in this repository
+- Implementation pull request(s): [#20](https://github.com/VirtualSensorSoft/VSSMath/pull/20), [#22](https://github.com/VirtualSensorSoft/VSSMath/pull/22), and [#23](https://github.com/VirtualSensorSoft/VSSMath/pull/23)
+- Specification: docs/development/archive/changes/v0.1.1-release/specification.md
 
 ## Ordered work
 
@@ -24,12 +24,15 @@
 5. Run the six planned focused CTests and repository documentation, conformance,
    numerical-traceability, formatting and diff checks. Do not run the expensive
    local full-simulation suite; canonical hosted CI remains unchanged.
-6. Commit and push the coherent source PR, observe its hosted checks, repair
-   in-scope failures, then provide the owner review comment, merge title and
-   merge description. Owner merges the PR.
-7. Continue with the separately authorized assessment/docs PR only after Task 1
-   is merged and its canonical CI is successful. Do not publish, tag, or install
-   until the exact artifact packet receives separate owner approval.
+6. Completed in source PRs [#20](https://github.com/VirtualSensorSoft/VSSMath/pull/20)
+   and [#22](https://github.com/VirtualSensorSoft/VSSMath/pull/22); canonical hosted CI
+   passed before owner merge.
+7. Completed in assessment PR [#23](https://github.com/VirtualSensorSoft/VSSMath/pull/23).
+   The separately approved 0.1.1 source prerelease was published at
+   [tag 0.1.1](https://github.com/VirtualSensorSoft/VSSMath/releases/tag/0.1.1), and
+   native installation acceptance was recorded on tracking issue
+   [#21](https://github.com/VirtualSensorSoft/VSSMath/issues/21). Those later actions
+   were outside this plan's original authorization.
 
 ## Validation
 

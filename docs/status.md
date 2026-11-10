@@ -9,7 +9,7 @@ ISO-certification, or qualified timing claim is made.
 The current assessment is limited to Ubuntu 24.04.5 x86-64, GCC 13.3.0 with libstdc++ release 13,
 and Clang 18.1.3 with libstdc++ release 14. The captured profiles do not establish Clang with
 libc++, another operating system, another architecture, or another deployment environment. See the
-[0.1.1 source assessment](development/changes/v0.1.1-release/evidence.md) for exact job selections,
+[0.1.1 source assessment](development/archive/changes/v0.1.1-release/evidence.md) for exact job selections,
 results, scanner limitations, and rule-level evidence.
 
 CI selection counts are configuration-specific and do not represent the full registered test
