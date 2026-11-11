@@ -148,10 +148,10 @@ endfunction()
 
 run_case(boundary "${trace_pass}" PASS preflight_pass)
 
-# A real host CPU model must be accepted when it matches this capture's
+# A production-style CPU model must be accepted when it matches this capture's
 # immutable profile. Synthetic identity is for fixtures, not production policy.
 make_fixture(real-cpu-model)
-set(real_cpu_model "Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz")
+set(real_cpu_model "Industrial Processor Model 8")
 file(WRITE "${real-cpu-model_root}/proc/cpuinfo"
   "processor : 0\nmodel name : ${real_cpu_model}\n"
   "processor : 4\nmodel name : ${real_cpu_model}\n")
