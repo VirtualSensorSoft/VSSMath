@@ -14,7 +14,7 @@
 2. Verify private Debug and Release qualification markers, three stable captures per configuration, repeatability, and correctness for all benchmark cases; do not copy machine-specific records into the public repository.
 3. Prepare the release review README, source assessment, proposed release notes, and accurate status/index/inventory links. Keep historical release records unchanged.
 4. Run the documentation-policy checker and all five policy regression scripts; inspect the diff for private host data and formatting errors.
-5. Commit as `Yasser Radkhorrami` with the owner's configured verified email, push the review branch to the owner's fork, and open a PR against organization `main` with a complete review packet.
+5. Verify the repository-local commit author and committer against the maintainer account, push the review branch to the maintainer's fork, and open a PR against organization `main` with a complete review packet.
 
 ## Validation and boundary
 
