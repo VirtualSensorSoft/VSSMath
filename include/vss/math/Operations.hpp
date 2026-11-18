@@ -1,15 +1,61 @@
 #ifndef VSS_MATH_OPERATIONS_HPP
 #define VSS_MATH_OPERATIONS_HPP
 
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MatrixView.hpp>
 #include <vss/math/NumericalError.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Tensor.hpp>
 #include <vss/math/Tolerance.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
 
 namespace vss::math {
+
+/// @brief Multiplies corresponding vector values without broadcasting.
+/// @param lhs Borrowed left operand.
+/// @param rhs Borrowed right operand; its extent must match @p lhs.
+/// @param limits Per-call output element and byte ceilings.
+/// @return An owned elementwise product or a diagnostic failure.
+/// @pre Inputs remain valid and unmodified for the duration of the call.
+/// @throws std::bad_alloc if permitted output storage cannot be allocated.
+[[nodiscard]] Result<Vector> hadamard(ConstVectorView lhs, ConstVectorView rhs,
+                                      Limits limits);
+
+/// @brief Multiplies corresponding matrix values without broadcasting.
+/// @param lhs Borrowed left operand.
+/// @param rhs Borrowed right operand; its shape must match @p lhs.
+/// @param limits Per-call output element and byte ceilings.
+/// @return An owned elementwise product or a diagnostic failure.
+/// @pre Inputs remain valid and unmodified for the duration of the call.
+/// @throws std::bad_alloc if permitted output storage cannot be allocated.
+[[nodiscard]] Result<Matrix> hadamard(ConstMatrixView lhs, ConstMatrixView rhs,
+                                      Limits limits);
+
+/// @brief Computes the Frobenius norm of a matrix using scaled accumulation.
+/// @param value Borrowed matrix view.
+/// @return The non-negative norm, or a finite-value/range failure.
+[[nodiscard]] Result<Scalar> frobenius(ConstMatrixView value);
+
+/// @brief Computes a stable row-major Frobenius inner product.
+/// @param lhs Borrowed left matrix.
+/// @param rhs Borrowed right matrix with identical shape.
+/// @return The sum of pairwise products, or a diagnostic failure.
+[[nodiscard]] Result<Scalar> frobeniusInner(ConstMatrixView lhs,
+                                            ConstMatrixView rhs);
+
+/// @brief Computes the Frobenius norm of a tensor using scaled accumulation.
+/// @param value Borrowed tensor.
+/// @return The non-negative norm, or a finite-value/range failure.
+[[nodiscard]] Result<Scalar> frobenius(const Tensor& value);
+
+/// @brief Computes a stable row-major Frobenius inner product of tensors.
+/// @param lhs Borrowed left tensor.
+/// @param rhs Borrowed right tensor with identical rank and extents.
+/// @return The sum of pairwise products, or a diagnostic failure.
+[[nodiscard]] Result<Scalar> frobeniusInner(const Tensor& lhs,
+                                            const Tensor& rhs);
 
 /// @brief Adds corresponding vector elements in deterministic index order.
 /// @param lhs Left-hand borrowed vector.

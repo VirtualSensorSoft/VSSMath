@@ -65,6 +65,9 @@ vss_math_add_test(test_tensor_shape unit/test_tensor_shape.cpp math.tensor_shape
 vss_math_add_test(test_tensor unit/test_tensor.cpp math.tensor)
 vss_math_add_test(test_tensor_operations unit/test_tensor_operations.cpp
                   math.tensor_arithmetic)
+vss_math_add_test(test_elementwise_extensions
+                  unit/test_elementwise_extensions.cpp
+                  math.elementwise_extensions)
 vss_math_add_test(test_tensor_products unit/test_tensor_products.cpp
                   math.tensor_products)
 vss_math_add_test(test_moments unit/test_moments.cpp math.moments_wrappers)

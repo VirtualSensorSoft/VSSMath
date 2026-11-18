@@ -116,6 +116,7 @@ set(vss_expected_files
   include/vss/math/Error.hpp
   include/vss/math/FirstMoment.hpp
   include/vss/math/FourthMoment.hpp
+  include/vss/math/Limits.hpp
   include/vss/math/Matrix.hpp
   include/vss/math/MatrixView.hpp
   include/vss/math/MultivariateMoments.hpp
@@ -126,6 +127,7 @@ set(vss_expected_files
   include/vss/math/SecondMoment.hpp
   include/vss/math/Tolerance.hpp
   include/vss/math/Tensor.hpp
+  include/vss/math/TensorElementwise.hpp
   include/vss/math/TensorLimits.hpp
   include/vss/math/TensorOperations.hpp
   include/vss/math/TensorShape.hpp

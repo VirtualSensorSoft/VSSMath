@@ -2,6 +2,7 @@
 #define VSS_MATH_TENSOR_OPERATIONS_HPP
 
 #include <span>
+#include <vss/math/Limits.hpp>
 #include <vss/math/NumericalError.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
@@ -9,6 +10,24 @@
 #include <vss/math/Tolerance.hpp>
 
 namespace vss::math {
+
+/// @brief Multiplies corresponding tensor elements without broadcasting.
+/// @param lhs Borrowed left tensor.
+/// @param rhs Borrowed right tensor with exactly the same shape.
+/// @param limits Per-call element, byte, and callback ceilings.
+/// @return An owning product or a diagnostic failure with no value.
+/// @throws std::bad_alloc if permitted result storage cannot be allocated.
+[[nodiscard]] Result<Tensor> hadamard(const Tensor& lhs, const Tensor& rhs,
+                                      Limits limits);
+
+/// @brief Divides each tensor element directly by a finite nonzero scalar.
+/// @param value Borrowed input tensor.
+/// @param divisor Finite, nonzero divisor.
+/// @param limits Per-call element, byte, and callback ceilings.
+/// @return An owning quotient preserving rank and extents.
+/// @throws std::bad_alloc if permitted result storage cannot be allocated.
+[[nodiscard]] Result<Tensor> divide(const Tensor& value, Scalar divisor,
+                                    Limits limits);
 
 /// @brief Adds tensors with identical shapes and no broadcasting.
 /// @param lhs Left input tensor.

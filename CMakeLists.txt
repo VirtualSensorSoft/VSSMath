@@ -45,6 +45,7 @@ add_library(vss_math STATIC
   src/TensorShape.cpp
   src/Operations.cpp
   src/TensorOperations.cpp
+  src/TensorElementwise.cpp
   src/covariance/Covariance.cpp
   src/differentiation/FiniteDifference.cpp
   src/probability/ChiSquare.cpp

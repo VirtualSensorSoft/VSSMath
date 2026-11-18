@@ -4,11 +4,14 @@
 #include <sstream>
 #include <string>
 #include <vss/math/FirstMoment.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MultivariateMoments.hpp>
 #include <vss/math/Operations.hpp>
 #include <vss/math/PrintOptions.hpp>
 #include <vss/math/Tensor.hpp>
+#include <vss/math/TensorElementwise.hpp>
+#include <vss/math/TensorOperations.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/linear/LU.hpp>
 #include <vss/math/version.hpp>
@@ -47,15 +50,82 @@ int main() {
                "installed tensor access failed"))
     return 1;
 
+  const Limits limits{64U, 4096U, 64U};
+  const auto tensorProduct = hadamard(tensor.value(), tensor.value(), limits);
+  if (!require(tensorProduct.hasValue() &&
+                   tensorProduct.value().at(std::array<Index, 2>{1U, 1U}) ==
+                       25.0,
+               "installed tensor Hadamard API failed")) {
+    return 1;
+  }
+  const auto tensorQuotient = divide(tensor.value(), 5.0, limits);
+  if (!require(tensorQuotient.hasValue() &&
+                   tensorQuotient.value().at(std::array<Index, 2>{1U, 1U}) ==
+                       1.0,
+               "installed tensor division API failed")) {
+    return 1;
+  }
+  const std::array<Extent, 2> broadcastShape{2U, 2U};
+  const std::array<Index, 2> broadcastAxes{0U, 1U};
+  const auto broadcast =
+      broadcastTo(tensor.value(), broadcastShape, broadcastAxes, limits);
+  if (!require(broadcast.hasValue() &&
+                   broadcast.value().at(std::array<Index, 2>{1U, 1U}) == 5.0,
+               "installed tensor broadcast API failed")) {
+    return 1;
+  }
+  const auto transformed = transformElements(
+      tensor.value(),
+      [](Scalar value) -> Result<Scalar> {
+        return Result<Scalar>::success(value + 1.0);
+      },
+      limits);
+  if (!require(transformed.hasValue() &&
+                   transformed.value().at(std::array<Index, 2>{1U, 1U}) == 6.0,
+               "installed tensor transform API failed")) {
+    return 1;
+  }
+
   Matrix matrix(2U, 2U);
   matrix.at(0U, 0U) = 1.0;
   matrix.at(0U, 1U) = 2.0;
   matrix.at(1U, 0U) = 3.0;
   matrix.at(1U, 1U) = 4.0;
+  const auto matrixProduct = hadamard(matrix.view(), matrix.view(), limits);
+  if (!require(matrixProduct.hasValue() &&
+                   matrixProduct.value().at(1U, 1U) == 16.0,
+               "installed matrix Hadamard API failed")) {
+    return 1;
+  }
+  const auto matrixNorm = frobenius(matrix.view());
+  if (!require(matrixNorm.hasValue() && matrixNorm.value() > 5.47 &&
+                   matrixNorm.value() < 5.48,
+               "installed matrix Frobenius API failed")) {
+    return 1;
+  }
+  const auto matrixInner = frobeniusInner(matrix.view(), matrix.view());
+  if (!require(matrixInner.hasValue() && matrixInner.value() == 30.0,
+               "installed matrix Frobenius inner-product API failed")) {
+    return 1;
+  }
+  const auto tensorNorm = frobenius(tensor.value());
+  const auto tensorInner = frobeniusInner(tensor.value(), tensor.value());
+  if (!require(tensorNorm.hasValue() && tensorInner.hasValue() &&
+                   tensorInner.value() == 25.0,
+               "installed tensor Frobenius APIs failed")) {
+    return 1;
+  }
 
   Vector vector(2U);
   vector.at(0U) = 5.0;
   vector.at(1U) = 6.0;
+  const auto vectorProduct = hadamard(vector.view(), vector.view(), limits);
+  if (!require(vectorProduct.hasValue() &&
+                   vectorProduct.value().at(0U) == 25.0 &&
+                   vectorProduct.value().at(1U) == 36.0,
+               "installed vector Hadamard API failed")) {
+    return 1;
+  }
 
   PrintOptions printOptions;
   printOptions.maxElements = 2U;
