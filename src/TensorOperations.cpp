@@ -138,13 +138,16 @@ Result<Tensor> hadamard(const Tensor& lhs, const Tensor& rhs, Limits limits) {
   if (!result.hasValue()) {
     return fromStatus<Tensor>(result.status());
   }
-  for (Extent i = 0U; i < lhs.size(); ++i) {
-    const Scalar product = lhs.data()[i] * rhs.data()[i];
+  const auto lhsValues = elements(lhs);
+  const auto rhsValues = elements(rhs);
+  auto resultValues = elements(result.value());
+  for (Extent i = 0U; i < lhsValues.size(); ++i) {
+    const Scalar product = lhsValues[i] * rhsValues[i];
     if (!isFinite(product)) {
       return failure<Tensor>(ErrorCode::NonFiniteResult,
                              "Hadamard tensor result is non-finite");
     }
-    result.value().data()[i] = product;
+    resultValues[i] = product;
   }
   return result;
 }
@@ -171,13 +174,15 @@ Result<Tensor> divide(const Tensor& value, Scalar divisor, Limits limits) {
   if (!result.hasValue()) {
     return fromStatus<Tensor>(result.status());
   }
-  for (Extent i = 0U; i < value.size(); ++i) {
-    const Scalar quotient = value.data()[i] / divisor;
+  const auto inputValues = elements(value);
+  auto resultValues = elements(result.value());
+  for (Extent i = 0U; i < inputValues.size(); ++i) {
+    const Scalar quotient = inputValues[i] / divisor;
     if (!isFinite(quotient)) {
       return failure<Tensor>(ErrorCode::NonFiniteResult,
                              "tensor division result is non-finite");
     }
-    result.value().data()[i] = quotient;
+    resultValues[i] = quotient;
   }
   return result;
 }
@@ -261,7 +266,7 @@ Result<Tensor> outer(const Tensor& lhs, const Tensor& rhs, TensorLimits limits,
         return failure<Tensor>(ErrorCode::NonFiniteResult,
                                "tensor outer product is non-finite");
       }
-      resultValues[lhsIndex * rhsValues.size() + rhsIndex] = value;
+      resultValues[(lhsIndex * rhsValues.size()) + rhsIndex] = value;
     }
   }
   return result;

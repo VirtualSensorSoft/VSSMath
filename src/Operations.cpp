@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <span>
 #include <string>
 #include <utility>
 #include <vss/math/Core.hpp>
@@ -11,6 +12,7 @@
 #include <vss/math/NumericalError.hpp>
 #include <vss/math/Operations.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Tensor.hpp>
 #include <vss/math/Tolerance.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
@@ -47,13 +49,13 @@ bool finite(ConstMatrixView value) {
   return true;
 }
 
+std::span<const Scalar> elements(const Tensor& value) {
+  return {value.data(), value.size()};
+}
+
 bool finite(const Tensor& value) {
-  for (Index i = 0U; i < value.size(); ++i) {
-    if (!isFinite(value.data()[i])) {
-      return false;
-    }
-  }
-  return true;
+  return std::ranges::all_of(elements(value),
+                             [](Scalar element) { return isFinite(element); });
 }
 
 bool sameShape(const Tensor& lhs, const Tensor& rhs) {
@@ -280,8 +282,8 @@ Result<Scalar> frobenius(const Tensor& value) {
     return failure<Scalar>(ErrorCode::NonFiniteInput,
                            "Frobenius tensor input is non-finite");
   }
-  return scaledNorm(value.size(),
-                    [&value](Index i) { return value.data()[i]; });
+  const auto values = elements(value);
+  return scaledNorm(value.size(), [&values](Index i) { return values[i]; });
 }
 
 Result<Scalar> frobeniusInner(const Tensor& lhs, const Tensor& rhs) {
@@ -293,8 +295,10 @@ Result<Scalar> frobeniusInner(const Tensor& lhs, const Tensor& rhs) {
     return failure<Scalar>(ErrorCode::NonFiniteInput,
                            "Frobenius tensor input is non-finite");
   }
-  return scaledProductSum(lhs.size(), [&lhs, &rhs](Index i) {
-    return std::pair{lhs.data()[i], rhs.data()[i]};
+  const auto lhsValues = elements(lhs);
+  const auto rhsValues = elements(rhs);
+  return scaledProductSum(lhs.size(), [&lhsValues, &rhsValues](Index i) {
+    return std::pair{lhsValues[i], rhsValues[i]};
   });
 }
 

@@ -1,6 +1,7 @@
+#include <algorithm>
 #include <limits>
+#include <span>
 #include <string>
-#include <utility>
 #include <vector>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
@@ -23,13 +24,17 @@ template <class T> Result<T> fromStatus(const Status& status) {
   return Result<T>::failure(status.code(), std::string{status.message()});
 }
 
+std::span<const Scalar> elements(const Tensor& value) {
+  return {value.data(), value.size()};
+}
+
+std::span<Scalar> elements(Tensor& value) {
+  return {value.data(), value.size()};
+}
+
 bool finite(const Tensor& value) {
-  for (Index i = 0U; i < value.size(); ++i) {
-    if (!isFinite(value.data()[i])) {
-      return false;
-    }
-  }
-  return true;
+  return std::ranges::all_of(elements(value),
+                             [](Scalar element) { return isFinite(element); });
 }
 
 Status preflight(std::span<const Extent> extents, const Limits& limits,
@@ -103,10 +108,12 @@ Result<Tensor> transformElements(const Tensor& value,
   if (!result.hasValue()) {
     return result;
   }
+  const auto inputValues = elements(value);
+  auto resultValues = elements(result.value());
   for (Extent i = 0U; i < elementCount; ++i) {
-    const auto invoke = [&function, &value, i]() -> Result<Scalar> {
+    const auto invoke = [&function, &inputValues, i]() -> Result<Scalar> {
       try {
-        return function(value.data()[i]);
+        return function(inputValues[i]);
       } catch (...) {
         return Result<Scalar>::failure(
             ErrorCode::CallbackFailure,
@@ -123,7 +130,7 @@ Result<Tensor> transformElements(const Tensor& value,
       return failure<Tensor>(ErrorCode::NonFiniteResult,
                              "tensor transform produced a non-finite value");
     }
-    result.value().data()[i] = transformed.value();
+    resultValues[i] = transformed.value();
   }
   return result;
 }
@@ -186,6 +193,8 @@ Result<Tensor> broadcastTo(const Tensor& value,
   if (!result.hasValue()) {
     return result;
   }
+  const auto sourceValues = elements(value);
+  auto resultValues = elements(result.value());
   for (Extent linear = 0U; linear < elementCount; ++linear) {
     Extent sourceLinear = 0U;
     for (Index sourceAxis = 0U; sourceAxis < value.shape().rank();
@@ -198,9 +207,9 @@ Result<Tensor> broadcastTo(const Tensor& value,
             (linear / destinationStrides[destinationAxis]) % targetExtent;
       }
       sourceLinear =
-          sourceLinear * value.shape().extent(sourceAxis) + sourceCoordinate;
+          (sourceLinear * value.shape().extent(sourceAxis)) + sourceCoordinate;
     }
-    result.value().data()[linear] = value.data()[sourceLinear];
+    resultValues[linear] = sourceValues[sourceLinear];
   }
   return result;
 }
