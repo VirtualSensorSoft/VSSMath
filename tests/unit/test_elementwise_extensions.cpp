@@ -1,20 +1,22 @@
 #include "Test.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstddef>
-#include <functional>
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Operations.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/TensorElementwise.hpp>
+#include <vss/math/TensorLimits.hpp>
 #include <vss/math/TensorOperations.hpp>
 #include <vss/math/TensorShape.hpp>
 #include <vss/math/Vector.hpp>
@@ -23,15 +25,25 @@ namespace {
 
 using namespace vss::math;
 
+std::span<Scalar> elements(Tensor& value) {
+  return {value.data(), value.size()};
+}
+
+std::span<const Scalar> elements(const Tensor& value) {
+  return {value.data(), value.size()};
+}
+
+std::span<Scalar> elements(Matrix& value) {
+  return {value.data(), value.size()};
+}
+
 Tensor tensor(std::span<const Extent> extents, std::span<const Scalar> values) {
   const auto shape = TensorShape::create(extents);
   VSS_CHECK(shape.hasValue());
   auto result = Tensor::create(shape.value(), 0.0, TensorLimits{values.size()});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().size() == values.size());
-  for (Extent i = 0; i < values.size(); ++i) {
-    result.value().data()[i] = values[i];
-  }
+  std::ranges::copy(values, elements(result.value()).begin());
   return std::move(result).value();
 }
 
@@ -45,7 +57,7 @@ void checkCode(const auto& result, ErrorCode code) {
 }
 
 void testHadamardAndDivide() {
-  const Limits limits{64U, 4096U, 64U};
+  const Limits limits{.elements = 64U, .bytes = 4096U, .evaluations = 64U};
   const std::array<Scalar, 2> va{2.0, -3.0};
   const std::array<Scalar, 2> vb{4.0, 5.0};
   const Vector a{va};
@@ -60,9 +72,12 @@ void testHadamardAndDivide() {
   nonfiniteVector.at(0U) = std::numeric_limits<Scalar>::infinity();
   checkCode(hadamard(nonfiniteVector.view(), nonfiniteVector.view(), limits),
             ErrorCode::NonFiniteInput);
-  checkCode(hadamard(a.view(), b.view(), Limits{1U, 4096U, 64U}),
-            ErrorCode::ResourceLimit);
-  checkCode(hadamard(a.view(), b.view(), Limits{64U, 15U, 64U}),
+  checkCode(
+      hadamard(a.view(), b.view(),
+               Limits{.elements = 1U, .bytes = 4096U, .evaluations = 64U}),
+      ErrorCode::ResourceLimit);
+  checkCode(hadamard(a.view(), b.view(),
+                     Limits{.elements = 64U, .bytes = 15U, .evaluations = 64U}),
             ErrorCode::ResourceLimit);
   Vector hugeVector{1U};
   Vector factorVector{1U};
@@ -75,10 +90,8 @@ void testHadamardAndDivide() {
   Matrix mb{2U, 2U};
   const std::array<Scalar, 4> mva{2.0, -3.0, 0.0, 4.0};
   const std::array<Scalar, 4> mvb{4.0, 5.0, 6.0, -2.0};
-  for (Index i = 0; i < mva.size(); ++i) {
-    ma.data()[i] = mva[i];
-    mb.data()[i] = mvb[i];
-  }
+  std::ranges::copy(mva, elements(ma).begin());
+  std::ranges::copy(mvb, elements(mb).begin());
   const auto matrixProduct = hadamard(ma.view(), mb.view(), limits);
   VSS_CHECK(matrixProduct.hasValue());
   VSS_CHECK(matrixProduct.value().at(0U, 0U) == 8.0);
@@ -92,9 +105,12 @@ void testHadamardAndDivide() {
   badMatrix.at(0U, 0U) = std::numeric_limits<Scalar>::infinity();
   checkCode(hadamard(badMatrix.view(), badMatrix.view(), limits),
             ErrorCode::NonFiniteInput);
-  checkCode(hadamard(ma.view(), mb.view(), Limits{1U, 4096U, 64U}),
-            ErrorCode::ResourceLimit);
-  checkCode(hadamard(ma.view(), mb.view(), Limits{64U, 31U, 64U}),
+  checkCode(
+      hadamard(ma.view(), mb.view(),
+               Limits{.elements = 1U, .bytes = 4096U, .evaluations = 64U}),
+      ErrorCode::ResourceLimit);
+  checkCode(hadamard(ma.view(), mb.view(),
+                     Limits{.elements = 64U, .bytes = 31U, .evaluations = 64U}),
             ErrorCode::ResourceLimit);
 
   const std::array<Extent, 2> shape2{2U, 2U};
@@ -104,9 +120,8 @@ void testHadamardAndDivide() {
   const Tensor tb = tensor(shape2, tbValues);
   const auto tensorProduct = hadamard(ta, tb, limits);
   VSS_CHECK(tensorProduct.hasValue());
-  for (Extent i = 0; i < 4U; ++i) {
-    VSS_CHECK(tensorProduct.value().data()[i] == -6.0);
-  }
+  VSS_CHECK(std::ranges::all_of(elements(tensorProduct.value()),
+                                [](Scalar value) { return value == -6.0; }));
   const std::array<Extent, 3> shape3{2U, 1U, 2U};
   const std::array<Scalar, 4> threeA{2.0, 2.0, 2.0, 2.0};
   const std::array<Scalar, 4> threeB{-3.0, -3.0, -3.0, -3.0};
@@ -123,8 +138,13 @@ void testHadamardAndDivide() {
       1.0, 2.0, std::numeric_limits<Scalar>::infinity(), 4.0};
   checkCode(hadamard(ta, tensor(shape2, badTensorValues), limits),
             ErrorCode::NonFiniteInput);
-  checkCode(hadamard(ta, tb, Limits{1U, 4096U, 64U}), ErrorCode::ResourceLimit);
-  checkCode(hadamard(ta, tb, Limits{64U, 47U, 64U}), ErrorCode::ResourceLimit);
+  checkCode(
+      hadamard(ta, tb,
+               Limits{.elements = 1U, .bytes = 4096U, .evaluations = 64U}),
+      ErrorCode::ResourceLimit);
+  checkCode(hadamard(ta, tb,
+                     Limits{.elements = 64U, .bytes = 47U, .evaluations = 64U}),
+            ErrorCode::ResourceLimit);
   checkCode(
       hadamard(
           tensor(std::array<Extent, 1>{1U},
@@ -137,14 +157,14 @@ void testHadamardAndDivide() {
   const Tensor divInput = tensor(std::array<Extent, 1>{3U}, divideValues);
   const auto quotient = divide(divInput, 2.0, limits);
   VSS_CHECK(quotient.hasValue());
-  VSS_CHECK(quotient.value().data()[0] == 1.0);
-  VSS_CHECK(quotient.value().data()[1] == -2.0);
-  VSS_CHECK(quotient.value().data()[2] == 0.0);
+  VSS_CHECK(elements(quotient.value())[0] == 1.0);
+  VSS_CHECK(elements(quotient.value())[1] == -2.0);
+  VSS_CHECK(elements(quotient.value())[2] == 0.0);
   const std::array<Scalar, 1> scalarValue{-6.0};
   const auto scalarQuotient = divide(tensor({}, scalarValue), -3.0, limits);
   VSS_CHECK(scalarQuotient.hasValue());
   VSS_CHECK(scalarQuotient.value().shape().rank() == 0U);
-  VSS_CHECK(scalarQuotient.value().data()[0] == 2.0);
+  VSS_CHECK(elements(scalarQuotient.value())[0] == 2.0);
   const Tensor empty = tensor(std::array<Extent, 3>{2U, 0U, 3U}, {});
   const auto emptyQuotient = divide(empty, 2.0, limits);
   VSS_CHECK(emptyQuotient.hasValue());
@@ -160,9 +180,11 @@ void testHadamardAndDivide() {
             ErrorCode::NonFiniteInput);
   checkCode(divide(divInput, 0.0, limits), ErrorCode::InvalidDomain);
   checkCode(divide(divInput, -0.0, limits), ErrorCode::InvalidDomain);
-  checkCode(divide(divInput, 2.0, Limits{2U, 4096U, 64U}),
+  checkCode(divide(divInput, 2.0,
+                   Limits{.elements = 2U, .bytes = 4096U, .evaluations = 64U}),
             ErrorCode::ResourceLimit);
-  checkCode(divide(divInput, 2.0, Limits{64U, 31U, 64U}),
+  checkCode(divide(divInput, 2.0,
+                   Limits{.elements = 64U, .bytes = 31U, .evaluations = 64U}),
             ErrorCode::ResourceLimit);
   const Scalar max = std::numeric_limits<Scalar>::max();
   checkCode(
@@ -173,12 +195,12 @@ void testHadamardAndDivide() {
   const auto reciprocal =
       divide(tensor(std::array<Extent, 1>{1U}, std::array<Scalar, 1>{least}),
              least, limits);
-  VSS_CHECK(reciprocal.hasValue() && reciprocal.value().data()[0] == 1.0);
+  VSS_CHECK(reciprocal.hasValue() && elements(reciprocal.value())[0] == 1.0);
   const auto tie =
       divide(tensor(std::array<Extent, 1>{1U}, std::array<Scalar, 1>{least}),
              2.0, limits);
-  VSS_CHECK(tie.hasValue() && tie.value().data()[0] == 0.0);
-  VSS_CHECK(!std::signbit(tie.value().data()[0]));
+  VSS_CHECK(tie.hasValue() && elements(tie.value())[0] == 0.0);
+  VSS_CHECK(!std::signbit(elements(tie.value())[0]));
   const std::array<Extent, 2> overflowShape{std::numeric_limits<Extent>::max(),
                                             2U};
   const auto invalidShape = TensorShape::create(overflowShape);
@@ -196,8 +218,8 @@ void testFrobeniusOperations() {
   VSS_CHECK(matrixNorm.hasValue() &&
             close(matrixNorm.value(), std::sqrt(29.0)));
   Matrix largeNormInput{1U, 2U};
-  largeNormInput.data()[0] = 3.0e200;
-  largeNormInput.data()[1] = 4.0e200;
+  largeNormInput.at(0U, 0U) = 3.0e200;
+  largeNormInput.at(0U, 1U) = 4.0e200;
   VSS_CHECK(close(frobenius(largeNormInput.view()).value(), 5.0e200, 1.0e-15));
   Matrix emptyNormInput{0U, 2U};
   VSS_CHECK(frobenius(emptyNormInput.view()).value() == 0.0);
@@ -207,17 +229,15 @@ void testFrobeniusOperations() {
   Matrix right{2U, 2U};
   const std::array<Scalar, 4> lv{1.0, 2.0, 3.0, 4.0};
   const std::array<Scalar, 4> rv{5.0, 6.0, 7.0, 8.0};
-  for (Index i = 0; i < lv.size(); ++i) {
-    left.data()[i] = lv[i];
-    right.data()[i] = rv[i];
-  }
+  std::ranges::copy(lv, elements(left).begin());
+  std::ranges::copy(rv, elements(right).begin());
   VSS_CHECK(frobeniusInner(left.view(), right.view()).value() == 70.0);
   Matrix negativeLeft{1U, 2U};
   Matrix negativeRight{1U, 2U};
-  negativeLeft.data()[0] = -1.0;
-  negativeLeft.data()[1] = 2.0;
-  negativeRight.data()[0] = 3.0;
-  negativeRight.data()[1] = -4.0;
+  negativeLeft.at(0U, 0U) = -1.0;
+  negativeLeft.at(0U, 1U) = 2.0;
+  negativeRight.at(0U, 0U) = 3.0;
+  negativeRight.at(0U, 1U) = -4.0;
   VSS_CHECK(frobeniusInner(negativeLeft.view(), negativeRight.view()).value() ==
             -11.0);
   checkCode(frobeniusInner(left.view(), Matrix{1U, 4U}.view()),
@@ -227,22 +247,22 @@ void testFrobeniusOperations() {
   VSS_CHECK(emptyInner.hasValue() && emptyInner.value() == 0.0 &&
             !std::signbit(emptyInner.value()));
   Matrix infinite{1U, 1U};
-  infinite.data()[0] = std::numeric_limits<Scalar>::infinity();
+  infinite.at(0U, 0U) = std::numeric_limits<Scalar>::infinity();
   checkCode(frobenius(infinite.view()), ErrorCode::NonFiniteInput);
   checkCode(frobeniusInner(infinite.view(), infinite.view()),
             ErrorCode::NonFiniteInput);
   Matrix large{1U, 1U};
   Matrix twice{1U, 1U};
-  large.data()[0] = std::numeric_limits<Scalar>::max();
-  twice.data()[0] = 2.0;
+  large.at(0U, 0U) = std::numeric_limits<Scalar>::max();
+  twice.at(0U, 0U) = 2.0;
   checkCode(frobeniusInner(large.view(), twice.view()),
             ErrorCode::NonFiniteResult);
   Matrix cancellationA{1U, 2U};
   Matrix cancellationB{1U, 2U};
-  cancellationA.data()[0] = std::numeric_limits<Scalar>::max();
-  cancellationA.data()[1] = std::numeric_limits<Scalar>::max();
-  cancellationB.data()[0] = 2.0;
-  cancellationB.data()[1] = -2.0;
+  cancellationA.at(0U, 0U) = std::numeric_limits<Scalar>::max();
+  cancellationA.at(0U, 1U) = std::numeric_limits<Scalar>::max();
+  cancellationB.at(0U, 0U) = 2.0;
+  cancellationB.at(0U, 1U) = -2.0;
   const auto cancellation =
       frobeniusInner(cancellationA.view(), cancellationB.view());
   VSS_CHECK(cancellation.hasValue() && cancellation.value() == 0.0 &&
@@ -302,7 +322,7 @@ void testFrobeniusOperations() {
 }
 
 void testTensorElementwise() {
-  const Limits limits{32U, 4096U, 32U};
+  const Limits limits{.elements = 32U, .bytes = 4096U, .evaluations = 32U};
   const Tensor input =
       tensor(std::array<Extent, 1>{2U}, std::array<Scalar, 2>{1.0, 2.0});
   const std::array<Extent, 2> destination{2U, 3U};
@@ -310,23 +330,29 @@ void testTensorElementwise() {
   const auto broadcast = broadcastTo(input, destination, map, limits);
   VSS_CHECK(broadcast.hasValue());
   const std::array<Scalar, 6> expected{1, 1, 1, 2, 2, 2};
-  for (Index i = 0; i < expected.size(); ++i) {
-    VSS_CHECK(broadcast.value().data()[i] == expected[i]);
-  }
+  VSS_CHECK(std::ranges::equal(elements(broadcast.value()), expected));
   const std::array<Index, 1> badAxis{2U};
   checkCode(broadcastTo(input, destination, badAxis, limits),
             ErrorCode::IndexOutOfRange);
   const std::array<Extent, 2> incompatible{3U, 3U};
   checkCode(broadcastTo(input, incompatible, map, limits),
             ErrorCode::DimensionMismatch);
-  checkCode(broadcastTo(input, destination, map, Limits{1U, 4096U, 32U}),
-            ErrorCode::ResourceLimit);
-  checkCode(broadcastTo(input, destination, map, Limits{32U, 63U, 32U}),
-            ErrorCode::ResourceLimit);
-  checkCode(broadcastTo(input, destination, map, Limits{32U, 64U, 32U}),
-            ErrorCode::ResourceLimit);
-  checkCode(broadcastTo(input, destination, map, Limits{32U, 72U, 32U}),
-            ErrorCode::ResourceLimit);
+  checkCode(
+      broadcastTo(input, destination, map,
+                  Limits{.elements = 1U, .bytes = 4096U, .evaluations = 32U}),
+      ErrorCode::ResourceLimit);
+  checkCode(
+      broadcastTo(input, destination, map,
+                  Limits{.elements = 32U, .bytes = 63U, .evaluations = 32U}),
+      ErrorCode::ResourceLimit);
+  checkCode(
+      broadcastTo(input, destination, map,
+                  Limits{.elements = 32U, .bytes = 64U, .evaluations = 32U}),
+      ErrorCode::ResourceLimit);
+  checkCode(
+      broadcastTo(input, destination, map,
+                  Limits{.elements = 32U, .bytes = 72U, .evaluations = 32U}),
+      ErrorCode::ResourceLimit);
   const std::array<Scalar, 2> nonfiniteValues{
       1.0, std::numeric_limits<Scalar>::infinity()};
   checkCode(broadcastTo(tensor(std::array<Extent, 1>{2U}, nonfiniteValues),
@@ -342,9 +368,8 @@ void testTensorElementwise() {
   const Tensor scalar = tensor({}, std::array<Scalar, 1>{7.0});
   const auto scalarBroadcast = broadcastTo(scalar, destination, {}, limits);
   VSS_CHECK(scalarBroadcast.hasValue());
-  for (Extent i = 0; i < scalarBroadcast.value().size(); ++i) {
-    VSS_CHECK(scalarBroadcast.value().data()[i] == 7.0);
-  }
+  VSS_CHECK(std::ranges::all_of(elements(scalarBroadcast.value()),
+                                [](Scalar value) { return value == 7.0; }));
 
   std::vector<Scalar> observed;
   const UnaryFunction square = [&observed](Scalar x) -> Result<Scalar> {
@@ -354,19 +379,23 @@ void testTensorElementwise() {
   const auto transformed = transformElements(input, square, limits);
   VSS_CHECK(transformed.hasValue());
   VSS_CHECK(observed.size() == 2U && observed[0] == 1.0 && observed[1] == 2.0);
-  VSS_CHECK(transformed.value().data()[0] == 1.0 &&
-            transformed.value().data()[1] == 4.0);
-  Index calls = 0U;
+  VSS_CHECK(elements(transformed.value())[0] == 1.0 &&
+            elements(transformed.value())[1] == 4.0);
+  std::array<Index, 1> calls{0U};
   const UnaryFunction limited = [&calls](Scalar x) -> Result<Scalar> {
-    ++calls;
+    ++calls.front();
     return Result<Scalar>::success(x);
   };
-  checkCode(transformElements(input, limited, Limits{1U, 4096U, 32U}),
+  checkCode(transformElements(
+                input, limited,
+                Limits{.elements = 1U, .bytes = 4096U, .evaluations = 32U}),
             ErrorCode::ResourceLimit);
-  VSS_CHECK(calls == 0U);
-  checkCode(transformElements(input, limited, Limits{32U, 4096U, 1U}),
+  VSS_CHECK(calls.front() == 0U);
+  checkCode(transformElements(
+                input, limited,
+                Limits{.elements = 32U, .bytes = 4096U, .evaluations = 1U}),
             ErrorCode::ResourceLimit);
-  VSS_CHECK(calls == 0U);
+  VSS_CHECK(calls.front() == 0U);
   const UnaryFunction failure =
       [calls = Index{0U}](Scalar x) mutable -> Result<Scalar> {
     if (calls++ == 1U) {
