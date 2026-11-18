@@ -6,6 +6,7 @@
 #include <vector>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/NumericalError.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
@@ -94,7 +95,97 @@ template <class T> T unwrap(Result<T> result) {
   throw NumericalError(result.status().code(), result.status().message());
 }
 
+Status preflightTensorOutput(const TensorShape& shape, const Limits& limits) {
+  const Extent elementsCount = shape.elementCount();
+  if (shape.rank() > std::numeric_limits<Extent>::max() / sizeof(Extent) ||
+      elementsCount > std::numeric_limits<Extent>::max() / sizeof(Scalar)) {
+    return Status::failure(ErrorCode::SizeOverflow,
+                           "SizeOverflow: tensor output byte count");
+  }
+  const Extent shapeBytes = shape.rank() * sizeof(Extent);
+  const Extent valueBytes = elementsCount * sizeof(Scalar);
+  if (shapeBytes > std::numeric_limits<Extent>::max() - valueBytes) {
+    return Status::failure(ErrorCode::SizeOverflow,
+                           "SizeOverflow: tensor output byte count");
+  }
+  if (elementsCount > limits.elements) {
+    return Status::failure(ErrorCode::ResourceLimit,
+                           "tensor output exceeds configured element limit");
+  }
+  if (shapeBytes + valueBytes > limits.bytes) {
+    return Status::failure(ErrorCode::ResourceLimit,
+                           "tensor output exceeds configured byte limit");
+  }
+  return Status::success();
+}
+
 } // namespace
+
+Result<Tensor> hadamard(const Tensor& lhs, const Tensor& rhs, Limits limits) {
+  if (!sameShape(lhs, rhs)) {
+    return failure<Tensor>(ErrorCode::DimensionMismatch,
+                           "tensor dimensions do not match");
+  }
+  const Status capacity = preflightTensorOutput(lhs.shape(), limits);
+  if (!capacity.ok()) {
+    return fromStatus<Tensor>(capacity);
+  }
+  if (!finite(lhs) || !finite(rhs)) {
+    return failure<Tensor>(ErrorCode::NonFiniteInput,
+                           "Hadamard tensor input is non-finite");
+  }
+  auto result = Tensor::create(lhs.shape(), 0.0, TensorLimits{limits.elements});
+  if (!result.hasValue()) {
+    return fromStatus<Tensor>(result.status());
+  }
+  const auto lhsValues = elements(lhs);
+  const auto rhsValues = elements(rhs);
+  auto resultValues = elements(result.value());
+  for (Extent i = 0U; i < lhsValues.size(); ++i) {
+    const Scalar product = lhsValues[i] * rhsValues[i];
+    if (!isFinite(product)) {
+      return failure<Tensor>(ErrorCode::NonFiniteResult,
+                             "Hadamard tensor result is non-finite");
+    }
+    resultValues[i] = product;
+  }
+  return result;
+}
+
+Result<Tensor> divide(const Tensor& value, Scalar divisor, Limits limits) {
+  if (!isFinite(divisor)) {
+    return failure<Tensor>(ErrorCode::NonFiniteInput,
+                           "tensor divisor is non-finite");
+  }
+  if (divisor == 0.0) {
+    return failure<Tensor>(ErrorCode::InvalidDomain,
+                           "tensor divisor must be nonzero");
+  }
+  if (!finite(value)) {
+    return failure<Tensor>(ErrorCode::NonFiniteInput,
+                           "tensor division input is non-finite");
+  }
+  const Status capacity = preflightTensorOutput(value.shape(), limits);
+  if (!capacity.ok()) {
+    return fromStatus<Tensor>(capacity);
+  }
+  auto result =
+      Tensor::create(value.shape(), 0.0, TensorLimits{limits.elements});
+  if (!result.hasValue()) {
+    return fromStatus<Tensor>(result.status());
+  }
+  const auto inputValues = elements(value);
+  auto resultValues = elements(result.value());
+  for (Extent i = 0U; i < inputValues.size(); ++i) {
+    const Scalar quotient = inputValues[i] / divisor;
+    if (!isFinite(quotient)) {
+      return failure<Tensor>(ErrorCode::NonFiniteResult,
+                             "tensor division result is non-finite");
+    }
+    resultValues[i] = quotient;
+  }
+  return result;
+}
 
 Result<Tensor> add(const Tensor& lhs, const Tensor& rhs, TensorLimits limits,
                    OperationOptions options) {
@@ -175,7 +266,7 @@ Result<Tensor> outer(const Tensor& lhs, const Tensor& rhs, TensorLimits limits,
         return failure<Tensor>(ErrorCode::NonFiniteResult,
                                "tensor outer product is non-finite");
       }
-      resultValues[lhsIndex * rhsValues.size() + rhsIndex] = value;
+      resultValues[(lhsIndex * rhsValues.size()) + rhsIndex] = value;
     }
   }
   return result;
