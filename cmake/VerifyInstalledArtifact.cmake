@@ -123,7 +123,9 @@ set(vss_expected_files
   include/vss/math/PrintOptions.hpp
   include/vss/math/NumericalError.hpp
   include/vss/math/Operations.hpp
+  include/vss/math/PackedSymmetric.hpp
   include/vss/math/Result.hpp
+  include/vss/math/Scaling.hpp
   include/vss/math/SecondMoment.hpp
   include/vss/math/Tolerance.hpp
   include/vss/math/Tensor.hpp
@@ -131,6 +133,7 @@ set(vss_expected_files
   include/vss/math/TensorLimits.hpp
   include/vss/math/TensorOperations.hpp
   include/vss/math/TensorShape.hpp
+  include/vss/math/TensorViews.hpp
   include/vss/math/ThirdMoment.hpp
   include/vss/math/Vector.hpp
   include/vss/math/VectorView.hpp
@@ -143,6 +146,7 @@ set(vss_expected_files
   include/vss/math/linear/LinearSolve.hpp
   include/vss/math/linear/LU.hpp
   include/vss/math/linear/QR.hpp
+  include/vss/math/linear/StructuredProducts.hpp
   include/vss/math/linear/SymmetricEigen.hpp
   include/vss/math/linear/TriangularSolve.hpp
   include/vss/math/version.hpp

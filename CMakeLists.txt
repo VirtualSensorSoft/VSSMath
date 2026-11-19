@@ -41,6 +41,7 @@ add_library(vss_math STATIC
   src/MomentValidation.cpp
   src/SecondMoment.cpp
   src/Scaling.cpp
+  src/linear/StructuredProducts.cpp
   src/Tensor.cpp
   src/TensorLimits.cpp
   src/TensorShape.cpp

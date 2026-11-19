@@ -36,7 +36,8 @@ bool add(Extent lhs, Extent rhs, Extent& result) noexcept {
 }
 
 Result<Tensor> createOutput(std::span<const Extent> extent,
-                            const Limits& limits) {
+                            const Limits& limits,
+                            Extent extraScratchBytes = 0U) {
   const auto shape = TensorShape::create(extent);
   if (!shape.hasValue()) {
     return Result<Tensor>::failure(shape.status().code(),
@@ -47,8 +48,10 @@ Result<Tensor> createOutput(std::span<const Extent> extent,
   Extent valueBytes = 0U;
   Extent totalBytes = 0U;
   if (!multiply(extent.size(), sizeof(Extent), shapeBytes) ||
+      !multiply(shapeBytes, 2U, shapeBytes) ||
       !multiply(elements, sizeof(Scalar), valueBytes) ||
-      !add(shapeBytes, valueBytes, totalBytes)) {
+      !add(shapeBytes, valueBytes, totalBytes) ||
+      !add(totalBytes, extraScratchBytes, totalBytes)) {
     return failure(ErrorCode::SizeOverflow, "tensor output byte size overflow");
   }
   if (elements > limits.elements || totalBytes > limits.bytes) {
@@ -110,7 +113,12 @@ Result<Tensor> slice(const Tensor& input, std::span<const Extent> begin,
     }
   }
 
-  auto output = createOutput(extent, limits);
+  Extent scratchBytes = 0U;
+  if (!multiply(rank, 2U * sizeof(Extent), scratchBytes)) {
+    return failure(ErrorCode::SizeOverflow,
+                   "slice coordinate workspace size overflows");
+  }
+  auto output = createOutput(extent, limits, scratchBytes);
   if (!output.hasValue()) {
     return output;
   }
@@ -172,7 +180,12 @@ Result<Tensor> permuteAxes(const Tensor& input, std::span<const Index> axes,
     seen[axes[axis]] = true;
     outputShape[axis] = inputShape[axes[axis]];
   }
-  auto output = createOutput(outputShape, limits);
+  Extent scratchBytes = 0U;
+  if (!multiply(rank, 3U * sizeof(Extent), scratchBytes)) {
+    return failure(ErrorCode::SizeOverflow,
+                   "permutation workspace size overflows");
+  }
+  auto output = createOutput(outputShape, limits, scratchBytes);
   if (!output.hasValue()) {
     return output;
   }

@@ -8,6 +8,22 @@
 
 namespace vss::math {
 
+/// @brief Borrowed strided tensor storage used by synchronous contractions.
+/// @details Spans must remain valid with the pointed-to storage until an
+///          operation using this descriptor returns. Extents and strides are
+///          measured in scalar elements; an empty extent span denotes a scalar.
+struct TensorView final {
+  /// @brief Borrowed scalar storage addressed by the view's strides.
+  std::span<const Scalar> data;
+  /// @brief Logical extent for each axis.
+  std::span<const Index> extents;
+  /// @brief Element stride for each logical axis.
+  std::span<const Index> strides;
+};
+
+/// @brief Borrowed ordered list of tensor axis labels.
+using IndexList = std::span<const Index>;
+
 /// @brief Copies a checked rectangular, positive-stride region of a tensor.
 /// @param input Borrowed row-major tensor.
 /// @param begin First input index on each axis.

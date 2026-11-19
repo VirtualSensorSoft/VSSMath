@@ -50,7 +50,9 @@ bool allFinite(ConstMatrixView view) noexcept {
 
 Scalar product3(Scalar first, Scalar second, Scalar third) noexcept {
   if (first == 0.0 || second == 0.0 || third == 0.0) {
-    return std::copysign(0.0, first * second * third);
+    const bool negative =
+        std::signbit(first) ^ std::signbit(second) ^ std::signbit(third);
+    return std::copysign(0.0, negative ? -1.0 : 1.0);
   }
   int firstExponent = 0;
   int secondExponent = 0;
