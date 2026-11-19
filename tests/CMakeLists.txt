@@ -24,6 +24,7 @@ endfunction()
 vss_math_add_test(test_version unit/test_version.cpp math.version)
 vss_math_add_test(test_status unit/test_status.cpp math.status)
 vss_math_add_test(test_result unit/test_result.cpp math.result)
+vss_math_add_test(test_array unit/test_array.cpp math.array)
 vss_math_add_test(test_tolerance unit/test_tolerance.cpp math.tolerance)
 vss_math_add_test(test_platform_contract unit/test_platform_contract.cpp
                   math.platform_contract)

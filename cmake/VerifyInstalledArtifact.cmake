@@ -112,6 +112,7 @@ function(vss_probe_reject_foreign_target_origin case_name include_path library_p
 endfunction()
 
 set(vss_expected_files
+  include/vss/math/Array.hpp
   include/vss/math/Core.hpp
   include/vss/math/Error.hpp
   include/vss/math/FirstMoment.hpp
