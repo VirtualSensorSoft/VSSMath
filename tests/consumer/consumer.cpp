@@ -23,6 +23,7 @@
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
 #include <vss/math/linear/LU.hpp>
+#include <vss/math/linear/RankAware.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/version.hpp>
 
@@ -325,6 +326,25 @@ int main() {
           illConditionedFactor.value().solve(infiniteMatrix.view()),
           ErrorCode::NonFiniteInput,
           "ill-conditioned matrix solve did not prioritize infinity")) {
+    return 1;
+  }
+
+  Matrix rankAwareDesign(1U, 2U, 1.0);
+  Matrix rankAwareObservations(1U, 1U, 4.0);
+  SolvePolicy rankAwarePolicy;
+  rankAwarePolicy.iteration.max_iterations = 64U;
+  rankAwarePolicy.rank = RankPolicy::minimum_norm;
+  const auto rankAware = linear::leastSquaresMinNorm(
+      rankAwareDesign.view(), rankAwareObservations.view(), rankAwarePolicy,
+      limits);
+  if (!require(rankAware.hasValue() && rankAware.value().rank == 1U &&
+                   rankAware.value().identified_basis.has_value() &&
+                   std::abs(rankAware.value().parameters.at(0U, 0U) - 2.0) <
+                       1.0e-12 &&
+                   std::abs(rankAware.value().parameters.at(1U, 0U) - 2.0) <
+                       1.0e-12 &&
+                   rankAware.value().residual_norms.at(0U) < 1.0e-12,
+               "installed rank-aware minimum-norm least-squares API failed")) {
     return 1;
   }
 
