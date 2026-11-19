@@ -1,10 +1,13 @@
 #include "Test.hpp"
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
 #include <limits>
+#include <numbers>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
@@ -47,8 +50,9 @@ SolvePolicy policy() {
 }
 
 Limits generousLimits() {
-  return {
-      .elements = 1'000'000U, .bytes = 64U * 1024U * 1024U, .evaluations = 0U};
+  return {.elements = 1'000'000U,
+          .bytes = std::size_t{64} * 1024U * 1024U,
+          .evaluations = 0U};
 }
 
 template <class T> void checkFailure(const T& result, ErrorCode expected) {
@@ -79,15 +83,15 @@ void wideSystemReturnsMinimumNormAndIdentifiedBasis() {
   VSS_CHECK(estimate.parameters.rows() == 2U &&
             estimate.parameters.columns() == 1U);
   VSS_CHECK(estimate.rank == 1U);
-  checkNear(estimate.rank_cutoff, std::sqrt(2.0) * 1.0e-12, 1.0e-24);
+  checkNear(estimate.rank_cutoff, std::numbers::sqrt2 * 1.0e-12, 1.0e-24);
   VSS_CHECK(estimate.identified_basis.has_value());
-  VSS_CHECK(estimate.identified_basis->rows() == 2U &&
-            estimate.identified_basis->columns() == 1U);
+  const Matrix identifiedBasis = estimate.identified_basis.value_or(Matrix());
+  VSS_CHECK(identifiedBasis.rows() == 2U && identifiedBasis.columns() == 1U);
   checkNear(estimate.parameters.at(0U, 0U), 2.0);
   checkNear(estimate.parameters.at(1U, 0U), 2.0);
   checkNear(estimate.residual_norms.at(0U), 0.0);
-  const Scalar first = estimate.identified_basis->at(0U, 0U);
-  const Scalar second = estimate.identified_basis->at(1U, 0U);
+  const Scalar first = identifiedBasis.at(0U, 0U);
+  const Scalar second = identifiedBasis.at(1U, 0U);
   checkNear(first * first, 0.5);
   checkNear(first * second, 0.5);
   VSS_CHECK(!estimate.covariance.has_value());
@@ -121,8 +125,8 @@ void cutoffFitReportsOriginalSystemResidualsForEachRightHandSide() {
   }
   checkNear(estimate.residual_norms.at(0U), 5.0);
   checkNear(estimate.residual_norms.at(1U), 2.0);
-  VSS_CHECK(estimate.identified_basis->rows() == 4U &&
-            estimate.identified_basis->columns() == 1U);
+  const Matrix identifiedBasis = estimate.identified_basis.value_or(Matrix());
+  VSS_CHECK(identifiedBasis.rows() == 4U && identifiedBasis.columns() == 1U);
   // LSQ-02: exact-cutoff modes are discarded and residuals use original B.
 }
 
@@ -170,13 +174,13 @@ void zeroRankReturnsZeroEstimateAndObservationResiduals() {
   VSS_CHECK(estimate.parameters.rows() == 3U &&
             estimate.parameters.columns() == 2U);
   VSS_CHECK(estimate.identified_basis.has_value());
-  VSS_CHECK(estimate.identified_basis->rows() == 3U &&
-            estimate.identified_basis->columns() == 0U);
+  const Matrix identifiedBasis = estimate.identified_basis.value_or(Matrix());
+  VSS_CHECK(identifiedBasis.rows() == 3U && identifiedBasis.columns() == 0U);
   for (Index row = 0U; row < 3U; ++row) {
     VSS_CHECK(estimate.parameters.at(row, 0U) == 0.0);
     VSS_CHECK(estimate.parameters.at(row, 1U) == 0.0);
   }
-  checkNear(estimate.residual_norms.at(0U), 3.0 * std::sqrt(2.0));
+  checkNear(estimate.residual_norms.at(0U), 3.0 * std::numbers::sqrt2);
   checkNear(estimate.residual_norms.at(1U), 4.0);
   // LSQ-04: zero numerical rank yields zero parameters and original residuals.
 }
@@ -199,7 +203,7 @@ void emptyAndZeroRightHandSideShapesArePreserved() {
   VSS_CHECK(emptyColumns.hasValue());
   VSS_CHECK(emptyColumns.value().parameters.rows() == 2U &&
             emptyColumns.value().parameters.columns() == 0U);
-  VSS_CHECK(emptyColumns.value().residual_norms.size() == 0U);
+  VSS_CHECK(emptyColumns.value().residual_norms.empty());
   // LSQ-05: empty observation and RHS axes preserve output shapes.
 }
 
@@ -242,7 +246,7 @@ void invalidShapesInputsPoliciesAndLimitsAreRejected() {
 }
 
 void iterationAndUnrepresentableSolutionsFailWithoutPartialResults() {
-  Matrix nondiagonal = matrix({{2.0, 1.0}, {1.0, 3.0}});
+  const Matrix nondiagonal = matrix({{2.0, 1.0}, {1.0, 3.0}});
   auto exhausted = policy();
   exhausted.iteration.max_iterations = 0U;
   checkFailure(solve(nondiagonal, matrix({{1.0}, {2.0}}), exhausted),
@@ -259,7 +263,7 @@ void iterationAndUnrepresentableSolutionsFailWithoutPartialResults() {
 
 } // namespace
 
-int main() {
+int main() { // NOLINT(bugprone-exception-escape)
   wideSystemReturnsMinimumNormAndIdentifiedBasis();
   cutoffFitReportsOriginalSystemResidualsForEachRightHandSide();
   scaledSystemsAndConditionFloorBoundaryRemainValid();
