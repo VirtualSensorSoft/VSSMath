@@ -1,4 +1,6 @@
 #include <array>
+#include <cmath>
+#include <cstddef>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -220,6 +222,29 @@ int main() {
   }
   if (!require(solved.value().conditionReport().has_value(),
                "LU solve did not return condition diagnostics")) {
+    return 1;
+  }
+
+  Matrix generalizedA(2U, 2U);
+  generalizedA.at(0U, 0U) = 2.0;
+  generalizedA.at(1U, 1U) = 12.0;
+  Matrix generalizedB(2U, 2U);
+  generalizedB.at(0U, 0U) = 1.0;
+  generalizedB.at(1U, 1U) = 3.0;
+  SolvePolicy generalizedPolicy{};
+  generalizedPolicy.iteration.max_iterations = 64U;
+  const auto generalized = linear::factorGeneralizedSymmetric(
+      generalizedA.view(), generalizedB.view(), generalizedPolicy,
+      Limits{.elements = 100'000U,
+             .bytes = std::size_t{8U} * 1024U * 1024U,
+             .evaluations = 0U});
+  if (!require(generalized.hasValue(),
+               "installed generalized eigen API failed")) {
+    return 1;
+  }
+  if (!require(std::abs(generalized.value().values.at(0U) - 2.0) < 1.0e-12 &&
+                   std::abs(generalized.value().values.at(1U) - 4.0) < 1.0e-12,
+               "installed generalized eigen values are incorrect")) {
     return 1;
   }
 

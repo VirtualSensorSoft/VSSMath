@@ -48,6 +48,7 @@ NUM-EIG-003	clustered eigenvalues are tested by invariant-subspace projectors; v
 NUM-EIG-004	eigen rank uses maximum magnitude scale and strict threshold; verification: exact rank and threshold evidence	EIG-03,EIG-06	math.symmetric_eigen
 NUM-EIG-005	definiteness enum applies the threshold band without hiding eigenvalues; verification: all three classifications checked	EIG-03,EIG-04,EIG-06	math.symmetric_eigen
 NUM-EIG-006	eigen fixtures cover ordering, clusters, PSD loss, indefiniteness, symmetry, and accuracy; verification: exact NoConvergence at the sweep limit	EIG-01,EIG-06,SUP-EIG-02	math.symmetric_eigen
+NUM-GPL-001	symmetric-definite pencils produce ascending generalized eigenpairs, B-orthonormal vectors, original-unit residuals, and specified failures; verification: analytic diagonal/nondiagonal fixtures, repeated-cluster projector, scaling, and policy boundaries	GEN-01,GEN-02,GEN-03,GEN-04,GEN-05,GEN-06,GEN-07,GEN-08	math.generalized_symmetric_eigen
 NUM-COV-001	analyzeCovariance validates and explicitly uses canonical S_C without repair; verification: NotSymmetric; accepted tolerance-boundary reconstruction	COV-07	math.covariance
 NUM-COV-002	PD permits Cholesky inverse actions; PSD diagnostics remain available; verification: inverse action on non-PD is rejected	COV-03,COV-05	math.covariance
 NUM-COV-003	mahalanobisSquared uses CholeskyFactorization::whiten then fixed-order z^T z; verification: no explicit inverse; condition outcome retained	COV-03	math.covariance

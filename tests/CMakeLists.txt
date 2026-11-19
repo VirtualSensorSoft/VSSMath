@@ -43,6 +43,9 @@ vss_math_add_algorithm_test(test_cholesky algorithms/test_cholesky.cpp
 vss_math_add_algorithm_test(test_symmetric_eigen
                              algorithms/test_symmetric_eigen.cpp
                              math.symmetric_eigen)
+vss_math_add_algorithm_test(test_generalized_symmetric_eigen
+                             algorithms/test_generalized_symmetric_eigen.cpp
+                             math.generalized_symmetric_eigen)
 vss_math_add_algorithm_test(test_covariance
                              algorithms/test_covariance.cpp
                              math.covariance)

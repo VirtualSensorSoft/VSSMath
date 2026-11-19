@@ -145,6 +145,19 @@ annotations.
 | tests/algorithms/test_ldlt.cpp:78 | readability-suspicious-call-argument | Factor reconstruction test | Matrix multiplication uses the output column as the first coordinate of the final lower-factor access | The reconstruction loops implement the documented `L D Lᵀ` product with explicit row and column roles | Reviewed |
 | tests/algorithms/test_ldlt.cpp:265 | bugprone-exception-escape | LDLT test main | Test assertions intentionally throw when an acceptance check fails | The test harness converts the failed assertion into a nonzero process result | Reviewed |
 
+| tests/algorithms/test_generalized_symmetric_eigen.cpp:159 | readability-suspicious-call-argument | Repeated-cluster projector | The second access reads another matrix row at the same eigenvector column | The test compares the invariant projector of the two-dimensional repeated eigenspace rather than relying on eigenvector signs | Reviewed |
+
+| tests/algorithms/test_generalized_symmetric_eigen.cpp:261 | bugprone-exception-escape | Generalized eigen test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
+
+
+| src/linear/GeneralizedEigen.cpp:102 | readability-suspicious-call-argument | Symmetry allowance | The second matrix access reads the mirrored coordinate | The comparison validates independently symmetric pencil inputs before canonical midpoint construction | Reviewed |
+| src/linear/GeneralizedEigen.cpp:120 | readability-suspicious-call-argument | Symmetric midpoint | The second input access reads the mirrored matrix entry | The acceptance contract canonicalizes symmetric inputs by midpoint after checking the C014 allowance | Reviewed |
+| src/linear/GeneralizedEigen.cpp:125 | readability-suspicious-call-argument | Canonical scaled matrix | The assignment writes the mirrored coordinate of the canonical symmetric matrix | Both indices are bounded by the square input extent and the symmetric value is copied unchanged | Reviewed |
+| src/linear/GeneralizedEigen.cpp:154 | readability-suspicious-call-argument | Cholesky update | The second lower-factor access participates in the symmetric product `L(row,:)*L(column,:)` | Cholesky row and column bounds ensure the selected factor coordinates are valid | Reviewed |
+| src/linear/GeneralizedEigen.cpp:305 | readability-suspicious-call-argument | Right triangular solve | The factor lookup is `L(column, inner)` while solving the right multiplication by `L^T` | The forward column order uses only previously solved transformed entries and valid lower-triangle factor coordinates | Reviewed |
+| src/linear/GeneralizedEigen.cpp:386 | readability-suspicious-call-argument | Eigenvector back-transform | Back substitution for `L^T y=q` reads `L(inner, row)` | Descending row order ensures the referenced higher vector components are already solved | Reviewed |
+| src/linear/GeneralizedEigen.cpp:425 | readability-suspicious-call-argument | Original-unit residual | Residual construction reads component `column` from the current eigenvector column | The eigenvector matrix is row-major by coordinates and stores one eigenpair per column | Reviewed |
+
 When a suppression, replace the `None` row with one row per source
 occurrence. Use an exact check name, a single source line, a narrow rationale,
 and the test or invariant that proves the construct is safe. Update this file

@@ -29,6 +29,35 @@ struct SVD final {
 
 namespace linear {
 
+/// @brief Complete generalized eigensystem for a symmetric definite pencil.
+/// @details Eigenvalues are ascending. Each column of `vectors` is normalized
+///          in the metric of the original second matrix, so
+///          `vectors^T * B * vectors = I`. Residual norms are Euclidean norms
+///          of `A*v - lambda*B*v` in the original input units. All members own
+///          their storage.
+struct GeneralizedEigen final {
+  /// @brief Ascending real generalized eigenvalues.
+  Vector values;
+  /// @brief Corresponding B-orthonormal eigenvectors in columns.
+  Matrix vectors;
+  /// @brief Euclidean residual norm for each eigenpair.
+  Vector residual_norms;
+};
+
+/// @brief Solves the real symmetric-definite generalized eigenproblem.
+/// @param a Finite square symmetric matrix; indefinite values are supported.
+/// @param b Equally sized finite square symmetric positive-definite metric.
+/// @param policy Rank, metric conditioning, and spectral iteration policy.
+/// @param limits Maximum peak owned/workspace elements and bytes.
+/// @return All eigenpairs in ascending order, or a failure without partial
+///         eigenpairs. Empty equally-sized matrices return an empty result.
+/// @throws std::bad_alloc if storage within the configured limits cannot be
+///         allocated.
+/// @note Complexity is O(n^3) time and O(n^2) storage for an n by n pencil.
+[[nodiscard]] Result<GeneralizedEigen>
+factorGeneralizedSymmetric(ConstMatrixView a, ConstMatrixView b,
+                           SolvePolicy policy, Limits limits);
+
 /// @brief Owned symmetric-indefinite factorization with 1x1 and 2x2 pivots.
 /// @details The represented input satisfies
 ///          `A[permutation, permutation] = unit_lower * block_d *
