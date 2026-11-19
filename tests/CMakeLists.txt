@@ -46,6 +46,9 @@ vss_math_add_algorithm_test(test_symmetric_eigen
 vss_math_add_algorithm_test(test_generalized_symmetric_eigen
                              algorithms/test_generalized_symmetric_eigen.cpp
                              math.generalized_symmetric_eigen)
+vss_math_add_algorithm_test(test_rank_aware_least_squares
+                             algorithms/test_rank_aware_least_squares.cpp
+                             math.rank_aware_least_squares)
 vss_math_add_algorithm_test(test_covariance
                              algorithms/test_covariance.cpp
                              math.covariance)

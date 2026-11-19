@@ -95,3 +95,4 @@ NUM-EVI-002	test-only fixture catalogue records input, result, tolerance, proven
 NUM-EVI-003	fixed constants are local; tests download or execute no external calculator; verification: dependency and network-command scan	PRO-04,PRO-06	math.numerical_traceability
 NUM-EVI-004	fixed-seed properties supplement analytic fixtures; verification: policy requires both fixture and property evidence	LU-01,QR-01,CHO-01	math.numerical_traceability
 NUM-EVI-005	fixture data is public mathematics without proprietary/domain content; verification: provenance and prohibited-content review	TRI-01,PRO-07	math.numerical_traceability
+NUM-LSQ-001	leastSquaresMinNorm uses the inclusive retained-SVD cutoff, returns minimum-norm parameters, identified basis and original-system residuals with bounded storage; verification: analytic, boundary, empty, policy and scale fixtures	LSQ-01,LSQ-02,LSQ-03,LSQ-04,LSQ-05,LSQ-06,LSQ-07,LSQ-08	math.rank_aware_least_squares
