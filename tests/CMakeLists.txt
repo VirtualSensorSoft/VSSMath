@@ -74,6 +74,7 @@ vss_math_add_test(test_packed_symmetric unit/test_packed_symmetric.cpp
 vss_math_add_test(test_scaling unit/test_scaling.cpp math.scaling)
 vss_math_add_test(test_structured_products
                   unit/test_structured_products.cpp math.structured_products)
+vss_math_add_algorithm_test(test_svd algorithms/test_svd.cpp math.svd)
 vss_math_add_test(test_tensor_reductions unit/test_tensor_reductions.cpp
                   math.tensor_reductions)
 vss_math_add_test(test_einsum unit/test_einsum.cpp math.einsum)
