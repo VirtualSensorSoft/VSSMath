@@ -21,16 +21,19 @@ Tensor makeTensor(std::span<const Extent> extents,
   auto tensor = Tensor::create(shape.value(), 0.0, TensorLimits{values.size()});
   VSS_CHECK(tensor.hasValue());
   VSS_CHECK(tensor.value().size() == values.size());
+  const std::span<Scalar> tensorValues(tensor.value().data(),
+                                       tensor.value().size());
   for (Extent i = 0; i < values.size(); ++i) {
-    tensor.value().data()[i] = values[i];
+    tensorValues[i] = values[i];
   }
   return std::move(tensor).value();
 }
 
 void checkValues(const Tensor& tensor, std::span<const Scalar> expected) {
   VSS_CHECK(tensor.size() == expected.size());
+  const std::span<const Scalar> tensorValues(tensor.data(), tensor.size());
   for (Extent i = 0; i < expected.size(); ++i) {
-    VSS_CHECK(tensor.data()[i] == expected[i]);
+    VSS_CHECK(tensorValues[i] == expected[i]);
   }
 }
 
@@ -40,7 +43,7 @@ int main() {
   const std::array<Extent, 2> extents{2, 3};
   const std::array<Scalar, 6> values{0, 1, 2, 3, 4, 5};
   const auto input = makeTensor(extents, values);
-  const Limits ample{64, 4096, 64};
+  const Limits ample{.elements = 64, .bytes = 4096, .evaluations = 64};
 
   const std::array<Extent, 2> begin{0, 1};
   const std::array<Extent, 2> slice_extents{2, 2};
@@ -109,10 +112,14 @@ int main() {
       makeTensor(std::span<const Extent>{}, std::array<Scalar, 1>{7});
   const auto scalar_copy = permuteAxes(scalar, std::span<const Index>{}, ample);
   VSS_CHECK(scalar_copy.hasValue());
-  VSS_CHECK(scalar_copy.value().data()[0] == 7);
+  VSS_CHECK(std::span<const Scalar>(scalar_copy.value().data(),
+                                    scalar_copy.value().size())
+                .front() == 7);
   const auto scalar_reshape = reshape(scalar, std::span<const Extent>{}, ample);
   VSS_CHECK(scalar_reshape.hasValue());
-  VSS_CHECK(scalar_reshape.value().data()[0] == 7);
+  VSS_CHECK(std::span<const Scalar>(scalar_reshape.value().data(),
+                                    scalar_reshape.value().size())
+                .front() == 7);
 
   const auto empty_input =
       makeTensor(std::array<Extent, 2>{0, 3}, std::span<const Scalar>{});
