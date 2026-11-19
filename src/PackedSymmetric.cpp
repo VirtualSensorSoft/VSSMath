@@ -94,6 +94,47 @@ void decode(Extent linear, Index order, Index dimension,
   }
 }
 
+void sortTuplePrefix(std::array<Index, 4>& tuple, Index order) noexcept {
+  for (Index current = 1U; current < order; ++current) {
+    Index position = current;
+    while (position > 0U && tuple[position] < tuple[position - 1U]) {
+      std::swap(tuple[position], tuple[position - 1U]);
+      --position;
+    }
+  }
+}
+
+bool nextTuplePermutation(std::array<Index, 4>& tuple, Index order) noexcept {
+  Index pivot = order;
+  while (pivot > 1U && tuple[pivot - 2U] >= tuple[pivot - 1U]) {
+    --pivot;
+  }
+  if (pivot <= 1U) {
+    Index left = 0U;
+    Index right = order - 1U;
+    while (left < right) {
+      std::swap(tuple[left], tuple[right]);
+      ++left;
+      --right;
+    }
+    return false;
+  }
+  const Index pivotIndex = pivot - 2U;
+  Index successor = order - 1U;
+  while (tuple[successor] <= tuple[pivotIndex]) {
+    --successor;
+  }
+  std::swap(tuple[pivotIndex], tuple[successor]);
+  Index left = pivot - 1U;
+  Index right = order - 1U;
+  while (left < right) {
+    std::swap(tuple[left], tuple[right]);
+    ++left;
+    --right;
+  }
+  return true;
+}
+
 bool nextCombination(std::array<Index, 4>& tuple, Index order,
                      Index dimension) noexcept {
   for (Index axis = order; axis > 0U; --axis) {
@@ -197,8 +238,7 @@ Result<PackedSymmetric> packSymmetric(const Tensor& input, Tolerance tolerance,
   for (Extent linear = 0U; linear < input.size(); ++linear) {
     decode(linear, order, dimension, coordinate);
     auto canonical = coordinate;
-    std::sort(canonical.begin(),
-              canonical.begin() + static_cast<std::ptrdiff_t>(order));
+    sortTuplePrefix(canonical, order);
     if (!withinTolerance(input.data()[linear],
                          input.data()[tupleOffset(canonical, order, dimension)],
                          tolerance)) {
@@ -260,9 +300,7 @@ Result<Tensor> unpackSymmetric(const PackedSymmetric& input, Limits limits) {
     do {
       output.value().data()[tupleOffset(tuple, input.order, input.dimension)] =
           value;
-    } while (std::next_permutation(
-        tuple.begin(),
-        tuple.begin() + static_cast<std::ptrdiff_t>(input.order)));
+    } while (nextTuplePermutation(tuple, input.order));
     if (packedIndex + 1U < count.value()) {
       static_cast<void>(nextCombination(tuple, input.order, input.dimension));
     }
