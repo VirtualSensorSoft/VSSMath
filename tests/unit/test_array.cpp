@@ -1,6 +1,7 @@
 #include "Test.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <vss/math/Array.hpp>
