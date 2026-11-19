@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <limits>
 #include <numeric>
+#include <string>
 #include <utility>
 #include <vector>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
@@ -44,7 +46,7 @@ bool validInput(ConstMatrixView input) noexcept {
   return true;
 }
 
-bool withinSymmetryAllowance(ConstMatrixView input, Scalar maximum) noexcept {
+bool withinSymmetryAllowance(ConstMatrixView input, Scalar maximum) {
   const Wide scale = static_cast<Wide>(maximum);
   const Wide dimension = static_cast<Wide>(std::max<Index>(1U, input.rows()));
   const Wide allowance =
@@ -56,7 +58,12 @@ bool withinSymmetryAllowance(ConstMatrixView input, Scalar maximum) noexcept {
         continue;
       }
       const Wide lower = static_cast<Wide>(input.at(row, column)) / scale;
-      const Wide upper = static_cast<Wide>(input.at(column, row)) / scale;
+      const Wide upper =
+          static_cast<Wide>(
+              input.at( // NOLINT(readability-suspicious-call-argument):
+                        // transposed entry for symmetry comparison
+                  column, row)) /
+          scale;
       if (std::abs(lower - upper) > allowance) {
         return false;
       }
@@ -321,10 +328,15 @@ Result<LDLT> factorLDLT(ConstMatrixView input, SolvePolicy policy,
   Matrix work(size, size);
   for (Index row = 0U; row < size; ++row) {
     for (Index column = 0U; column <= row; ++column) {
-      const Scalar value =
-          std::midpoint(input.at(row, column), input.at(column, row));
+      const Scalar value = std::midpoint(
+          input.at(row, column),
+          input.at( // NOLINT(readability-suspicious-call-argument):
+                    // transposed entry for symmetric midpoint
+              column, row));
       work.at(row, column) = value;
-      work.at(column, row) = value;
+      work.at( // NOLINT(readability-suspicious-call-argument): mirror the
+               // lower-triangle entry
+          column, row) = value;
     }
   }
 
@@ -402,16 +414,23 @@ Result<LDLT> factorLDLT(ConstMatrixView input, SolvePolicy policy,
       }
       for (Index row = active + 1U; row < size; ++row) {
         for (Index column = row; column < size; ++column) {
-          const Wide update = static_cast<Wide>(work.at(row, column)) -
-                              static_cast<Wide>(lower.at(row, active)) *
-                                  static_cast<Wide>(work.at(column, active));
-          const Scalar stored = static_cast<Scalar>(update);
+          const Wide update =
+              static_cast<Wide>(work.at(row, column)) -
+              (static_cast<Wide>(lower.at(row, active)) *
+               static_cast<Wide>(
+                   work.at( // NOLINT(readability-suspicious-call-argument):
+                            // symmetric pivot-column entry for
+                            // this trailing row
+                       column, active)));
+          const auto stored = static_cast<Scalar>(update);
           if (!std::isfinite(update) || !std::isfinite(stored)) {
             return Result<LDLT>::failure(ErrorCode::NonFiniteResult,
                                          "LDLT trailing update overflowed");
           }
           work.at(row, column) = stored;
-          work.at(column, row) = stored;
+          work.at( // NOLINT(readability-suspicious-call-argument): mirror the
+                   // lower-triangle update
+              column, row) = stored;
         }
       }
       widths.push_back(1U);
@@ -441,8 +460,8 @@ Result<LDLT> factorLDLT(ConstMatrixView input, SolvePolicy policy,
         return Result<LDLT>::failure(ErrorCode::NoConvergence,
                                      "LDLT 2x2 pivot solve was unresolved");
       }
-      const Scalar storedFirst = static_cast<Scalar>(first);
-      const Scalar storedSecond = static_cast<Scalar>(second);
+      const auto storedFirst = static_cast<Scalar>(first);
+      const auto storedSecond = static_cast<Scalar>(second);
       if (!std::isfinite(first) || !std::isfinite(second) ||
           !std::isfinite(storedFirst) || !std::isfinite(storedSecond)) {
         return Result<LDLT>::failure(ErrorCode::NonFiniteResult,
@@ -456,20 +475,25 @@ Result<LDLT> factorLDLT(ConstMatrixView input, SolvePolicy policy,
       for (Index column = row; column < size; ++column) {
         const Wide rowFirst = lower.at(row, active);
         const Wide rowSecond = lower.at(row, active + 1U);
-        const Wide columnFirst = lower.at(column, active);
+        const Wide columnFirst =
+            lower.at( // NOLINT(readability-suspicious-call-argument):
+                      // pivot-block coefficient for the trailing column
+                column, active);
         const Wide columnSecond = lower.at(column, active + 1U);
         const Wide firstProduct = std::fma(a, columnFirst, b * columnSecond);
         const Wide secondProduct = std::fma(b, columnFirst, c * columnSecond);
         const Wide update =
             std::fma(-rowFirst, firstProduct,
                      std::fma(-rowSecond, secondProduct, work.at(row, column)));
-        const Scalar stored = static_cast<Scalar>(update);
+        const auto stored = static_cast<Scalar>(update);
         if (!std::isfinite(update) || !std::isfinite(stored)) {
           return Result<LDLT>::failure(ErrorCode::NonFiniteResult,
                                        "LDLT trailing update overflowed");
         }
         work.at(row, column) = stored;
-        work.at(column, row) = stored;
+        work.at( // NOLINT(readability-suspicious-call-argument): mirror the
+                 // lower-triangle update
+            column, row) = stored;
       }
     }
     widths.push_back(2U);
@@ -492,7 +516,7 @@ Result<LDLT> factorLDLT(ConstMatrixView input, SolvePolicy policy,
         return Result<LDLT>::failure(ErrorCode::NonFiniteResult,
                                      "LDLT block factor is not representable");
       }
-      const Scalar stored = static_cast<Scalar>(original);
+      const auto stored = static_cast<Scalar>(original);
       if (block.at(row, column) != 0.0 && stored == 0.0) {
         return Result<LDLT>::failure(ErrorCode::NonFiniteResult,
                                      "LDLT block factor underflowed");
@@ -501,11 +525,11 @@ Result<LDLT> factorLDLT(ConstMatrixView input, SolvePolicy policy,
     }
   }
 
-  const auto permutationArray = Array<Index>::copy(permutation, limits);
+  auto permutationArray = Array<Index>::copy(permutation, limits);
   if (!permutationArray.hasValue()) {
     return copyFailure<LDLT>(permutationArray.status());
   }
-  const auto widthsArray = Array<std::uint8_t>::copy(widths, limits);
+  auto widthsArray = Array<std::uint8_t>::copy(widths, limits);
   if (!widthsArray.hasValue()) {
     return copyFailure<LDLT>(widthsArray.status());
   }
