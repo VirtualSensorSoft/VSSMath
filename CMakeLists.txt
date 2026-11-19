@@ -40,10 +40,14 @@ add_library(vss_math STATIC
   src/NumericalError.cpp
   src/MomentValidation.cpp
   src/SecondMoment.cpp
+  src/Scaling.cpp
+  src/linear/StructuredProducts.cpp
   src/Tensor.cpp
   src/TensorLimits.cpp
   src/TensorShape.cpp
+  src/TensorViews.cpp
   src/Operations.cpp
+  src/PackedSymmetric.cpp
   src/TensorOperations.cpp
   src/TensorElementwise.cpp
   src/covariance/Covariance.cpp

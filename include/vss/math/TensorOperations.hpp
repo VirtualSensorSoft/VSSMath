@@ -1,15 +1,27 @@
 #ifndef VSS_MATH_TENSOR_OPERATIONS_HPP
 #define VSS_MATH_TENSOR_OPERATIONS_HPP
 
+#include <cstdint>
 #include <span>
 #include <vss/math/Limits.hpp>
 #include <vss/math/NumericalError.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/TensorLimits.hpp>
+#include <vss/math/TensorViews.hpp>
 #include <vss/math/Tolerance.hpp>
 
 namespace vss::math {
+
+/// @brief Reduction applied over the selected tensor axes.
+enum class ReductionKind : std::uint8_t {
+  sum,
+  product,
+  mean,
+  minimum,
+  maximum,
+  l2
+};
 
 /// @brief Multiplies corresponding tensor elements without broadcasting.
 /// @param lhs Borrowed left tensor.
@@ -96,6 +108,29 @@ contract(const Tensor& lhs, const Tensor& rhs, std::span<const Index> lhsAxes,
          std::span<const Index> rhsAxes,
          TensorLimits limits = TensorLimits{1'048'576U},
          OperationOptions options = {});
+
+/// @brief Reduces a tensor over unique selected axes.
+/// @param input Borrowed finite row-major tensor.
+/// @param axes Unique input axes to reduce; an empty span requests a copy.
+/// @param kind Reduction operation.
+/// @param limits Output, workspace, and element-work ceilings.
+/// @return An owning reduced tensor or a diagnostic failure.
+/// @throws std::bad_alloc if permitted storage cannot be allocated.
+[[nodiscard]] Result<Tensor> reduceTensor(const Tensor& input,
+                                          std::span<const Index> axes,
+                                          ReductionKind kind, Limits limits);
+
+/// @brief Evaluates a bounded labeled tensor contraction (Einstein sum).
+/// @param terms Borrowed strided tensor descriptors.
+/// @param termLabels One axis-label list per term; repeats select diagonals.
+/// @param outputLabels Unique result labels in requested axis order.
+/// @param limits Output, workspace, and assignment-work ceilings.
+/// @return An owning result, including rank zero for a full contraction.
+/// @throws std::bad_alloc if permitted storage cannot be allocated.
+[[nodiscard]] Result<Tensor> einsum(std::span<const TensorView> terms,
+                                    std::span<const IndexList> termLabels,
+                                    std::span<const Index> outputLabels,
+                                    Limits limits);
 
 /// @brief Adds equal-shaped tensors; a checked failure throws NumericalError.
 [[nodiscard]] Tensor operator+(const Tensor& lhs, const Tensor& rhs);
