@@ -3,6 +3,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <vss/math/Array.hpp>
 #include <vss/math/FirstMoment.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
@@ -13,7 +14,9 @@
 #include <vss/math/TensorElementwise.hpp>
 #include <vss/math/TensorOperations.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/LU.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/version.hpp>
 
 namespace {
@@ -210,6 +213,30 @@ int main() {
   }
   if (!require(solved.value().conditionReport().has_value(),
                "LU solve did not return condition diagnostics")) {
+    return 1;
+  }
+
+  const std::array<Index, 2> indices{4U, 9U};
+  const auto ownedIndices = Array<Index>::copy(indices, limits);
+  if (!require(ownedIndices.hasValue() &&
+                   ownedIndices.value().view().size() == indices.size() &&
+                   ownedIndices.value().view()[1] == 9U,
+               "installed immutable Array copy failed")) {
+    return 1;
+  }
+
+  Matrix exchange(2U, 2U);
+  exchange.at(0U, 1U) = 1.0;
+  exchange.at(1U, 0U) = 1.0;
+  SolvePolicy decompositionPolicy;
+  decompositionPolicy.iteration.max_iterations = 64U;
+  const auto indefiniteFactor =
+      linear::factorLDLT(exchange.view(), decompositionPolicy, limits);
+  if (!require(indefiniteFactor.hasValue() &&
+                   indefiniteFactor.value().rank == 2U &&
+                   indefiniteFactor.value().pivot_sizes.view().size() == 1U &&
+                   indefiniteFactor.value().pivot_sizes.view()[0] == 2U,
+               "installed symmetric-indefinite LDLT factorization failed")) {
     return 1;
   }
 
