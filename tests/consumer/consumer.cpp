@@ -347,6 +347,18 @@ int main() {
                "installed rank-aware minimum-norm least-squares API failed")) {
     return 1;
   }
+  const auto nullBasis =
+      linear::nullSpace(rankAwareDesign.view(), rankAwarePolicy, limits);
+  if (!require(nullBasis.hasValue() && nullBasis.value().rows() == 2U &&
+                   nullBasis.value().columns() == 1U &&
+                   std::abs(nullBasis.value().at(0U, 0U) +
+                            nullBasis.value().at(1U, 0U)) < 1.0e-12 &&
+                   std::abs(std::hypot(nullBasis.value().at(0U, 0U),
+                                       nullBasis.value().at(1U, 0U)) -
+                            1.0) < 1.0e-12,
+               "installed right-null-space API failed")) {
+    return 1;
+  }
 
   std::cout << "VirtualSensorMath " << version::string << " consumer passed\n";
   return 0;
