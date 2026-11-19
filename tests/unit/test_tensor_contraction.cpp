@@ -21,8 +21,10 @@ Tensor makeTensor(std::span<const Extent> extents,
   auto tensor = Tensor::create(shape.value(), 0.0, TensorLimits{values.size()});
   VSS_CHECK(tensor.hasValue());
   VSS_CHECK(tensor.value().size() == values.size());
+  const std::span<Scalar> tensorValues(tensor.value().data(),
+                                       tensor.value().size());
   for (Extent i = 0; i < values.size(); ++i) {
-    tensor.value().data()[i] = values[i];
+    tensorValues[i] = values[i];
   }
   return std::move(tensor).value();
 }
@@ -34,8 +36,9 @@ void checkValues(const Tensor& tensor, std::span<const Extent> shape,
     VSS_CHECK(tensor.shape().extents()[i] == shape[i]);
   }
   VSS_CHECK(tensor.size() == expected.size());
+  const std::span<const Scalar> tensorValues(tensor.data(), tensor.size());
   for (Extent i = 0; i < expected.size(); ++i) {
-    VSS_CHECK(tensor.data()[i] == expected[i]);
+    VSS_CHECK(tensorValues[i] == expected[i]);
   }
 }
 
@@ -60,7 +63,8 @@ int main() {
       matrix, matrix, std::array<Index, 2>{0, 1}, std::array<Index, 2>{0, 1});
   VSS_CHECK(full.hasValue());
   VSS_CHECK(full.value().shape().rank() == 0);
-  VSS_CHECK(full.value().data()[0] == 30);
+  VSS_CHECK(std::span<const Scalar>(full.value().data(), full.value().size())
+                .front() == 30);
 
   const auto other = makeTensor(std::array<Extent, 2>{2, 2},
                                 std::array<Scalar, 4>{5, 6, 7, 8});

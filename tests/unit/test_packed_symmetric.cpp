@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <exception>
+#include <iostream>
 #include <limits>
 #include <numeric>
 #include <span>
@@ -26,8 +28,10 @@ Tensor makeTensor(std::span<const Extent> extents,
   auto tensor = Tensor::create(shape.value(), 0.0, TensorLimits{values.size()});
   VSS_CHECK(tensor.hasValue());
   VSS_CHECK(tensor.value().size() == values.size());
+  const std::span<Scalar> tensorValues(tensor.value().data(),
+                                       tensor.value().size());
   for (Extent i = 0; i < values.size(); ++i) {
-    tensor.value().data()[i] = values[i];
+    tensorValues[i] = values[i];
   }
   return std::move(tensor).value();
 }
@@ -38,20 +42,24 @@ void checkTensorEqual(const Tensor& lhs, const Tensor& rhs) {
     VSS_CHECK(lhs.shape().extent(axis) == rhs.shape().extent(axis));
   }
   VSS_CHECK(lhs.size() == rhs.size());
+  const std::span<const Scalar> lhsValues(lhs.data(), lhs.size());
+  const std::span<const Scalar> rhsValues(rhs.data(), rhs.size());
   for (Extent i = 0; i < lhs.size(); ++i) {
-    VSS_CHECK(lhs.data()[i] == rhs.data()[i]);
+    VSS_CHECK(lhsValues[i] == rhsValues[i]);
   }
 }
 
 } // namespace
 
-int main() {
-  const Limits ample{20'000, 1'000'000, 100'000};
+int main() try {
+  const Limits ample{
+      .elements = 20'000, .bytes = 1'000'000, .evaluations = 100'000};
   const auto matrix = makeTensor(std::array<Extent, 2>{2, 2},
                                  std::array<Scalar, 4>{1, 2, 2, 4});
-  const auto packed_result = packSymmetric(matrix, Tolerance{0, 0}, ample);
+  const auto packed_result =
+      packSymmetric(matrix, Tolerance{.absolute = 0, .relative = 0}, ample);
   VSS_CHECK(packed_result.hasValue());
-  const auto packed = packed_result.value();
+  const auto& packed = packed_result.value();
   VSS_CHECK(packed.order == 2);
   VSS_CHECK(packed.dimension == 2);
   VSS_CHECK(packed.lexicographic_values.size() == 3);
@@ -67,10 +75,14 @@ int main() {
 
   auto asymmetric = makeTensor(std::array<Extent, 2>{2, 2},
                                std::array<Scalar, 4>{1, 2, 3, 4});
-  VSS_CHECK(packSymmetric(asymmetric, Tolerance{0, 0}, ample).status().code() ==
-            ErrorCode::NotSymmetric);
-  asymmetric.data()[2] = 2.0 + 1e-8;
-  VSS_CHECK(packSymmetric(asymmetric, Tolerance{1e-7, 0}, ample).hasValue());
+  VSS_CHECK(
+      packSymmetric(asymmetric, Tolerance{.absolute = 0, .relative = 0}, ample)
+          .status()
+          .code() == ErrorCode::NotSymmetric);
+  std::span<Scalar>(asymmetric.data(), asymmetric.size())[2] = 2.0 + 1e-8;
+  VSS_CHECK(packSymmetric(asymmetric,
+                          Tolerance{.absolute = 1e-7, .relative = 0}, ample)
+                .hasValue());
 
   VSS_CHECK(
       unpackSymmetric(packed, Limits{1, 1'000'000, 100'000}).status().code() ==
@@ -84,13 +96,17 @@ int main() {
   VSS_CHECK(unpackSymmetric(PackedSymmetric{1, 2, Vector(1)}, ample)
                 .status()
                 .code() == ErrorCode::InvalidExtent);
-  VSS_CHECK(packSymmetric(matrix, Tolerance{-1, 0}, ample).status().code() ==
-            ErrorCode::InvalidTolerance);
+  VSS_CHECK(
+      packSymmetric(matrix, Tolerance{.absolute = -1, .relative = 0}, ample)
+          .status()
+          .code() == ErrorCode::InvalidTolerance);
   auto nonfinite = makeTensor(
       std::array<Extent, 2>{2, 2},
       std::array<Scalar, 4>{1, 2, 2, std::numeric_limits<Scalar>::infinity()});
-  VSS_CHECK(packSymmetric(nonfinite, Tolerance{0, 0}, ample).status().code() ==
-            ErrorCode::NonFiniteInput);
+  VSS_CHECK(
+      packSymmetric(nonfinite, Tolerance{.absolute = 0, .relative = 0}, ample)
+          .status()
+          .code() == ErrorCode::NonFiniteInput);
 
   for (const Index dimension : {1U, 2U}) {
     for (const Index order : {2U, 3U, 4U}) {
@@ -102,7 +118,8 @@ int main() {
       const Extent packedCount = dimension == 1U ? 1U : (order + 1U);
       std::vector<Scalar> values(denseCount, 1.0);
       const auto dense = makeTensor(shape, values);
-      const auto canonical = packSymmetric(dense, Tolerance{0, 0}, ample);
+      const auto canonical =
+          packSymmetric(dense, Tolerance{.absolute = 0, .relative = 0}, ample);
       VSS_CHECK(canonical.hasValue());
       VSS_CHECK(canonical.value().lexicographic_values.size() == packedCount);
     }
@@ -111,7 +128,8 @@ int main() {
   std::vector<Extent> rank4_shape(4, 10U);
   std::vector<Scalar> all_ones(10'000U, 1.0);
   const auto rank4 = makeTensor(rank4_shape, all_ones);
-  const auto packed_rank4 = packSymmetric(rank4, Tolerance{0, 0}, ample);
+  const auto packed_rank4 =
+      packSymmetric(rank4, Tolerance{.absolute = 0, .relative = 0}, ample);
   VSS_CHECK(packed_rank4.hasValue());
   VSS_CHECK(packed_rank4.value().lexicographic_values.size() == 715);
 
@@ -120,17 +138,19 @@ int main() {
     Index ones = 0U;
     Extent coordinate = i;
     std::array<Index, 4> tuple{};
+    const std::span<Index> tupleValues(tuple);
     for (Index axis = 4U; axis > 0U; --axis) {
-      tuple[axis - 1U] = coordinate % 2U;
+      tupleValues[axis - 1U] = coordinate % 2U;
       coordinate /= 2U;
     }
-    std::sort(tuple.begin(), tuple.end());
+    std::ranges::sort(tuple);
     ones = std::accumulate(tuple.begin(), tuple.end(), Index{0});
     mixed_values[i] = static_cast<Scalar>(ones + 1U);
   }
   const auto mixed =
       makeTensor(std::array<Extent, 4>{2, 2, 2, 2}, mixed_values);
-  const auto mixed_packed = packSymmetric(mixed, Tolerance{0, 0}, ample);
+  const auto mixed_packed =
+      packSymmetric(mixed, Tolerance{.absolute = 0, .relative = 0}, ample);
   VSS_CHECK(mixed_packed.hasValue());
   const auto mixed_restored = unpackSymmetric(mixed_packed.value(), ample);
   VSS_CHECK(mixed_restored.hasValue());
@@ -138,15 +158,20 @@ int main() {
 
   const auto rank3 = makeTensor(std::array<Extent, 3>{2, 2, 2},
                                 std::array<Scalar, 8>{1, 2, 2, 3, 2, 3, 3, 4});
-  const auto rank3_packed = packSymmetric(rank3, Tolerance{0, 0}, ample);
+  const auto rank3_packed =
+      packSymmetric(rank3, Tolerance{.absolute = 0, .relative = 0}, ample);
   VSS_CHECK(rank3_packed.hasValue());
   const auto packed_sum =
       symmetricContraction(rank3_packed.value(), rank3_packed.value());
   VSS_CHECK(packed_sum.hasValue());
   Scalar dense_sum = 0;
+  const std::span<const Scalar> rank3Values(rank3.data(), rank3.size());
   for (Extent i = 0; i < rank3.size(); ++i) {
-    dense_sum += rank3.data()[i] * rank3.data()[i];
+    dense_sum += rank3Values[i] * rank3Values[i];
   }
   VSS_CHECK(packed_sum.value() == dense_sum);
   VSS_CHECK(packed_sum.value() == 56);
+} catch (const std::exception& exception) {
+  std::cerr << exception.what() << '\n';
+  return 1;
 }
