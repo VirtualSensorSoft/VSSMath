@@ -150,7 +150,7 @@ annotations.
 | tests/algorithms/test_generalized_symmetric_eigen.cpp:159 | readability-suspicious-call-argument | Repeated-cluster projector | The second access reads another matrix row at the same eigenvector column | The test compares the invariant projector of the two-dimensional repeated eigenspace rather than relying on eigenvector signs | Reviewed |
 
 | tests/algorithms/test_generalized_symmetric_eigen.cpp:261 | bugprone-exception-escape | Generalized eigen test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
-| tests/algorithms/test_null_space.cpp:209 | bugprone-exception-escape | Null-space test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
+| tests/algorithms/test_null_space.cpp:211 | bugprone-exception-escape | Null-space test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
 
 
 | src/linear/GeneralizedEigen.cpp:102 | readability-suspicious-call-argument | Symmetry allowance | The second matrix access reads the mirrored coordinate | The comparison validates independently symmetric pencil inputs before canonical midpoint construction | Reviewed |

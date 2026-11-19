@@ -114,13 +114,13 @@ void exactZeroAndEmptyAxesReturnCompleteNullSpaces() {
   VSS_CHECK(allDirections.value().rows() == 3U &&
             allDirections.value().columns() == 3U);
   for (Index row = 0U; row < 3U; ++row) {
-    for (Index column = 0U; column < 3U; ++column) {
+    for (Index otherCoordinate = 0U; otherCoordinate < 3U; ++otherCoordinate) {
       Scalar projector = 0.0;
       for (Index basis = 0U; basis < 3U; ++basis) {
         projector += allDirections.value().at(row, basis) *
-                     allDirections.value().at(column, basis);
+                     allDirections.value().at(otherCoordinate, basis);
       }
-      checkNear(projector, row == column ? 1.0 : 0.0);
+      checkNear(projector, row == otherCoordinate ? 1.0 : 0.0);
     }
   }
 
@@ -147,8 +147,10 @@ void nontrivialWideNullBasisSatisfiesResidualAndOrthogonality() {
   for (Index direction = 0U; direction < basis.columns(); ++direction) {
     for (Index row = 0U; row < input.rows(); ++row) {
       Scalar residual = 0.0;
-      for (Index column = 0U; column < input.columns(); ++column) {
-        residual += input.at(row, column) * basis.at(column, direction);
+      for (Index inputCoordinate = 0U; inputCoordinate < input.columns();
+           ++inputCoordinate) {
+        residual += input.at(row, inputCoordinate) *
+                    basis.at(inputCoordinate, direction);
       }
       checkNear(residual, 0.0);
     }
