@@ -15,6 +15,7 @@
 #include <vss/math/TensorLimits.hpp>
 #include <vss/math/TensorOperations.hpp>
 #include <vss/math/TensorShape.hpp>
+#include <vss/math/TensorViews.hpp>
 #include <vss/math/Tolerance.hpp>
 
 namespace vss::math {
@@ -625,7 +626,7 @@ Result<Tensor> reduceTensor(const Tensor& input, std::span<const Index> axes,
     accumulator.assign(outputCount, 0.0L);
     correction.assign(outputCount, 0.0L);
     if (kind == ReductionKind::product) {
-      std::fill(accumulator.begin(), accumulator.end(), 1.0L);
+      std::ranges::fill(accumulator, 1.0L);
     }
   } else if (kind == ReductionKind::minimum) {
     std::fill_n(output.value().data(), outputCount,
@@ -637,17 +638,19 @@ Result<Tensor> reduceTensor(const Tensor& input, std::span<const Index> axes,
 
   std::vector<Extent> inputCoordinates(rank, 0U);
   const auto inputShape = input.shape().extents();
+  const std::span<const Scalar> inputValues(input.data(), input.size());
+  const std::span<Scalar> outputValues(output.value().data(), outputCount);
   for (Extent linear = 0U; linear < input.size(); ++linear) {
     decodeRowMajor(linear, inputShape, inputCoordinates);
     Extent outputLinear = 0U;
     for (Index axis = 0U, outAxis = 0U; axis < rank; ++axis) {
       if (!reduced[axis]) {
         outputLinear =
-            outputLinear * outputExtents[outAxis] + inputCoordinates[axis];
+            (outputLinear * outputExtents[outAxis]) + inputCoordinates[axis];
         ++outAxis;
       }
     }
-    const Scalar value = input.data()[linear];
+    const Scalar value = inputValues[linear];
     switch (kind) {
     case ReductionKind::sum:
     case ReductionKind::mean: {
@@ -666,17 +669,15 @@ Result<Tensor> reduceTensor(const Tensor& input, std::span<const Index> axes,
       }
       break;
     case ReductionKind::minimum:
-      output.value().data()[outputLinear] =
-          std::min(output.value().data()[outputLinear], value);
+      outputValues[outputLinear] = std::min(outputValues[outputLinear], value);
       break;
     case ReductionKind::maximum:
-      output.value().data()[outputLinear] =
-          std::max(output.value().data()[outputLinear], value);
+      outputValues[outputLinear] = std::max(outputValues[outputLinear], value);
       break;
     case ReductionKind::l2:
-      output.value().data()[outputLinear] =
-          std::hypot(output.value().data()[outputLinear], value);
-      if (!isFinite(output.value().data()[outputLinear])) {
+      outputValues[outputLinear] =
+          std::hypot(outputValues[outputLinear], value);
+      if (!isFinite(outputValues[outputLinear])) {
         return failure<Tensor>(ErrorCode::NonFiniteResult,
                                "tensor l2 reduction result is non-finite");
       }
@@ -689,8 +690,8 @@ Result<Tensor> reduceTensor(const Tensor& input, std::span<const Index> axes,
       if (kind == ReductionKind::mean) {
         value /= static_cast<long double>(reductionCount);
       }
-      output.value().data()[i] = static_cast<Scalar>(value);
-      if (!isFinite(output.value().data()[i])) {
+      outputValues[i] = static_cast<Scalar>(value);
+      if (!isFinite(outputValues[i])) {
         return failure<Tensor>(ErrorCode::NonFiniteResult,
                                "tensor reduction result is non-finite");
       }
@@ -886,7 +887,7 @@ Result<Tensor> einsum(std::span<const TensorView> terms,
     }
     Extent outputLinear = 0U;
     for (Extent axis = 0U; axis < outputLabels.size(); ++axis) {
-      outputLinear = outputLinear * outputExtents[axis] +
+      outputLinear = (outputLinear * outputExtents[axis]) +
                      coordinates[labelPositions.at(outputLabels[axis])];
     }
     const long double adjusted = product - corrections[outputLinear];
@@ -894,9 +895,10 @@ Result<Tensor> einsum(std::span<const TensorView> terms,
     corrections[outputLinear] = (next - sums[outputLinear]) - adjusted;
     sums[outputLinear] = next;
   }
+  const std::span<Scalar> outputValues(output.value().data(), outputCount);
   for (Extent i = 0U; i < outputCount; ++i) {
-    output.value().data()[i] = static_cast<Scalar>(sums[i]);
-    if (!isFinite(output.value().data()[i])) {
+    outputValues[i] = static_cast<Scalar>(sums[i]);
+    if (!isFinite(outputValues[i])) {
       return failure<Tensor>(ErrorCode::NonFiniteResult,
                              "einsum result is non-finite");
     }

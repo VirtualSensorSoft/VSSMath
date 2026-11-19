@@ -22,7 +22,7 @@ struct PackedSymmetric final {
   /// @brief Equal positive extent of every tensor axis.
   Index dimension{};
   /// @brief Canonical values for sorted nondecreasing coordinate tuples.
-  Vector lexicographic_values{};
+  Vector lexicographic_values;
 };
 
 /// @brief Packs a symmetric dense tensor after checking all permutation orbits.

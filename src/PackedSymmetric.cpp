@@ -5,6 +5,8 @@
 #include <numeric>
 #include <span>
 #include <string>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/PackedSymmetric.hpp>
@@ -71,22 +73,22 @@ bool withinTolerance(Scalar lhs, Scalar rhs, Tolerance tolerance) noexcept {
   if (scale == 0.0) {
     return true;
   }
-  const Scalar normalizedDifference = std::abs(lhs / scale - rhs / scale);
+  const Scalar normalizedDifference = std::abs((lhs / scale) - (rhs / scale));
   return normalizedDifference <=
-         tolerance.absolute / scale + tolerance.relative;
+         (tolerance.absolute / scale) + tolerance.relative;
 }
 
-Extent tupleOffset(const std::array<Index, 4>& tuple, Index order,
+Extent tupleOffset(std::span<const Index> tuple, Index order,
                    Index dimension) noexcept {
   Extent offset = 0U;
   for (Index axis = 0U; axis < order; ++axis) {
-    offset = offset * dimension + tuple[axis];
+    offset = (offset * dimension) + tuple[axis];
   }
   return offset;
 }
 
 void decode(Extent linear, Index order, Index dimension,
-            std::array<Index, 4>& tuple) noexcept {
+            std::span<Index> tuple) noexcept {
   for (Index axis = order; axis > 0U; --axis) {
     const Index current = axis - 1U;
     tuple[current] = linear % dimension;
@@ -94,7 +96,7 @@ void decode(Extent linear, Index order, Index dimension,
   }
 }
 
-void sortTuplePrefix(std::array<Index, 4>& tuple, Index order) noexcept {
+void sortTuplePrefix(std::span<Index> tuple, Index order) noexcept {
   for (Index current = 1U; current < order; ++current) {
     Index position = current;
     while (position > 0U && tuple[position] < tuple[position - 1U]) {
@@ -104,7 +106,7 @@ void sortTuplePrefix(std::array<Index, 4>& tuple, Index order) noexcept {
   }
 }
 
-bool nextTuplePermutation(std::array<Index, 4>& tuple, Index order) noexcept {
+bool nextTuplePermutation(std::span<Index> tuple, Index order) noexcept {
   Index pivot = order;
   while (pivot > 1U && tuple[pivot - 2U] >= tuple[pivot - 1U]) {
     --pivot;
@@ -135,7 +137,7 @@ bool nextTuplePermutation(std::array<Index, 4>& tuple, Index order) noexcept {
   return true;
 }
 
-bool nextCombination(std::array<Index, 4>& tuple, Index order,
+bool nextCombination(std::span<Index> tuple, Index order,
                      Index dimension) noexcept {
   for (Index axis = order; axis > 0U; --axis) {
     const Index current = axis - 1U;
@@ -151,7 +153,7 @@ bool nextCombination(std::array<Index, 4>& tuple, Index order,
 }
 
 Result<Extent> validatePacked(const PackedSymmetric& input) {
-  const auto count = packedCount(input.dimension, input.order);
+  auto count = packedCount(input.dimension, input.order);
   if (!count.hasValue()) {
     return count;
   }
@@ -169,15 +171,16 @@ Result<Extent> validatePacked(const PackedSymmetric& input) {
   return count;
 }
 
-Extent orbitSize(const std::array<Index, 4>& tuple, Index order) noexcept {
+Extent orbitSize(std::span<const Index> tuple, Index order) noexcept {
   constexpr std::array<Extent, 5> factorial{1U, 1U, 2U, 6U, 24U};
-  Extent multiplicity = factorial[order];
+  const std::span<const Extent> factorialValues(factorial);
+  Extent multiplicity = factorialValues[order];
   Index run = 1U;
   for (Index i = 1U; i <= order; ++i) {
     if (i < order && tuple[i] == tuple[i - 1U]) {
       ++run;
     } else {
-      multiplicity /= factorial[run];
+      multiplicity /= factorialValues[run];
       run = 1U;
     }
   }
@@ -211,7 +214,7 @@ Result<PackedSymmetric> packSymmetric(const Tensor& input, Tolerance tolerance,
         toleranceStatus.code(), std::string(toleranceStatus.message()));
   }
   for (Extent i = 0U; i < input.size(); ++i) {
-    if (!isFinite(input.data()[i])) {
+    if (!isFinite(std::span<const Scalar>(input.data(), input.size())[i])) {
       return failure<PackedSymmetric>(ErrorCode::NonFiniteInput,
                                       "dense symmetric input is non-finite");
     }
@@ -235,12 +238,14 @@ Result<PackedSymmetric> packSymmetric(const Tensor& input, Tolerance tolerance,
   }
 
   std::array<Index, 4> coordinate{};
+  const std::span<Index> coordinateSpan(coordinate);
+  const std::span<const Scalar> inputValues(input.data(), input.size());
   for (Extent linear = 0U; linear < input.size(); ++linear) {
-    decode(linear, order, dimension, coordinate);
+    decode(linear, order, dimension, coordinateSpan);
     auto canonical = coordinate;
-    sortTuplePrefix(canonical, order);
-    if (!withinTolerance(input.data()[linear],
-                         input.data()[tupleOffset(canonical, order, dimension)],
+    sortTuplePrefix(std::span<Index>(canonical), order);
+    if (!withinTolerance(inputValues[linear],
+                         inputValues[tupleOffset(canonical, order, dimension)],
                          tolerance)) {
       return failure<PackedSymmetric>(
           ErrorCode::NotSymmetric,
@@ -251,13 +256,15 @@ Result<PackedSymmetric> packSymmetric(const Tensor& input, Tolerance tolerance,
   Vector packed(count.value());
   coordinate.fill(0U);
   for (Extent i = 0U; i < count.value(); ++i) {
-    packed.at(i) = input.data()[tupleOffset(coordinate, order, dimension)];
+    packed.at(i) = inputValues[tupleOffset(coordinateSpan, order, dimension)];
     if (i + 1U < count.value()) {
-      static_cast<void>(nextCombination(coordinate, order, dimension));
+      static_cast<void>(nextCombination(coordinateSpan, order, dimension));
     }
   }
   return Result<PackedSymmetric>::success(
-      PackedSymmetric{order, dimension, std::move(packed)});
+      PackedSymmetric{.order = order,
+                      .dimension = dimension,
+                      .lexicographic_values = std::move(packed)});
 }
 
 Result<Tensor> unpackSymmetric(const PackedSymmetric& input, Limits limits) {
@@ -295,14 +302,20 @@ Result<Tensor> unpackSymmetric(const PackedSymmetric& input, Limits limits) {
     return output;
   }
   std::array<Index, 4> tuple{};
+  const std::span<Index> tupleSpan(tuple);
+  const std::span<Scalar> outputValues(output.value().data(),
+                                       output.value().size());
   for (Extent packedIndex = 0U; packedIndex < count.value(); ++packedIndex) {
     const Scalar value = input.lexicographic_values.at(packedIndex);
-    do {
-      output.value().data()[tupleOffset(tuple, input.order, input.dimension)] =
+    bool hasPermutation = true;
+    while (hasPermutation) {
+      outputValues[tupleOffset(tupleSpan, input.order, input.dimension)] =
           value;
-    } while (nextTuplePermutation(tuple, input.order));
+      hasPermutation = nextTuplePermutation(tupleSpan, input.order);
+    }
     if (packedIndex + 1U < count.value()) {
-      static_cast<void>(nextCombination(tuple, input.order, input.dimension));
+      static_cast<void>(
+          nextCombination(tupleSpan, input.order, input.dimension));
     }
   }
   return output;
@@ -338,10 +351,10 @@ Result<Scalar> symmetricContraction(const PackedSymmetric& lhs,
   long double correction = 0.0L;
   std::array<Index, 4> tuple{};
   for (Extent i = 0U; i < lhsCount.value(); ++i) {
-    const long double term =
-        static_cast<long double>(orbitSize(tuple, lhs.order)) *
-        (lhs.lexicographic_values.at(i) / lhsScale) *
-        (rhs.lexicographic_values.at(i) / rhsScale);
+    const long double term = static_cast<long double>(orbitSize(
+                                 std::span<const Index>(tuple), lhs.order)) *
+                             (lhs.lexicographic_values.at(i) / lhsScale) *
+                             (rhs.lexicographic_values.at(i) / rhsScale);
     const long double adjusted = term - correction;
     const long double next = sum + adjusted;
     correction = (next - sum) - adjusted;
@@ -358,7 +371,7 @@ Result<Scalar> symmetricContraction(const PackedSymmetric& lhs,
   const long double normalized =
       static_cast<long double>(lhsMantissa) * rhsMantissa * sum;
   const long double result = std::scalbn(normalized, exponent);
-  const Scalar rounded = static_cast<Scalar>(result);
+  const auto rounded = static_cast<Scalar>(result);
   if (!std::isfinite(rounded)) {
     return failure<Scalar>(ErrorCode::NonFiniteResult,
                            "packed symmetric contraction is non-finite");
