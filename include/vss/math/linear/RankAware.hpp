@@ -38,17 +38,36 @@ struct LinearEstimate final {
 /// @brief Computes rank-aware minimum-norm least-squares estimates.
 /// @details For `A` of shape m×n and `B` of shape m×p, returns
 ///          `V_r diag(1/sigma_r) U_r^T B`, where `A = U Sigma V^T` is its
-///          thin SVD and retained singular values strictly exceed
-///          `max(rank_abs, rank_rel * sigma_max)`. Residual norms are computed
-///          from the original `A` and `B`, not a projected right-hand side.
-///          `reject` fails when rank is below `min(m,n)`; permissive rank
-///          policies use the retained subspace. Covariance is disengaged.
+///          thin SVD. The inclusive cutoff is
+///          `tau = max(rank_abs, rank_rel * sigma_max)` in original input
+///          units; only singular values strictly greater than `tau` are
+///          retained. A singular value equal to the cutoff is discarded.
+///          Residual norms are computed from the original `A` and `B`, not a
+///          projected right-hand side. `reject` fails when rank is below
+///          `min(m,n)`; `supported_subspace` and `minimum_norm` both use the
+///          retained subspace for this least-squares objective. A wide
+///          full-row-rank system is valid and returns its minimum-norm
+///          solution. A positive reciprocal-condition floor compares
+///          `sigma_rank / sigma_max` and rejects lower retained support.
+///          Rank-zero systems return zero parameters and the norms of the
+///          original observation columns. Empty axes and zero right-hand-side
+///          columns preserve their conforming result shapes. Covariance is
+///          disengaged because no stochastic model is supplied. No failure
+///          publishes a partial estimate. Factorization refinement is bounded
+///          by `policy.iteration.max_iterations`; a zero cap permits directly
+///          certifiable diagonal or permuted-diagonal spectra only. Dense work
+///          is O(m n k + p m n), with `k=min(m,n)`; storage is O(m n + n p)
+///          plus the bounded factor and identified basis.
 /// @param design Finite m×n design matrix; borrowed for the duration of call.
 /// @param observations Finite m×p right-hand sides in caller column order.
 /// @param policy Rank cutoff, condition floor, and SVD iteration policy.
 /// @param limits Peak output/workspace limits, including retained factors.
 /// @return Owned parameters, rank, cutoff, identified basis, and residuals, or
-///         a failure without partial estimate data.
+///         a failure without partial estimate data. Failures include
+///         `DimensionMismatch`, `InvalidTolerance`, `InvalidDomain`,
+///         `NonFiniteInput`, `RankDeficient`, `IllConditioned`,
+///         `NoConvergence`, `ResourceLimit`, and `NonFiniteResult` as
+///         applicable.
 /// @throws std::bad_alloc if permitted storage cannot be allocated.
 [[nodiscard]] Result<LinearEstimate>
 leastSquaresMinNorm(ConstMatrixView design, ConstMatrixView observations,
