@@ -24,6 +24,7 @@ endfunction()
 vss_math_add_test(test_version unit/test_version.cpp math.version)
 vss_math_add_test(test_status unit/test_status.cpp math.status)
 vss_math_add_test(test_result unit/test_result.cpp math.result)
+vss_math_add_test(test_array unit/test_array.cpp math.array)
 vss_math_add_test(test_tolerance unit/test_tolerance.cpp math.tolerance)
 vss_math_add_test(test_platform_contract unit/test_platform_contract.cpp
                   math.platform_contract)
@@ -75,6 +76,7 @@ vss_math_add_test(test_scaling unit/test_scaling.cpp math.scaling)
 vss_math_add_test(test_structured_products
                   unit/test_structured_products.cpp math.structured_products)
 vss_math_add_algorithm_test(test_svd algorithms/test_svd.cpp math.svd)
+vss_math_add_algorithm_test(test_ldlt algorithms/test_ldlt.cpp math.ldlt)
 vss_math_add_test(test_tensor_reductions unit/test_tensor_reductions.cpp
                   math.tensor_reductions)
 vss_math_add_test(test_einsum unit/test_einsum.cpp math.einsum)
