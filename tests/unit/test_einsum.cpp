@@ -3,13 +3,15 @@
 #include <array>
 #include <limits>
 #include <span>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/TensorOperations.hpp>
+#include <vss/math/TensorViews.hpp>
 
 int main() {
   using namespace vss::math;
-  const Limits ample{128, 8192, 1024};
+  const Limits ample{.elements = 128, .bytes = 8192, .evaluations = 1024};
   const std::array<Scalar, 4> a{1, 2, 3, 4};
   const std::array<Scalar, 4> b{5, 6, 7, 8};
   const std::array<Index, 2> extents{2, 2};
@@ -25,13 +27,18 @@ int main() {
   const auto product = einsum(terms, labels, output_labels, ample);
   VSS_CHECK(product.hasValue());
   const std::array<Scalar, 4> expected{19, 22, 43, 50};
+  const std::span<const Scalar> product_values{product.value().data(),
+                                               product.value().size()};
+  const std::span<const Scalar> expected_values{expected};
   for (Extent i = 0; i < expected.size(); ++i) {
-    VSS_CHECK(product.value().data()[i] == expected[i]);
+    VSS_CHECK(product_values[i] == expected_values[i]);
   }
-  VSS_CHECK(einsum(terms, labels, output_labels, Limits{1, 8192, 1024})
+  VSS_CHECK(einsum(terms, labels, output_labels,
+                   Limits{.elements = 1, .bytes = 8192, .evaluations = 1024})
                 .status()
                 .code() == ErrorCode::ResourceLimit);
-  VSS_CHECK(einsum(terms, labels, output_labels, Limits{128, 8192, 1})
+  VSS_CHECK(einsum(terms, labels, output_labels,
+                   Limits{.elements = 128, .bytes = 8192, .evaluations = 1})
                 .status()
                 .code() == ErrorCode::ResourceLimit);
 
@@ -42,7 +49,9 @@ int main() {
       einsum(diagonal_term, diagonal_index, std::span<const Index>{}, ample);
   VSS_CHECK(diagonal.hasValue());
   VSS_CHECK(diagonal.value().shape().rank() == 0);
-  VSS_CHECK(diagonal.value().data()[0] == 5);
+  const std::span<const Scalar> diagonal_value{diagonal.value().data(),
+                                               diagonal.value().size()};
+  VSS_CHECK(diagonal_value.front() == 5);
 
   VSS_CHECK(
       einsum(terms, labels, std::array<Index, 1>{9}, ample).status().code() ==
