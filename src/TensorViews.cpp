@@ -1,9 +1,9 @@
 #include <algorithm>
 #include <limits>
-#include <numeric>
 #include <span>
 #include <string>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Result.hpp>
@@ -65,7 +65,7 @@ Extent rowMajorOffset(std::span<const Extent> index,
                       std::span<const Extent> shape) noexcept {
   Extent offset = 0U;
   for (Extent axis = 0U; axis < shape.size(); ++axis) {
-    offset = offset * shape[axis] + index[axis];
+    offset = (offset * shape[axis]) + index[axis];
   }
   return offset;
 }
@@ -124,14 +124,16 @@ Result<Tensor> slice(const Tensor& input, std::span<const Extent> begin,
   }
   std::vector<Extent> outputIndex(rank, 0U);
   std::vector<Extent> inputIndex(rank, 0U);
+  const std::span<Scalar> outputData(output.value().data(),
+                                     output.value().size());
+  const std::span<const Scalar> inputData(input.data(), input.size());
   const Extent outputSize = output.value().size();
   for (Extent linear = 0U; linear < outputSize; ++linear) {
     decodeRowMajor(linear, extent, outputIndex);
     for (Extent axis = 0U; axis < rank; ++axis) {
-      inputIndex[axis] = begin[axis] + outputIndex[axis] * step[axis];
+      inputIndex[axis] = begin[axis] + (outputIndex[axis] * step[axis]);
     }
-    output.value().data()[linear] =
-        input.data()[rowMajorOffset(inputIndex, inputShape)];
+    outputData[linear] = inputData[rowMajorOffset(inputIndex, inputShape)];
   }
   return output;
 }
@@ -153,7 +155,10 @@ Result<Tensor> reshape(const Tensor& input, std::span<const Extent> extent,
     return output;
   }
   if (input.size() > 0U) {
-    std::copy_n(input.data(), input.size(), output.value().data());
+    std::copy_n(std::span<const Scalar>(input.data(), input.size()).begin(),
+                input.size(),
+                std::span<Scalar>(output.value().data(), output.value().size())
+                    .begin());
   }
   return output;
 }
@@ -191,14 +196,16 @@ Result<Tensor> permuteAxes(const Tensor& input, std::span<const Index> axes,
   }
   std::vector<Extent> outputIndex(rank, 0U);
   std::vector<Extent> inputIndex(rank, 0U);
+  const std::span<Scalar> outputData(output.value().data(),
+                                     output.value().size());
+  const std::span<const Scalar> inputData(input.data(), input.size());
   const Extent outputSize = output.value().size();
   for (Extent linear = 0U; linear < outputSize; ++linear) {
     decodeRowMajor(linear, outputShape, outputIndex);
     for (Extent axis = 0U; axis < rank; ++axis) {
       inputIndex[axes[axis]] = outputIndex[axis];
     }
-    output.value().data()[linear] =
-        input.data()[rowMajorOffset(inputIndex, inputShape)];
+    outputData[linear] = inputData[rowMajorOffset(inputIndex, inputShape)];
   }
   return output;
 }
