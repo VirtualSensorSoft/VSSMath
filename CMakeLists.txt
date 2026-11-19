@@ -56,6 +56,7 @@ add_library(vss_math STATIC
   src/statistics/Descriptive.cpp
   src/linear/Cholesky.cpp
   src/linear/LDLT.cpp
+  src/linear/GeneralizedEigen.cpp
   src/linear/SVD.cpp
   src/linear/LU.cpp
   src/linear/QR.cpp
