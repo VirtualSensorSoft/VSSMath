@@ -2,6 +2,8 @@
 
 #include <array>
 #include <limits>
+#include <span>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
@@ -9,7 +11,7 @@
 
 int main() {
   using namespace vss::math;
-  const Limits ample{128, 8192, 1024};
+  const Limits ample{.elements = 128, .bytes = 8192, .evaluations = 1024};
   Matrix left{2, 1};
   left.at(0, 0) = 1;
   left.at(1, 0) = 2;
@@ -22,8 +24,9 @@ int main() {
   VSS_CHECK(kronecker.value().rows() == 4);
   VSS_CHECK(kronecker.value().columns() == 1);
   const std::array<Scalar, 4> product_values{3, 4, 6, 8};
+  const std::span<const Scalar> expected_values{product_values};
   for (Index i = 0; i < product_values.size(); ++i) {
-    VSS_CHECK(kronecker.value().at(i, 0) == product_values[i]);
+    VSS_CHECK(kronecker.value().at(i, 0) == expected_values[i]);
   }
   VSS_CHECK(
       vss::math::kronecker(left.view(), right.view(), Limits{1, 8192, 1024})
@@ -35,7 +38,7 @@ int main() {
   VSS_CHECK(khatri.value().rows() == 4);
   VSS_CHECK(khatri.value().columns() == 1);
   for (Index i = 0; i < product_values.size(); ++i) {
-    VSS_CHECK(khatri.value().at(i, 0) == product_values[i]);
+    VSS_CHECK(khatri.value().at(i, 0) == expected_values[i]);
   }
   Matrix different_columns{2, 2};
   VSS_CHECK(vss::math::khatriRao(left.view(), different_columns.view(), ample)

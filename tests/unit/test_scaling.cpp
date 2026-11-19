@@ -2,6 +2,7 @@
 
 #include <array>
 #include <limits>
+#include <span>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
@@ -11,7 +12,7 @@
 
 int main() {
   using namespace vss::math;
-  const Limits ample{64, 4096, 64};
+  const Limits ample{.elements = 64, .bytes = 4096, .evaluations = 64};
 
   const Vector values{std::array<Scalar, 2>{2, -3}};
   const Vector scale{std::array<Scalar, 2>{-2, 3}};
@@ -87,10 +88,11 @@ int main() {
       rectangular.view(), row_scale.view(), column_scale.view(), ample);
   VSS_CHECK(cross_covariance.hasValue());
   const std::array<Scalar, 6> expected{2, 0, -6, -4, 0, 6};
+  const std::span<const Scalar> expected_values{expected};
   for (Index row = 0; row < 2; ++row) {
     for (Index column = 0; column < 3; ++column) {
       VSS_CHECK(cross_covariance.value().at(row, column) ==
-                expected[row * 3 + column]);
+                expected_values[(row * 3) + column]);
     }
   }
 
