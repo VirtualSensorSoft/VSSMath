@@ -69,6 +69,8 @@ vss_math_add_test(test_tensor_operations unit/test_tensor_operations.cpp
                   math.tensor_arithmetic)
 vss_math_add_test(test_tensor_contraction unit/test_tensor_contraction.cpp
                   math.tensor_contraction)
+vss_math_add_test(test_packed_symmetric unit/test_packed_symmetric.cpp
+                  math.packed_symmetric)
 vss_math_add_test(test_elementwise_extensions
                   unit/test_elementwise_extensions.cpp
                   math.elementwise_extensions)
