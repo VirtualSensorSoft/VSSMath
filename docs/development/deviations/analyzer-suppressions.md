@@ -142,6 +142,8 @@ annotations.
 | src/linear/LDLT.cpp:431 | readability-suspicious-call-argument | Singleton Schur update | The lower-triangle result is mirrored to its transposed upper-triangle position | The loop computes one symmetric update and the matrix dimensions guarantee valid indices | Reviewed |
 | src/linear/LDLT.cpp:479 | readability-suspicious-call-argument | Two-by-two Schur update | The access reads the pivot-block coefficient for the current trailing column | The trailing-column bounds keep the coefficient within the lower-factor matrix | Reviewed |
 | src/linear/LDLT.cpp:494 | readability-suspicious-call-argument | Two-by-two Schur update | The lower-triangle result is mirrored to its transposed upper-triangle position | The loop computes one symmetric update and the matrix dimensions guarantee valid indices | Reviewed |
+| tests/algorithms/test_ldlt.cpp:78 | readability-suspicious-call-argument | Factor reconstruction test | Matrix multiplication uses the output column as the first coordinate of the final lower-factor access | The reconstruction loops implement the documented `L D Lᵀ` product with explicit row and column roles | Reviewed |
+| tests/algorithms/test_ldlt.cpp:265 | bugprone-exception-escape | LDLT test main | Test assertions intentionally throw when an acceptance check fails | The test harness converts the failed assertion into a nonzero process result | Reviewed |
 
 When a suppression, replace the `None` row with one row per source
 occurrence. Use an exact check name, a single source line, a narrow rationale,

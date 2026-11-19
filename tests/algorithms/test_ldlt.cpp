@@ -1,9 +1,11 @@
 #include "Test.hpp"
 
 #include <cmath>
+#include <cstddef>
 #include <initializer_list>
 #include <limits>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
@@ -43,8 +45,9 @@ SolvePolicy policy(Index maximumIterations = 64U) {
 }
 
 Limits generousLimits() {
-  return {
-      .elements = 1'000'000U, .bytes = 64U * 1024U * 1024U, .evaluations = 0U};
+  return {.elements = 1'000'000U,
+          .bytes = std::size_t{64U} * 1024U * 1024U,
+          .evaluations = 0U};
 }
 
 void checkNear(Scalar actual, Scalar expected) {
@@ -68,9 +71,14 @@ void checkReconstruction(const Matrix& input, const LDLT& factor) {
       for (Index leftColumn = 0U; leftColumn < input.rows(); ++leftColumn) {
         for (Index rightColumn = 0U; rightColumn < input.rows();
              ++rightColumn) {
-          reconstructed += factor.unit_lower.at(row, leftColumn) *
-                           factor.block_d.at(leftColumn, rightColumn) *
-                           factor.unit_lower.at(column, rightColumn);
+          reconstructed +=
+              factor.unit_lower.at(row, leftColumn) *
+              factor.block_d.at(leftColumn, rightColumn) *
+              factor.unit_lower
+                  .at( // NOLINT(readability-suspicious-call-argument):
+                       // reconstructed output column uses the
+                       // first matrix coordinate here
+                      column, rightColumn);
         }
       }
       checkNear(reconstructed, input.at(permutation[row], permutation[column]));
@@ -254,7 +262,8 @@ void factorConstructionDoesNotApplySolveConditionFloor() {
 
 } // namespace
 
-int main() {
+int main() { // NOLINT(bugprone-exception-escape): test assertions deliberately
+             // throw on failure
   factorsIndefiniteExchangeWithOneTwoByTwoPivot();
   supportsMixedBlocksAndNontrivialPermutation();
   appliesTwoByTwoSchurUpdateBeforeFactoringTheRemainder();
