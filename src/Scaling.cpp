@@ -1,6 +1,5 @@
 #include <cmath>
 #include <limits>
-#include <string>
 #include <utility>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
@@ -51,7 +50,7 @@ bool allFinite(ConstMatrixView view) noexcept {
 Scalar product3(Scalar first, Scalar second, Scalar third) noexcept {
   if (first == 0.0 || second == 0.0 || third == 0.0) {
     const bool negative =
-        std::signbit(first) ^ std::signbit(second) ^ std::signbit(third);
+        (std::signbit(first) != std::signbit(second)) != std::signbit(third);
     return std::copysign(0.0, negative ? -1.0 : 1.0);
   }
   int firstExponent = 0;

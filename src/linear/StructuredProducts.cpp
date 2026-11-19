@@ -145,7 +145,7 @@ Result<Scalar> trace(ConstMatrixView value) {
     correction = (next - sum) - adjusted;
     sum = next;
   }
-  const Scalar result = static_cast<Scalar>(sum);
+  const auto result = static_cast<Scalar>(sum);
   if (!isFinite(result)) {
     return failure<Scalar>(ErrorCode::NonFiniteResult,
                            "trace result is non-finite");
