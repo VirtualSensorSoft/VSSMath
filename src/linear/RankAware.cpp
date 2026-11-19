@@ -4,9 +4,11 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
@@ -91,7 +93,7 @@ bool outputReservation(Index columns, Index thin, Index rightHandSides,
       !checkedAdd(scalarBytes, wideBytes, bytes)) {
     return false;
   }
-  const Index ptrdiffLimit =
+  const auto ptrdiffLimit =
       static_cast<Index>(std::numeric_limits<std::ptrdiff_t>::max());
   return parameters <= ptrdiffLimit / sizeof(Scalar) &&
          basis <= ptrdiffLimit / sizeof(Scalar) &&
