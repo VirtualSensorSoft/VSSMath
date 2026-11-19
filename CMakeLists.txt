@@ -43,6 +43,7 @@ add_library(vss_math STATIC
   src/Tensor.cpp
   src/TensorLimits.cpp
   src/TensorShape.cpp
+  src/TensorViews.cpp
   src/Operations.cpp
   src/TensorOperations.cpp
   src/TensorElementwise.cpp
