@@ -40,6 +40,7 @@ add_library(vss_math STATIC
   src/NumericalError.cpp
   src/MomentValidation.cpp
   src/SecondMoment.cpp
+  src/Scaling.cpp
   src/Tensor.cpp
   src/TensorLimits.cpp
   src/TensorShape.cpp
