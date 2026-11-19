@@ -142,6 +142,8 @@ set(vss_expected_files
   include/vss/math/probability/ChiSquare.hpp
   include/vss/math/statistics/Descriptive.hpp
   include/vss/math/linear/Cholesky.hpp
+  include/vss/math/linear/Decomposition.hpp
+  include/vss/math/linear/SolvePolicy.hpp
   include/vss/math/linear/FactorizationOptions.hpp
   include/vss/math/linear/LinearSolve.hpp
   include/vss/math/linear/LU.hpp
