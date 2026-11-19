@@ -150,6 +150,7 @@ annotations.
 | tests/algorithms/test_generalized_symmetric_eigen.cpp:159 | readability-suspicious-call-argument | Repeated-cluster projector | The second access reads another matrix row at the same eigenvector column | The test compares the invariant projector of the two-dimensional repeated eigenspace rather than relying on eigenvector signs | Reviewed |
 
 | tests/algorithms/test_generalized_symmetric_eigen.cpp:261 | bugprone-exception-escape | Generalized eigen test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
+| tests/algorithms/test_null_space.cpp:211 | bugprone-exception-escape | Null-space test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
 
 
 | src/linear/GeneralizedEigen.cpp:102 | readability-suspicious-call-argument | Symmetry allowance | The second matrix access reads the mirrored coordinate | The comparison validates independently symmetric pencil inputs before canonical midpoint construction | Reviewed |
@@ -159,6 +160,7 @@ annotations.
 | src/linear/GeneralizedEigen.cpp:305 | readability-suspicious-call-argument | Right triangular solve | The factor lookup is `L(column, inner)` while solving the right multiplication by `L^T` | The forward column order uses only previously solved transformed entries and valid lower-triangle factor coordinates | Reviewed |
 | src/linear/GeneralizedEigen.cpp:386 | readability-suspicious-call-argument | Eigenvector back-transform | Back substitution for `L^T y=q` reads `L(inner, row)` | Descending row order ensures the referenced higher vector components are already solved | Reviewed |
 | src/linear/GeneralizedEigen.cpp:425 | readability-suspicious-call-argument | Original-unit residual | Residual construction reads component `column` from the current eigenvector column | The eigenvector matrix is row-major by coordinates and stores one eigenpair per column | Reviewed |
+| src/linear/RankAware.cpp:315 | readability-suspicious-call-argument | Right-singular basis transpose | The stored `V^T` row is intentionally copied into a workspace column | SVD defines each right singular vector as a row of `V^T`; the transpose is required for QR completion | Reviewed |
 
 When a suppression, replace the `None` row with one row per source
 occurrence. Use an exact check name, a single source line, a narrow rationale,

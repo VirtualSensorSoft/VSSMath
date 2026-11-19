@@ -41,7 +41,7 @@ while IFS=$'\t' read -r id contract fixtures ctests extra || [[ -n "${id:-}" ]];
   IFS=',' read -r -a fixture_list <<< "$fixtures"
   ((${#fixture_list[@]} > 0)) || { echo "requirement has no fixture: $id" >&2; exit 1; }
   for fixture in "${fixture_list[@]}"; do
-    [[ "$fixture" =~ ^(TRI|LU|QR|CHO|EIG|GEN|LSQ|COV|DIF|STA|PRO)-[0-9]{2}$ || "$fixture" =~ ^SUP-(TRI|LU|QR|EIG|DIF|STA|PRO)-[0-9]{2}$ ]] || {
+    [[ "$fixture" =~ ^(TRI|LU|QR|CHO|EIG|GEN|LSQ|NUL|COV|DIF|STA|PRO)-[0-9]{2}$ || "$fixture" =~ ^SUP-(TRI|LU|QR|EIG|DIF|STA|PRO)-[0-9]{2}$ ]] || {
       echo "invalid public fixture ID '$fixture' for $id" >&2; exit 1;
     }
     if ! grep -R -F -q --include='*.cpp' --include='*.hpp' -- "$fixture" "$root/tests"; then
@@ -57,5 +57,5 @@ while IFS=$'\t' read -r id contract fixtures ctests extra || [[ -n "${id:-}" ]];
     fi
   done
 done < <(tail -n +2 "$requirements")
-[[ "$rows" -eq 97 ]] || { echo "expected 97 numerical requirements, found $rows" >&2; exit 1; }
+[[ "$rows" -eq 98 ]] || { echo "expected 98 numerical requirements, found $rows" >&2; exit 1; }
 printf 'Numerical traceability 1.0.0 checks passed: %s requirements.\n' "$rows"

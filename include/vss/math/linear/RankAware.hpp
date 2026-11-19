@@ -73,6 +73,34 @@ struct LinearEstimate final {
 leastSquaresMinNorm(ConstMatrixView design, ConstMatrixView observations,
                     SolvePolicy policy, Limits limits);
 
+/// @brief Computes an orthonormal basis for the numerical right null space.
+/// @details For an m×n input, the result has shape n×(n-r), where `r` is the
+///          SVD rank under the inclusive cutoff
+///          `tau=max(rank_abs,rank_rel*sigma_max)` in original input units;
+///          singular values are retained only when strictly greater than
+///          `tau`. Discarded thin right singular vectors and structural right
+///          directions of wide matrices are both included. The columns are
+///          orthonormal and span the complement of the retained right-singular
+///          subspace. Rank-rejection and reciprocal-condition solve policies
+///          do not reject this decomposition query. Empty row axes return the
+///          identity basis; full column rank returns an n×0 matrix. A zero
+///          iteration cap succeeds only when the SVD can certify a diagonal
+///          or permuted-diagonal spectrum directly. Factorization, output,
+///          and completion workspace are checked against `limits`; no partial
+///          basis is returned. Complexity is O(m*n*k+n^3), with
+///          O(m*n+n^2) peak storage, where `k=min(m,n)`.
+/// @param input Borrowed finite m×n matrix; it is not modified.
+/// @param policy Original-unit numerical-rank tolerance and SVD iteration cap.
+///                Rank-rejection and reciprocal-condition fields do not apply.
+/// @param limits Maximum simultaneous factor, output, and completion storage.
+/// @return An owned orthonormal right-null basis, or a status including
+///         `InvalidTolerance`, `NonFiniteInput`, `NoConvergence`,
+///         `ResourceLimit`, or `NonFiniteResult` as applicable.
+/// @throws std::bad_alloc if storage within the configured limits cannot be
+///         allocated.
+[[nodiscard]] Result<Matrix> nullSpace(ConstMatrixView input,
+                                       SolvePolicy policy, Limits limits);
+
 } // namespace vss::math::linear
 
 #endif // VSS_MATH_LINEAR_RANK_AWARE_HPP
