@@ -310,8 +310,12 @@ Result<Matrix> nullSpace(ConstMatrixView input, SolvePolicy policy,
   std::vector<Wide> tau(rank, 0.0L);
   for (Index row = 0U; row < columns; ++row) {
     for (Index direction = 0U; direction < rank; ++direction) {
-      reflectors[(row * rank) + direction] =
-          static_cast<Wide>(svd.right_transpose.at(direction, row));
+      reflectors[(row * rank) + direction] = static_cast<Wide>(
+          svd.right_transpose
+              .at( // NOLINT(readability-suspicious-call-argument):
+                   // V transpose stores each right singular vector
+                   // as a row; the completion workspace uses columns.
+                  direction, row));
     }
   }
 
