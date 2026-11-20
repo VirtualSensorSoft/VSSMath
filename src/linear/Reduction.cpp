@@ -83,8 +83,9 @@ Status validateSampleView(const SampleView& samples) {
   }
   for (const std::uint8_t observed : samples.valid) {
     if (observed > 1U) {
-      return Status::failure(ErrorCode::InvalidDomain,
-                             "sample validity mask entries must be zero or one");
+      return Status::failure(
+          ErrorCode::InvalidDomain,
+          "sample validity mask entries must be zero or one");
     }
     if (observed == 0U) {
       return Status::failure(ErrorCode::InvalidDomain,

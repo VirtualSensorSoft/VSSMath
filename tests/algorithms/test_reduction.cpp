@@ -44,7 +44,8 @@ void lowRankApproximation() {
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().singular.size() == 1U);
   VSS_CHECK(result.value().singular.at(0U) == 3.0);
-  VSS_CHECK(result.value().left.rows() == 2U && result.value().left.columns() == 1U);
+  VSS_CHECK(result.value().left.rows() == 2U &&
+            result.value().left.columns() == 1U);
   VSS_CHECK(result.value().right_transpose.rows() == 1U &&
             result.value().right_transpose.columns() == 2U);
   for (Index row = 0U; row < 2U; ++row) {
@@ -70,8 +71,8 @@ void lowRankApproximation() {
   VSS_CHECK(zeroRank.value().residual_frobenius == 3.0);
 
   const Matrix nonzeroMeanInput = matrix({{5.0, 0.0}, {0.0, 3.0}});
-  const auto uncentered = linear::lowRankApproximation(
-      nonzeroMeanInput.view(), 1U, policy(), limits());
+  const auto uncentered = linear::lowRankApproximation(nonzeroMeanInput.view(),
+                                                       1U, policy(), limits());
   VSS_CHECK(uncentered.hasValue());
   VSS_CHECK(uncentered.value().singular.at(0U) == 5.0);
   VSS_CHECK(uncentered.value().residual_frobenius == 3.0);
@@ -106,8 +107,7 @@ void centeredWhitenedPca() {
       matrix({{2.0, 0.0}, {-2.0, 0.0}, {0.0, 1.0}, {0.0, -1.0}});
   const std::array<Index, 1> shape{2U};
   const SampleView sampleView{samples.view(), shape, {}};
-  const auto result =
-      linear::pca(sampleView, 1U, true, policy(), limits());
+  const auto result = linear::pca(sampleView, 1U, true, policy(), limits());
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().center.size() == 2U);
   VSS_CHECK(std::abs(result.value().center.at(0U)) < 1.0e-14);
@@ -135,8 +135,7 @@ void centeredWhitenedPca() {
   VSS_CHECK(!excessive.hasValue());
   VSS_CHECK(excessive.status().code() == ErrorCode::InvalidExtent);
 
-  const auto meanOnly =
-      linear::pca(sampleView, 0U, false, policy(), limits());
+  const auto meanOnly = linear::pca(sampleView, 0U, false, policy(), limits());
   VSS_CHECK(meanOnly.hasValue());
   VSS_CHECK(meanOnly.value().axes.columns() == 0U);
   VSS_CHECK(meanOnly.value().scores.columns() == 0U);
@@ -156,8 +155,8 @@ void centeredWhitenedPca() {
   VSS_CHECK(!insufficient.hasValue());
   VSS_CHECK(insufficient.status().code() == ErrorCode::InsufficientSamples);
 
-  const Matrix translated = matrix(
-      {{12.0, -3.0}, {8.0, -3.0}, {10.0, -2.0}, {10.0, -4.0}});
+  const Matrix translated =
+      matrix({{12.0, -3.0}, {8.0, -3.0}, {10.0, -2.0}, {10.0, -4.0}});
   const SampleView translatedView{translated.view(), shape, {}};
   const auto translatedPca =
       linear::pca(translatedView, 1U, false, policy(), limits());
@@ -189,8 +188,7 @@ void centeredWhitenedPca() {
   VSS_CHECK(!shapeMismatch.hasValue());
   VSS_CHECK(shapeMismatch.status().code() == ErrorCode::DimensionMismatch);
 
-  const std::array<std::uint8_t, 8> missing{1U, 1U, 1U, 1U,
-                                            1U, 1U, 1U, 0U};
+  const std::array<std::uint8_t, 8> missing{1U, 1U, 1U, 1U, 1U, 1U, 1U, 0U};
   const SampleView incomplete{samples.view(), shape, missing};
   const auto missingRejected =
       linear::pca(incomplete, 1U, false, policy(), limits());

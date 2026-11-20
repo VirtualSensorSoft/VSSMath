@@ -441,8 +441,7 @@ int main() {
   const Limits reductionLimits{4096U, 262144U, 64U};
   const auto reduced = linear::lowRankApproximation(reductionInput.view(), 1U,
                                                     glsPolicy, reductionLimits);
-  if (!require(reduced.hasValue() &&
-                   reduced.value().singular.at(0U) == 3.0 &&
+  if (!require(reduced.hasValue() && reduced.value().singular.at(0U) == 3.0 &&
                    reduced.value().residual_frobenius == 0.0,
                "installed low-rank approximation API failed")) {
     return 1;
@@ -467,8 +466,10 @@ int main() {
   propagatedCovariance.at(0U, 0U) = 4.0;
   propagatedCovariance.at(1U, 1U) = 9.0;
   const PropagationResult propagated{
-      Vector{std::array<Scalar, 2U>{2.0, -3.0}}, propagatedCovariance,
-      Approximation::exact, {},
+      Vector{std::array<Scalar, 2U>{2.0, -3.0}},
+      propagatedCovariance,
+      Approximation::exact,
+      {},
       PropagationCovarianceCheck::positive_semidefinite};
   const auto uncertainty = covariance::summarizeUncertainty(
       propagated, 2.0, std::nullopt, std::nullopt, reductionLimits);

@@ -4,10 +4,10 @@
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MatrixView.hpp>
-#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 
 namespace vss::math {
 
