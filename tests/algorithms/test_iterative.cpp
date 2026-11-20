@@ -2,12 +2,19 @@
 
 #include <array>
 #include <cmath>
+#include <exception>
+#include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/linear/Iterative.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
+#include <vss/math/linear/Structured.hpp>
 
 namespace {
 
@@ -174,7 +181,7 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
       std::array<Scalar, 3U> result{};
       for (Index row = 0U; row < 3U; ++row) {
         for (Index column = 0U; column < 3U; ++column) {
-          result[row] += matrix[row * 3U + column] * x.at(column);
+          result.at(row) += matrix.at(row * 3U + column) * x.at(column);
         }
       }
       return Result<Vector>::success(Vector(result));
@@ -185,7 +192,7 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
     std::array<Scalar, 3U> result{};
     for (Index row = 0U; row < 3U; ++row) {
       for (Index column = 0U; column < 3U; ++column) {
-        result[row] += matrix[row * 3U + column] * x[column];
+        result.at(row) += matrix.at(row * 3U + column) * x.at(column);
       }
     }
     return Vector(result);
@@ -203,7 +210,7 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
       linear::cg(spd, spd_rhs.view(), zero.view(), &jacobi, policy(), ample);
   VSS_CHECK(cg_result.hasValue());
   for (Index i = 0U; i < 3U; ++i) {
-    VSS_CHECK(std::abs(cg_result.value().value.at(i) - expected[i]) < 1e-11);
+    VSS_CHECK(std::abs(cg_result.value().value.at(i) - expected.at(i)) < 1e-11);
   }
 
   const std::array<Scalar, 9U> indefinite_values{0.0, 1.0, 0.0, 1.0, 0.0,
@@ -214,7 +221,7 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
       indefinite, indefinite_rhs.view(), zero.view(), nullptr, policy(), ample);
   VSS_CHECK(minres_result.hasValue());
   for (Index i = 0U; i < 3U; ++i) {
-    VSS_CHECK(std::abs(minres_result.value().value.at(i) - expected[i]) <
+    VSS_CHECK(std::abs(minres_result.value().value.at(i) - expected.at(i)) <
               1e-11);
   }
 
@@ -228,7 +235,8 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
       general, general_rhs.view(), zero.view(), nullptr, full_restart, ample);
   VSS_CHECK(gmres_result.hasValue());
   for (Index i = 0U; i < 3U; ++i) {
-    VSS_CHECK(std::abs(gmres_result.value().value.at(i) - expected[i]) < 1e-11);
+    VSS_CHECK(std::abs(gmres_result.value().value.at(i) - expected.at(i)) <
+              1e-11);
   }
 }
 
@@ -351,10 +359,14 @@ void validatesCallbacksPoliciesAndBreakdown() {
 
 } // namespace
 
-int main() {
+int main() try {
   solvesWithAllThreeMethods();
   returnsVerifiedInitialAndCappedIterates();
   reportsCurvatureBreakdownAndRestartedRightPreconditioning();
   handlesThreeDimensionalSystemsAgainstKnownSolutions();
   validatesCallbacksPoliciesAndBreakdown();
+  return 0;
+} catch (const std::exception& error) {
+  std::cerr << error.what() << '\n';
+  return 1;
 }
