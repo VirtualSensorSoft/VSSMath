@@ -1,759 +1,1751 @@
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <linear/DenseWorkspace.hpp>
+#include <numeric>
+#include <optional>
+#include <span>
+#include <string>
 #include <utility>
 #include <vector>
-#include <vss/math/covariance/Covariance.hpp>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/covariance/Structured.hpp>
+#include <vss/math/linear/RankAware.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 
 namespace vss::math::covariance {
 namespace {
-template <class T> Result<T> fail(ErrorCode c, const char* m) {
-  return Result<T>::failure(c, m);
-}
-bool mul(Index a, Index b, Index& out) {
-  if (a && b > std::numeric_limits<Index>::max() / a)
-    return false;
-  out = a * b;
-  return true;
-}
-bool add(Index a, Index b, Index& out) {
-  if (b > std::numeric_limits<Index>::max() - a)
-    return false;
-  out = a + b;
-  return true;
-}
-bool validPolicy(SolvePolicy p) {
-  return std::isfinite(p.rank_abs) && p.rank_abs >= 0.0 &&
-         std::isfinite(p.rank_rel) && p.rank_rel >= 0.0 &&
-         std::isfinite(p.reciprocal_condition_floor) &&
-         p.reciprocal_condition_floor >= 0.0 &&
-         p.reciprocal_condition_floor <= 1.0 &&
-         (p.rank == RankPolicy::reject ||
-          p.rank == RankPolicy::supported_subspace ||
-          p.rank == RankPolicy::minimum_norm);
-}
-bool finite(ConstVectorView v) {
-  for (Index i = 0; i < v.size(); ++i)
-    if (!std::isfinite(v.at(i)))
-      return false;
-  return true;
-}
-bool finite(ConstMatrixView m) {
-  for (Index i = 0; i < m.rows(); ++i)
-    for (Index j = 0; j < m.columns(); ++j)
-      if (!std::isfinite(m.at(i, j)))
-        return false;
-  return true;
-}
-bool empty(ConstVectorView v) { return v.size() == 0; }
 
-Result<Vector> applyRaw(const StructuredCovariance& s, ConstVectorView x,
-                        Limits lim) {
-  if (static_cast<unsigned>(s.kind) >
-      static_cast<unsigned>(StructureKind::gaussian_kernel))
-    return fail<Vector>(ErrorCode::InvalidDomain,
-                        "unknown covariance structure");
-  if (x.size() != s.dimension)
-    return fail<Vector>(ErrorCode::DimensionMismatch,
-                        "structured covariance vector dimension mismatch");
-  if (!finite(x))
-    return fail<Vector>(ErrorCode::NonFiniteInput,
-                        "structured covariance vector is non-finite");
-  if (s.dimension > lim.elements || s.dimension > lim.bytes / sizeof(Scalar))
-    return fail<Vector>(ErrorCode::ResourceLimit,
-                        "structured covariance output exceeds limits");
-  if (s.kind == StructureKind::kronecker) {
-    if (!s.diagonal_or_lags.empty() || s.low_rank_or_points || s.kernel_scale ||
-        s.kernel_length)
-      return fail<Vector>(ErrorCode::InvalidDomain,
-                          "inactive Kronecker covariance fields are populated");
-    Index dimension = 1U;
-    std::vector<Index> extents;
-    extents.reserve(s.factors.view().size());
-    for (const Matrix& factor : s.factors.view()) {
-      if (factor.rows() != factor.columns() || !finite(factor.view()) ||
-          !mul(dimension, factor.rows(), dimension))
-        return fail<Vector>(ErrorCode::InvalidDomain,
-                            "invalid Kronecker covariance payload");
-      extents.push_back(factor.rows());
+using linear::LinearEstimate;
+using linear::detail::representable;
+using linear::detail::Wide;
+using WideVector = std::vector<Wide>;
+
+constexpr Wide epsilon = std::numeric_limits<Scalar>::epsilon();
+constexpr Wide wide_epsilon = std::numeric_limits<Wide>::epsilon();
+constexpr Wide infinity = std::numeric_limits<Wide>::infinity();
+
+template <class T> Result<T> fail(ErrorCode code, const char* message) {
+  return Result<T>::failure(code, message);
+}
+
+template <class T> Result<T> forward(const Status& status) {
+  return Result<T>::failure(status.code(), std::string(status.message()));
+}
+
+template <class T> bool reserve(Limits& limits, Index rows, Index columns = 1) {
+  if (columns == 0 || rows == 0) {
+    return true;
+  }
+  if (rows >
+      std::min({limits.elements, limits.bytes / sizeof(T),
+                static_cast<Index>(std::numeric_limits<std::ptrdiff_t>::max()) /
+                    sizeof(T)}) /
+          columns) {
+    return false;
+  }
+  const auto size = rows * columns;
+  limits.elements -= size;
+  limits.bytes -= size * sizeof(T);
+  return true;
+}
+
+bool finite(ConstVectorView input) {
+  for (Index i = 0; i < input.size(); ++i) {
+    if (!std::isfinite(input.at(i))) {
+      return false;
     }
-    if (dimension != s.dimension ||
-        (s.factors.view().empty() && s.dimension != 1U))
-      return fail<Vector>(ErrorCode::InvalidDomain,
-                          "Kronecker factors disagree with stored dimension");
-    Index scratch = 0U;
-    if (!mul(s.dimension, 2U, scratch) || scratch > lim.elements ||
-        scratch > lim.bytes / sizeof(Scalar))
-      return fail<Vector>(ErrorCode::ResourceLimit,
-                          "Kronecker mode-product buffers exceed limits");
-    Vector current(s.dimension, 0.0), next(s.dimension, 0.0);
-    for (Index i = 0U; i < s.dimension; ++i)
-      current.data()[i] = x.at(i);
-    Index suffix_stride = s.dimension;
-    for (Index axis = 0U; axis < extents.size(); ++axis) {
-      const Index extent = extents[axis];
-      if (extent == 0U)
-        return Result<Vector>::success(Vector{});
-      suffix_stride /= extent;
-      const Index outer_count = s.dimension / (extent * suffix_stride);
-      const Matrix& factor = s.factors.view()[axis];
-      for (Index outer = 0U; outer < outer_count; ++outer) {
-        const Index base = outer * extent * suffix_stride;
-        for (Index row = 0U; row < extent; ++row) {
-          for (Index inner = 0U; inner < suffix_stride; ++inner) {
-            long double sum = 0.0L;
-            for (Index column = 0U; column < extent; ++column)
-              sum += static_cast<long double>(factor.at(row, column)) *
-                     current.at(base + column * suffix_stride + inner);
-            if (!std::isfinite(sum) ||
-                std::abs(sum) > std::numeric_limits<Scalar>::max())
-              return fail<Vector>(ErrorCode::NonFiniteResult,
-                                  "Kronecker mode product is not representable");
-            next.data()[base + row * suffix_stride + inner] =
-                static_cast<Scalar>(sum);
+  }
+  return true;
+}
+
+bool finite(ConstMatrixView input) {
+  for (Index i = 0; i < input.rows(); ++i) {
+    for (Index j = 0; j < input.columns(); ++j) {
+      if (!std::isfinite(input.at(i, j))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+Index bandwidth(ConstVectorView lags) {
+  Index size = lags.size();
+  while (size > 1 && lags.at(size - 1) == 0) {
+    --size;
+  }
+  return size == 0 ? 0 : size - 1;
+}
+
+Wide symmetricEntry(const Matrix& factor, Index i, Index j) {
+  return (static_cast<Wide>(factor.at(i, j)) + factor.at(j, i)) / 2;
+}
+
+Result<Index> validate(const StructuredSpec& spec) {
+  const auto lags = spec.diagonal_or_lags;
+  const bool kernel = spec.kind == StructureKind::gaussian_kernel;
+  const bool low_rank = spec.kind == StructureKind::diagonal_low_rank;
+  const bool product = spec.kind == StructureKind::kronecker;
+  const bool factors = product || spec.kind == StructureKind::block;
+  if (!low_rank && !kernel && !factors &&
+      spec.kind != StructureKind::toeplitz) {
+    return fail<Index>(ErrorCode::InvalidDomain,
+                       "unknown covariance structure");
+  }
+  if ((!low_rank && spec.kind != StructureKind::toeplitz && !lags.empty()) ||
+      (!low_rank && !kernel && spec.low_rank_or_points) ||
+      (!factors && !spec.factors.empty()) ||
+      (!kernel && (spec.kernel_scale || spec.kernel_length))) {
+    return fail<Index>(ErrorCode::InvalidDomain,
+                       "inactive covariance fields are populated");
+  }
+  if (!finite(lags) ||
+      (spec.low_rank_or_points && !finite(*spec.low_rank_or_points)) ||
+      (spec.kernel_scale && !std::isfinite(*spec.kernel_scale)) ||
+      (spec.kernel_length && !std::isfinite(*spec.kernel_length))) {
+    return fail<Index>(ErrorCode::NonFiniteInput,
+                       "structured covariance data are non-finite");
+  }
+  if (kernel) {
+    if (!spec.low_rank_or_points || spec.low_rank_or_points->columns() == 0 ||
+        !spec.kernel_scale || *spec.kernel_scale < 0 || !spec.kernel_length ||
+        *spec.kernel_length <= 0) {
+      return fail<Index>(ErrorCode::InvalidDomain,
+                         "invalid Gaussian kernel parameters");
+    }
+    return Result<Index>::success(spec.low_rank_or_points->rows());
+  }
+  if (!factors) {
+    if (low_rank && spec.low_rank_or_points &&
+        spec.low_rank_or_points->rows() != lags.size()) {
+      return fail<Index>(ErrorCode::DimensionMismatch,
+                         "low rank factor height differs from diagonal");
+    }
+    const Index diagonals =
+        low_rank ? lags.size() : std::min<Index>(1, lags.size());
+    for (Index i = 0; i < diagonals; ++i) {
+      if (lags.at(i) < 0) {
+        return fail<Index>(ErrorCode::NotPositiveSemidefinite,
+                           "covariance diagonal is negative");
+      }
+    }
+    return Result<Index>::success(lags.size());
+  }
+
+  const bool zero_product =
+      product && std::ranges::any_of(spec.factors, [](const Matrix& factor) {
+        return factor.rows() == 0;
+      });
+  Index n = product && !zero_product ? 1 : 0;
+  for (const auto& factor : spec.factors) {
+    const Index order = factor.rows();
+    if (order != factor.columns()) {
+      return fail<Index>(ErrorCode::DimensionMismatch,
+                         "covariance factor must be square");
+    }
+    if (!finite(factor.view())) {
+      return fail<Index>(ErrorCode::NonFiniteInput,
+                         "covariance factor is non-finite");
+    }
+    Wide scale = 0;
+    for (const auto value : std::span(factor.data(), factor.size())) {
+      scale = std::max(scale, std::abs(static_cast<Wide>(value)));
+    }
+    const Wide allowance = 64 * epsilon * static_cast<Wide>(order) * scale;
+    for (Index i = 0; i < order; ++i) {
+      for (Index j = 0; j < i; ++j) {
+        if (std::abs(static_cast<Wide>(factor.at(i, j)) - factor.at(j, i)) >
+            allowance) {
+          return fail<Index>(ErrorCode::NotSymmetric,
+                             "covariance factor is asymmetric");
+        }
+      }
+    }
+    if (product && !zero_product) {
+      if (n > std::numeric_limits<Index>::max() / order) {
+        return fail<Index>(ErrorCode::SizeOverflow,
+                           "Kronecker order overflows");
+      }
+      n *= order;
+    } else if (!product) {
+      if (order > std::numeric_limits<Index>::max() - n) {
+        return fail<Index>(ErrorCode::SizeOverflow,
+                           "block covariance order overflows");
+      }
+      n += order;
+    }
+  }
+  return Result<Index>::success(n);
+}
+
+StructuredSpec borrow(const StructuredCovariance& value) {
+  return {
+      .kind = value.kind,
+      .diagonal_or_lags = value.diagonal_or_lags.view(),
+      .low_rank_or_points =
+          value.low_rank_or_points
+              ? std::optional<ConstMatrixView>{value.low_rank_or_points->view()}
+              : std::nullopt,
+      .factors = value.factors.view(),
+      .kernel_scale = value.kernel_scale,
+      .kernel_length = value.kernel_length};
+}
+
+template <class Term> Wide sum(Index count, const Term& term) {
+  Wide total = 0;
+  Wide correction = 0;
+  for (Index i = 0; i < count; ++i) {
+    const Wide value = term(i);
+    const Wide next = total + value;
+    correction += std::abs(total) >= std::abs(value) ? (total - next) + value
+                                                     : (value - next) + total;
+    total = next;
+  }
+  return total + correction;
+}
+
+Wide norm(std::span<const Wide> values) {
+  Wide result = 0;
+  for (const Wide value : values) {
+    result = std::hypot(result, value);
+  }
+  return result;
+}
+
+Wide kernelEntry(const StructuredSpec& spec, Index i, Index j) {
+  const Matrix empty_points;
+  const auto points = spec.low_rank_or_points.value_or(empty_points.view());
+  const Wide length = spec.kernel_length.value_or(1);
+  const Wide distance = sum(points.columns(), [&](Index k) {
+    const Wide scaled =
+        (static_cast<Wide>(points.at(i, k)) - points.at(j, k)) / length;
+    return scaled * scaled;
+  });
+  return static_cast<Wide>(spec.kernel_scale.value_or(0)) *
+         std::exp(-distance / 2);
+}
+
+template <class Entry>
+void axisProduct(std::span<const Wide> input, std::span<Wide> output,
+                 Index order, Index stride, const Entry& entry) {
+  const Index slab = order * stride;
+  for (Index base = 0; base < input.size(); base += slab) {
+    for (Index row = 0; row < order; ++row) {
+      for (Index inner = 0; inner < stride; ++inner) {
+        output[base + row * stride + inner] = sum(order, [&](Index col) {
+          return entry(row, col) * input[base + col * stride + inner];
+        });
+      }
+    }
+  }
+}
+
+class Action final {
+public:
+  Action(StructuredSpec spec, Index order, std::span<Wide> scratch)
+      : spec_(spec), n_(order), bandwidth_(bandwidth(spec.diagonal_or_lags)),
+        scratch_(scratch) {}
+
+  static Index scratchSize(const StructuredSpec& spec, Index n) {
+    if (n == 0) {
+      return 0;
+    }
+    if (spec.kind == StructureKind::kronecker && spec.factors.size() > 1) {
+      return n;
+    }
+    return spec.kind == StructureKind::diagonal_low_rank &&
+                   spec.low_rank_or_points
+               ? spec.low_rank_or_points->columns()
+               : 0;
+  }
+
+  void operator()(std::span<const Wide> input, std::span<Wide> output) const {
+    if (n_ == 0) {
+      return;
+    }
+    switch (spec_.kind) {
+    case StructureKind::diagonal_low_rank: {
+      const auto d = spec_.diagonal_or_lags;
+      if (spec_.low_rank_or_points) {
+        const auto u = *spec_.low_rank_or_points;
+        for (Index j = 0; j < u.columns(); ++j) {
+          scratch_[j] = sum(n_, [&](Index i) { return u.at(i, j) * input[i]; });
+        }
+        for (Index i = 0; i < n_; ++i) {
+          output[i] = sum(u.columns() + 1, [&](Index j) {
+            return j == u.columns() ? d.at(i) * input[i]
+                                    : u.at(i, j) * scratch_[j];
+          });
+        }
+      } else {
+        for (Index i = 0; i < n_; ++i) {
+          output[i] = d.at(i) * input[i];
+        }
+      }
+      return;
+    }
+    case StructureKind::toeplitz:
+      for (Index i = 0; i < n_; ++i) {
+        const Index first = i - std::min(i, bandwidth_);
+        const Index last = i + std::min(n_ - i - 1, bandwidth_);
+        output[i] = sum(last - first + 1, [&](Index offset) {
+          const Index j = first + offset;
+          return spec_.diagonal_or_lags.at(i < j ? j - i : i - j) * input[j];
+        });
+      }
+      return;
+    case StructureKind::block: {
+      Index first = 0;
+      for (const auto& factor : spec_.factors) {
+        for (Index i = 0; i < factor.rows(); ++i) {
+          output[first + i] = sum(factor.rows(), [&](Index j) {
+            return symmetricEntry(factor, i, j) * input[first + j];
+          });
+        }
+        first += factor.rows();
+      }
+      return;
+    }
+    case StructureKind::kronecker:
+      kronecker(input, output);
+      return;
+    case StructureKind::gaussian_kernel:
+      for (Index i = 0; i < n_; ++i) {
+        output[i] = sum(
+            n_, [&](Index j) { return kernelEntry(spec_, i, j) * input[j]; });
+      }
+      return;
+    }
+  }
+
+private:
+  void kronecker(std::span<const Wide> source, std::span<Wide> output) const {
+    Index stride = n_;
+    std::int64_t exponent = 0;
+    for (Index i = 0; i < spec_.factors.size(); ++i) {
+      const auto& factor = spec_.factors[i];
+      stride /= factor.rows();
+      const auto target =
+          ((spec_.factors.size() - i) % 2 == 1) ? output : scratch_;
+      axisProduct(source, target, factor.rows(), stride,
+                  [&](Index row, Index col) {
+                    return symmetricEntry(factor, row, col);
+                  });
+      Wide scale = 0;
+      for (const Wide value : target) {
+        scale = std::max(scale, std::abs(value));
+      }
+      if (scale != 0) {
+        const int shift = std::ilogb(scale);
+        exponent += shift;
+        for (Wide& value : target) {
+          value = std::scalbn(value, -shift);
+        }
+      }
+      source = target;
+    }
+    if (spec_.factors.empty()) {
+      output.front() = source.front();
+      return;
+    }
+    for (Wide& value : output) {
+      if (value != 0 && exponent != 0) {
+        const auto shift =
+            std::clamp(exponent, static_cast<std::int64_t>(-32768),
+                       static_cast<std::int64_t>(32768));
+        value = std::scalbn(value, static_cast<int>(shift));
+      }
+    }
+  }
+
+  StructuredSpec spec_;
+  Index n_;
+  Index bandwidth_;
+  std::span<Wide> scratch_;
+};
+
+struct Mode final {
+  Wide value{};
+  Wide lower{};
+  Wide upper{};
+};
+
+Mode exact(Wide value) { return {value, value, value}; }
+
+Mode enclosed(Wide value, Wide error) {
+  if (error == 0) {
+    return exact(value);
+  }
+  return {value, std::nextafter(value - error, -infinity),
+          std::nextafter(value + error, infinity)};
+}
+
+struct Spectrum final {
+  std::vector<Mode> values;
+  Matrix basis; // An empty basis denotes the coordinate basis.
+};
+
+Wide basisEntry(const Spectrum& spectrum, Index coordinate, Index mode) {
+  if (spectrum.basis.empty()) {
+    return coordinate == mode ? 1 : 0;
+  }
+  return spectrum.basis.at(coordinate, mode);
+}
+
+struct Bounds final {
+  Wide lower{};
+  Wide upper{};
+};
+
+template <class Term> Wide frobenius(Index n, const Term& term) {
+  Wide result = 0;
+  for (Index i = 0; i < n; ++i) {
+    for (Index j = 0; j < n; ++j) {
+      result = std::hypot(result, term(i, j));
+    }
+  }
+  return result;
+}
+
+template <class Entry, class Image>
+Wide symmetricError(ConstMatrixView basis, std::span<const Mode> values,
+                    const Entry& entry, const Image& image, Wide action_error) {
+  const Index n = basis.rows();
+  const Wide gram = frobenius(n, [&](Index i, Index j) {
+    return sum(n,
+               [&](Index k) {
+                 return static_cast<Wide>(basis.at(k, i)) * basis.at(k, j);
+               }) -
+           (i == j ? 1 : 0);
+  });
+  const Wide roundoff = 32 * wide_epsilon * static_cast<Wide>(n);
+  const Wide delta = gram + roundoff * static_cast<Wide>(n);
+  if (delta >= 0.5L) {
+    return infinity;
+  }
+  const Wide residual = frobenius(n, [&](Index i, Index j) {
+    return image(i, j) - basis.at(i, j) * values[j].value;
+  });
+  Wide largest = 0;
+  for (const Mode mode : values) {
+    largest = std::max(largest, std::abs(mode.value));
+  }
+  const Wide matrix_norm = frobenius(n, entry);
+  const Wide polar = delta / (1 + std::sqrt(1 - delta));
+  return std::nextafter(
+      (residual + action_error + roundoff * matrix_norm + 2 * polar * largest) /
+          std::sqrt(1 - delta),
+      infinity);
+}
+
+bool reserveEigenScratch(Limits limits, Index n) {
+  // Jacobi working copy, computed and sorted bases, values and sort indices.
+  for (Index matrix = 0; matrix < 3; ++matrix) {
+    if (!reserve<Scalar>(limits, n, n)) {
+      return false;
+    }
+  }
+  return reserve<Scalar>(limits, n, 2) && reserve<Index>(limits, n, 2);
+}
+
+template <class Entry>
+Result<Spectrum> symmetricSpectrum(Index n, const Entry& entry,
+                                   SolvePolicy policy, Limits limits) {
+  if (!reserve<Mode>(limits, n)) {
+    return fail<Spectrum>(ErrorCode::ResourceLimit,
+                          "covariance spectrum exceeds limits");
+  }
+  bool diagonal = true;
+  Wide scale = 0;
+  for (Index i = 0; i < n; ++i) {
+    for (Index j = 0; j <= i; ++j) {
+      const Wide value = entry(i, j);
+      diagonal = diagonal && (i == j || value == 0);
+      scale = std::max(scale, std::abs(value));
+    }
+  }
+  Spectrum result{.values = std::vector<Mode>(n), .basis = {}};
+  if (diagonal) {
+    for (Index i = 0; i < n; ++i) {
+      result.values[i] = exact(entry(i, i));
+    }
+    return Result<Spectrum>::success(std::move(result));
+  }
+  if (policy.iteration.max_iterations == 0) {
+    return fail<Spectrum>(ErrorCode::NoConvergence,
+                          "covariance eigensystem requires iterations");
+  }
+  if (!reserve<Scalar>(limits, n, n) || !reserveEigenScratch(limits, n)) {
+    return fail<Spectrum>(ErrorCode::ResourceLimit,
+                          "covariance eigensystem exceeds limits");
+  }
+  const int exponent = std::ilogb(scale);
+  Matrix scaled(n, n);
+  Wide conversion_error = 0;
+  for (Index i = 0; i < n; ++i) {
+    for (Index j = 0; j <= i; ++j) {
+      const Wide value = std::scalbn(entry(i, j), -exponent);
+      const auto converted = static_cast<Scalar>(value);
+      conversion_error = std::hypot(conversion_error, value - converted);
+      if (i != j) {
+        conversion_error = std::hypot(conversion_error, value - converted);
+      }
+      scaled.at(i, j) = converted;
+      scaled.at(j, i) = converted;
+    }
+  }
+  auto eigen = linear::decomposeSymmetricEigen(
+      scaled.view(), {.rankTolerance = {.absolute = 0, .relative = 0},
+                      .symmetryTolerance = {.absolute = 0, .relative = 0},
+                      .maximumSweeps = policy.iteration.max_iterations});
+  if (!eigen.hasValue()) {
+    return forward<Spectrum>(eigen.status());
+  }
+  result.basis = Matrix(n, n);
+  for (Index i = 0; i < n; ++i) {
+    result.values[i] = exact(eigen.value().eigenvalues().at(i));
+    for (Index j = 0; j < n; ++j) {
+      result.basis.at(j, i) = eigen.value().eigenvectors().at(j, i);
+    }
+  }
+  const Wide error = symmetricError(
+      result.basis.view(), result.values,
+      [&](Index i, Index j) { return scaled.at(i, j); },
+      [&](Index i, Index j) {
+        return sum(n, [&](Index k) {
+          return static_cast<Wide>(scaled.at(i, k)) * result.basis.at(k, j);
+        });
+      },
+      conversion_error);
+  if (!std::isfinite(error)) {
+    return fail<Spectrum>(ErrorCode::NoConvergence,
+                          "covariance spectrum error is unbounded");
+  }
+  for (Mode& value : result.values) {
+    value = enclosed(std::scalbn(value.value, exponent),
+                     std::scalbn(error, exponent));
+  }
+  Index pivot = 0;
+  for (Index i = 1; i < n; ++i) {
+    if (std::abs(entry(i, i)) > std::abs(entry(pivot, pivot))) {
+      pivot = i;
+    }
+  }
+  const auto exactProduct = [](Wide lhs, Wide rhs) {
+    const Wide product = lhs * rhs;
+    return std::pair{product, std::fma(lhs, rhs, -product)};
+  };
+  const Wide leading = entry(pivot, pivot);
+  bool rank_one = leading > 0;
+  for (Index i = 0; rank_one && i < n; ++i) {
+    for (Index j = 0; j <= i; ++j) {
+      if (exactProduct(leading, entry(i, j)) !=
+          exactProduct(entry(i, pivot), entry(pivot, j))) {
+        rank_one = false;
+        break;
+      }
+    }
+  }
+  if (rank_one && result.values.back().lower > 0) {
+    for (Index i = 0; i + 1 < n; ++i) {
+      result.values[i] = exact(0);
+    }
+  }
+  return Result<Spectrum>::success(std::move(result));
+}
+
+Status certifyPsd(std::span<const Mode> values) {
+  Wide scale = 0;
+  for (const Mode mode : values) {
+    scale = std::max({scale, std::abs(mode.lower), std::abs(mode.upper)});
+  }
+  const Wide slack = 64 * epsilon * static_cast<Wide>(values.size()) * scale;
+  for (const Mode mode : values) {
+    if (mode.upper < -slack) {
+      return Status::failure(ErrorCode::NotPositiveSemidefinite,
+                             "covariance has a negative eigenvalue");
+    }
+    if (mode.lower < -slack) {
+      return Status::failure(ErrorCode::NoConvergence,
+                             "covariance definiteness is unresolved");
+    }
+  }
+  return Status::success();
+}
+
+Mode nonnegative(Mode mode) {
+  return {std::max<Wide>(0, mode.value), std::max<Wide>(0, mode.lower),
+          std::max<Wide>(0, mode.upper)};
+}
+
+Bounds extremes(std::span<const Mode> values) {
+  Bounds result{infinity, 0};
+  for (const Mode mode : values) {
+    result.lower = std::min(result.lower, mode.lower);
+    result.upper = std::max(result.upper, mode.upper);
+  }
+  return result;
+}
+
+Result<Spectrum> lowRankSpectrum(const StructuredSpec& spec, SolvePolicy policy,
+                                 Limits limits) {
+  const Index n = spec.diagonal_or_lags.size();
+  const Matrix empty_updates;
+  const auto updates = spec.low_rank_or_points.value_or(empty_updates.view());
+  if (updates.columns() > std::numeric_limits<Index>::max() - n) {
+    return fail<Spectrum>(ErrorCode::SizeOverflow,
+                          "low rank factor width overflows");
+  }
+  const Index width = n + updates.columns();
+  if (!reserve<Scalar>(limits, n, width) || !reserve<Mode>(limits, n)) {
+    return fail<Spectrum>(ErrorCode::ResourceLimit,
+                          "low rank factor exceeds limits");
+  }
+  Matrix factor(n, width);
+  Wide scale = 0;
+  for (Index i = 0; i < n; ++i) {
+    scale = std::max(scale,
+                     std::sqrt(static_cast<Wide>(spec.diagonal_or_lags.at(i))));
+    for (Index j = 0; j < updates.columns(); ++j) {
+      scale = std::max(scale, std::abs(static_cast<Wide>(updates.at(i, j))));
+    }
+  }
+  const int exponent = scale == 0 ? 0 : std::ilogb(scale);
+  Wide conversion_error = 0;
+  for (Index i = 0; i < n; ++i) {
+    const Wide root = std::scalbn(
+        std::sqrt(static_cast<Wide>(spec.diagonal_or_lags.at(i))), -exponent);
+    factor.at(i, i) = static_cast<Scalar>(root);
+    const Wide root_error =
+        std::abs(root - factor.at(i, i)) +
+        (std::fma(root, root,
+                  -std::scalbn(static_cast<Wide>(spec.diagonal_or_lags.at(i)),
+                               -2 * exponent)) == 0
+             ? 0
+             : wide_epsilon * root);
+    conversion_error = std::hypot(conversion_error, root_error);
+    for (Index j = 0; j < updates.columns(); ++j) {
+      const Wide value =
+          std::scalbn(static_cast<Wide>(updates.at(i, j)), -exponent);
+      factor.at(i, n + j) = static_cast<Scalar>(value);
+      conversion_error =
+          std::hypot(conversion_error, value - factor.at(i, n + j));
+    }
+  }
+  auto bounded = linear::detail::boundedSVD(factor.view(), policy, limits);
+  if (!bounded.hasValue()) {
+    return forward<Spectrum>(bounded.status());
+  }
+  const auto& decomposition = bounded.value();
+  const Wide error = decomposition.error + conversion_error;
+  Spectrum result{.values = std::vector<Mode>(n),
+                  .basis = std::move(bounded.value().factors.left)};
+  const Index possible_rank =
+      conversion_error == 0
+          ? decomposition.rank_upper
+          : static_cast<Index>(
+                std::count_if(std::span(factor.data(), factor.size()).begin(),
+                              std::span(factor.data(), factor.size()).end(),
+                              [](Scalar value) { return value != 0; }));
+  for (Index i = 0; i < std::min(n, possible_rank); ++i) {
+    const Wide value = std::scalbn(
+        static_cast<Wide>(decomposition.factors.singular.at(i)), exponent);
+    const Wide width_error = std::scalbn(error, exponent);
+    const Wide lower = std::max<Wide>(0, value - width_error);
+    const Wide upper = value + width_error;
+    result.values[i] =
+        width_error == 0
+            ? exact(value * value)
+            : Mode{value * value, std::nextafter(lower * lower, Wide{0}),
+                   std::nextafter(upper * upper, infinity)};
+  }
+  return Result<Spectrum>::success(std::move(result));
+}
+
+bool repeatedPoints(ConstMatrixView points) {
+  for (Index i = 1; i < points.rows(); ++i) {
+    for (Index j = 0; j < points.columns(); ++j) {
+      if (points.at(i, j) != points.at(0, j)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+Result<Spectrum> projectedSpectrum(const StructuredSpec& spec, Index n,
+                                   SolvePolicy policy, Limits limits) {
+  if (!reserve<Wide>(limits, n, n) || !reserve<Wide>(limits, n, n + 1) ||
+      !reserve<Wide>(limits, Action::scratchSize(spec, n)) ||
+      !reserve<Scalar>(limits, n, n)) {
+    return fail<Spectrum>(ErrorCode::ResourceLimit,
+                          "Krylov projection exceeds limits");
+  }
+  WideVector basis(n * n);
+  WideVector images(n * n);
+  WideVector work(n);
+  WideVector scratch(Action::scratchSize(spec, n));
+  const Action apply(spec, n, scratch);
+  const auto column = [n](WideVector& values, Index j) {
+    return std::span(values).subspan(j * n, n);
+  };
+  Index coordinate = 0;
+  work.front() = 1;
+  for (Index j = 0; j < n; ++j) {
+    Wide length = 0;
+    while (true) {
+      const Wide initial = norm(work);
+      for (Index pass = 0; pass < 2; ++pass) {
+        for (Index k = 0; k < j; ++k) {
+          const auto q = column(basis, k);
+          const Wide projection =
+              sum(n, [&](Index i) { return q[i] * work[i]; });
+          for (Index i = 0; i < n; ++i) {
+            work[i] = std::fma(-q[i], projection, work[i]);
           }
         }
       }
-      std::swap(current, next);
-    }
-    return Result<Vector>::success(std::move(current));
-  }
-  Vector y(s.dimension, 0.0);
-  switch (s.kind) {
-  case StructureKind::diagonal_low_rank: {
-    if (s.diagonal_or_lags.size() != s.dimension ||
-        !finite(s.diagonal_or_lags.view()))
-      return fail<Vector>(ErrorCode::InvalidDomain,
-                          "invalid diagonal covariance payload");
-    for (Index i = 0; i < s.dimension; ++i)
-      y.data()[i] = s.diagonal_or_lags.at(i) * x.at(i);
-    if (s.low_rank_or_points) {
-      const auto& u = *s.low_rank_or_points;
-      if (u.rows() != s.dimension || !finite(u.view()))
-        return fail<Vector>(ErrorCode::InvalidDomain,
-                            "invalid low-rank covariance payload");
-      for (Index j = 0; j < u.columns(); ++j) {
-        long double dot = 0;
-        for (Index i = 0; i < s.dimension; ++i)
-          dot += static_cast<long double>(u.at(i, j)) * x.at(i);
-        for (Index i = 0; i < s.dimension; ++i)
-          y.data()[i] =
-              static_cast<Scalar>(static_cast<long double>(y.at(i)) +
-                                  static_cast<long double>(u.at(i, j)) * dot);
+      length = norm(work);
+      if (length > 64 * wide_epsilon * static_cast<Wide>(n) * initial) {
+        break;
       }
+      if (coordinate == n) {
+        return fail<Spectrum>(ErrorCode::NoConvergence,
+                              "Krylov basis lost an independent direction");
+      }
+      std::ranges::fill(work, 0);
+      work[coordinate++] = 1;
+    }
+    auto q = column(basis, j);
+    auto image = column(images, j);
+    for (Index i = 0; i < n; ++i) {
+      q[i] = work[i] / length;
+    }
+    apply(q, image);
+    std::ranges::copy(image, work.begin());
+  }
+
+  const auto projected = [&](Index i, Index j) {
+    const auto qi = column(basis, i);
+    const auto qj = column(basis, j);
+    const auto si = column(images, i);
+    const auto sj = column(images, j);
+    return sum(n, [&](Index k) { return (qi[k] * sj[k] + si[k] * qj[k]) / 2; });
+  };
+  auto modes = symmetricSpectrum(n, projected, policy, limits);
+  if (!modes.hasValue()) {
+    return modes;
+  }
+  Spectrum result{.values = std::move(modes.value().values),
+                  .basis = Matrix(n, n)};
+  for (Index i = 0; i < n; ++i) {
+    for (Index j = 0; j < n; ++j) {
+      result.basis.at(i, j) = static_cast<Scalar>(sum(n, [&](Index k) {
+        return column(basis, k)[i] * basisEntry(modes.value(), k, j);
+      }));
+    }
+  }
+  const auto original = [&](Index i, Index j) {
+    return spec.kind == StructureKind::toeplitz
+               ? static_cast<Wide>(
+                     spec.diagonal_or_lags.at(i < j ? j - i : i - j))
+               : kernelEntry(spec, i, j);
+  };
+  const Wide kernel_width =
+      spec.kind == StructureKind::gaussian_kernel && spec.low_rank_or_points
+          ? 1 + static_cast<Wide>(spec.low_rank_or_points->columns())
+          : 1;
+  const Wide operator_norm = frobenius(n, original);
+  const Wide formation_error = frobenius(n, [&](Index i, Index j) {
+    return sum(n,
+               [&](Index k) {
+                 return column(basis, k)[i] * basisEntry(modes.value(), k, j);
+               }) -
+           result.basis.at(i, j);
+  });
+  const Wide action_error =
+      operator_norm *
+      (formation_error +
+       128 * wide_epsilon * static_cast<Wide>(n) * kernel_width);
+  const Wide error = symmetricError(
+      result.basis.view(), result.values, original,
+      [&](Index i, Index j) {
+        return sum(n, [&](Index k) {
+          return column(images, k)[i] * basisEntry(modes.value(), k, j);
+        });
+      },
+      action_error);
+  if (!std::isfinite(error)) {
+    return fail<Spectrum>(ErrorCode::NoConvergence,
+                          "projected covariance spectrum error is unbounded");
+  }
+  for (Mode& mode : result.values) {
+    mode = enclosed(mode.value, error);
+  }
+  return Result<Spectrum>::success(std::move(result));
+}
+
+Result<Spectrum> singleSpectrum(const StructuredSpec& spec, Index n,
+                                SolvePolicy policy, Limits limits) {
+  if (n == 0) {
+    return Result<Spectrum>::success({{}, {}});
+  }
+  if (spec.kind == StructureKind::diagonal_low_rank &&
+      spec.low_rank_or_points && spec.low_rank_or_points->columns() != 0) {
+    return lowRankSpectrum(spec, policy, limits);
+  }
+  const auto kernel_scale = spec.kernel_scale.value_or(0);
+  if ((spec.kind == StructureKind::toeplitz &&
+       bandwidth(spec.diagonal_or_lags) != 0) ||
+      (spec.kind == StructureKind::gaussian_kernel && kernel_scale != 0 &&
+       spec.low_rank_or_points && !repeatedPoints(*spec.low_rank_or_points))) {
+    return projectedSpectrum(spec, n, policy, limits);
+  }
+  if (!reserve<Mode>(limits, n)) {
+    return fail<Spectrum>(ErrorCode::ResourceLimit,
+                          "covariance modes exceed limits");
+  }
+  Spectrum result{.values = std::vector<Mode>(n), .basis = {}};
+  if (spec.kind == StructureKind::gaussian_kernel && kernel_scale != 0) {
+    if (!reserve<Scalar>(limits, n)) {
+      return fail<Spectrum>(ErrorCode::ResourceLimit,
+                            "kernel rank-one basis exceeds limits");
+    }
+    result.values.front() =
+        exact(static_cast<Wide>(kernel_scale) * static_cast<Wide>(n));
+    result.basis =
+        Matrix(n, 1, static_cast<Scalar>(1 / std::sqrt(static_cast<Wide>(n))));
+  } else if (spec.kind != StructureKind::gaussian_kernel) {
+    for (Index i = 0; i < n; ++i) {
+      result.values[i] = exact(spec.diagonal_or_lags.at(
+          spec.kind == StructureKind::toeplitz ? 0 : i));
+    }
+  }
+  return Result<Spectrum>::success(std::move(result));
+}
+
+template <class Value>
+Wide scaledProduct(Index count, const Value& value, int rounding = 0) {
+  Wide mantissa = 1;
+  std::int64_t exponent = 0;
+  for (Index i = 0; i < count; ++i) {
+    const Wide v = value(i);
+    if (v == 0) {
+      return 0;
+    }
+    int shift = 0;
+    const Wide fraction = std::frexp(v, &shift);
+    const Wide product = mantissa * fraction;
+    const Wide error = std::fma(mantissa, fraction, -product);
+    mantissa = (rounding > 0 && error > 0) || (rounding < 0 && error < 0)
+                   ? std::nextafter(product, rounding > 0 ? infinity : Wide{0})
+                   : product;
+    int normalization = 0;
+    mantissa = std::frexp(mantissa, &normalization);
+    exponent += shift + normalization;
+  }
+  if (exponent > std::numeric_limits<Wide>::max_exponent) {
+    return infinity;
+  }
+  if (exponent < std::numeric_limits<Wide>::min_exponent -
+                     std::numeric_limits<Wide>::digits) {
+    return rounding > 0 ? std::numeric_limits<Wide>::denorm_min() : 0;
+  }
+  return std::scalbn(mantissa, static_cast<int>(exponent));
+}
+
+Result<std::vector<Spectrum>>
+factorSpectra(const StructuredSpec& spec, SolvePolicy policy, Limits& limits) {
+  using Output = Result<std::vector<Spectrum>>;
+  if (!reserve<Spectrum>(limits, spec.factors.size())) {
+    return fail<std::vector<Spectrum>>(
+        ErrorCode::ResourceLimit, "covariance factor metadata exceeds limits");
+  }
+  std::vector<Spectrum> factors;
+  factors.reserve(spec.factors.size());
+  for (const auto& factor : spec.factors) {
+    const auto n = factor.rows();
+    auto spectrum = symmetricSpectrum(
+        n, [&](Index i, Index j) { return symmetricEntry(factor, i, j); },
+        policy, limits);
+    if (!spectrum.hasValue()) {
+      return forward<std::vector<Spectrum>>(spectrum.status());
+    }
+    auto& modes = spectrum.value();
+    if (const auto psd = certifyPsd(modes.values); !psd.ok()) {
+      return forward<std::vector<Spectrum>>(psd);
+    }
+    if (!reserve<Mode>(limits, n) ||
+        !reserve<Scalar>(limits, modes.basis.rows(), modes.basis.columns())) {
+      return fail<std::vector<Spectrum>>(
+          ErrorCode::ResourceLimit,
+          "retained covariance factors exceed limits");
+    }
+    for (Mode& mode : modes.values) {
+      mode = nonnegative(mode);
+    }
+    factors.push_back(std::move(spectrum).value());
+  }
+  return Output::success(std::move(factors));
+}
+
+Mode productMode(std::span<const Spectrum> factors, Index n, Index coordinate) {
+  const auto compute = [&](Wide Mode::*field, int rounding) {
+    Index stride = n;
+    return scaledProduct(
+        factors.size(),
+        [&](Index axis) {
+          const auto& factor = factors[axis];
+          stride /= factor.values.size();
+          const Index component = (coordinate / stride) % factor.values.size();
+          return factor.values[component].*field;
+        },
+        rounding);
+  };
+  return {compute(&Mode::value, 0), compute(&Mode::lower, -1),
+          compute(&Mode::upper, 1)};
+}
+
+void rotateProduct(std::span<const Spectrum> factors, WideVector& values,
+                   WideVector& work, bool transpose) {
+  Index stride = values.size();
+  for (const auto& factor : factors) {
+    stride /= factor.values.size();
+    if (factor.basis.empty()) {
+      continue;
+    }
+    axisProduct(values, work, factor.values.size(), stride,
+                [&](Index row, Index col) {
+                  return transpose ? factor.basis.at(col, row)
+                                   : factor.basis.at(row, col);
+                });
+    values.swap(work);
+  }
+}
+
+Wide productBasis(std::span<const Spectrum> factors, Index dimension,
+                  Index coordinate, Index mode) {
+  Index stride = dimension;
+  return scaledProduct(factors.size(), [&](Index axis) {
+    const auto& factor = factors[axis];
+    const Index order = factor.values.size();
+    stride /= order;
+    return basisEntry(factor, (coordinate / stride) % order,
+                      (mode / stride) % order);
+  });
+}
+
+Result<LinearEstimate> factorizedSolve(const StructuredSpec& spec, Index n,
+                                       ConstMatrixView rhs, SolvePolicy policy,
+                                       Limits limits) {
+  const bool is_product = spec.kind == StructureKind::kronecker;
+  const bool is_block = spec.kind == StructureKind::block;
+  std::vector<Spectrum> factors;
+  if (is_product || is_block) {
+    auto factored = factorSpectra(spec, policy, limits);
+    if (!factored.hasValue()) {
+      return forward<LinearEstimate>(factored.status());
+    }
+    factors = std::move(factored).value();
+  } else {
+    if (!reserve<Spectrum>(limits, 1)) {
+      return fail<LinearEstimate>(ErrorCode::ResourceLimit,
+                                  "covariance factor record exceeds limits");
+    }
+    auto spectrum = singleSpectrum(spec, n, policy, limits);
+    if (!spectrum.hasValue()) {
+      return forward<LinearEstimate>(spectrum.status());
+    }
+    if (const auto psd = certifyPsd(spectrum.value().values); !psd.ok()) {
+      return forward<LinearEstimate>(psd);
+    }
+    if (!reserve<Mode>(limits, n) ||
+        !reserve<Scalar>(limits, spectrum.value().basis.rows(),
+                         spectrum.value().basis.columns())) {
+      return fail<LinearEstimate>(
+          ErrorCode::ResourceLimit,
+          "retained covariance eigensystem exceeds limits");
+    }
+    for (Mode& mode : spectrum.value().values) {
+      mode = nonnegative(mode);
+    }
+    factors.push_back(std::move(spectrum).value());
+  }
+
+  if (!reserve<Mode>(limits, n) || !reserve<std::uint8_t>(limits, n)) {
+    return fail<LinearEstimate>(ErrorCode::ResourceLimit,
+                                "covariance cutoff workspace exceeds limits");
+  }
+  std::vector<Mode> modes(n);
+  if (is_product) {
+    for (Index i = 0; i < n; ++i) {
+      modes[i] = productMode(factors, n, i);
+    }
+  } else {
+    auto destination = modes.begin();
+    for (const auto& factor : factors) {
+      destination = std::ranges::copy(factor.values, destination).out;
+    }
+  }
+  Mode maximum{};
+  for (const Mode m : modes) {
+    maximum = {std::max(maximum.value, m.value),
+               std::max(maximum.lower, m.lower),
+               std::max(maximum.upper, m.upper)};
+  }
+  const auto cutoff = [&](Wide value) {
+    return policy.rank_rel == 0
+               ? static_cast<Wide>(policy.rank_abs)
+               : std::max<Wide>(policy.rank_abs, policy.rank_rel * value);
+  };
+  const Wide tau = cutoff(maximum.value);
+  const Wide lower_tau = cutoff(maximum.lower);
+  const Wide upper_tau = cutoff(maximum.upper);
+  if (!representable(tau)) {
+    return fail<LinearEstimate>(ErrorCode::NonFiniteResult,
+                                "covariance cutoff is not representable");
+  }
+  Wide smallest_lower = infinity;
+  Wide smallest_upper = infinity;
+  std::vector<std::uint8_t> retained(n);
+  Index rank = 0;
+  for (Index i = 0; i < n; ++i) {
+    if (modes[i].lower > upper_tau) {
+      retained[i] = 1;
+      ++rank;
+      smallest_lower = std::min(smallest_lower, modes[i].lower);
+      smallest_upper = std::min(smallest_upper, modes[i].upper);
+    } else if (modes[i].upper > lower_tau) {
+      return fail<LinearEstimate>(
+          ErrorCode::NoConvergence,
+          "covariance cutoff intersects a spectral bound");
+    }
+  }
+  if (policy.rank == RankPolicy::reject && rank != n) {
+    return fail<LinearEstimate>(ErrorCode::RankDeficient,
+                                "covariance rank is deficient");
+  }
+  if (rank != 0 && policy.reciprocal_condition_floor != 0) {
+    if (smallest_upper < policy.reciprocal_condition_floor * maximum.lower) {
+      return fail<LinearEstimate>(ErrorCode::IllConditioned,
+                                  "covariance fails condition floor");
+    }
+    if (smallest_lower < policy.reciprocal_condition_floor * maximum.upper) {
+      return fail<LinearEstimate>(ErrorCode::NoConvergence,
+                                  "covariance condition floor is unresolved");
+    }
+  }
+
+  const Index p = rhs.columns();
+  const Index workspace = p == 0 ? 0 : n;
+  const bool deficient = rank != n;
+  if (!reserve<Scalar>(limits, n, p) || !reserve<Scalar>(limits, p) ||
+      (deficient && !reserve<Scalar>(limits, n, rank)) ||
+      !reserve<Wide>(limits, workspace, 2) ||
+      (p != 0 && !reserve<Wide>(limits, Action::scratchSize(spec, n)))) {
+    return fail<LinearEstimate>(
+        ErrorCode::ResourceLimit,
+        "covariance solve output and workspace exceed limits");
+  }
+  LinearEstimate result{.parameters = Matrix(n, p),
+                        .covariance = std::nullopt,
+                        .identified_basis = deficient
+                                                ? std::optional{Matrix(n, rank)}
+                                                : std::nullopt,
+                        .residual_norms = Vector(p),
+                        .rank = rank,
+                        .rank_cutoff = static_cast<Scalar>(tau)};
+  if (n == 0) {
+    return Result<LinearEstimate>::success(std::move(result));
+  }
+  if (auto& basis_output = result.identified_basis; basis_output) {
+    Index basis_column = 0;
+    if (is_product) {
+      for (Index mode = 0; mode < n; ++mode) {
+        if (retained[mode] == 0) {
+          continue;
+        }
+        for (Index i = 0; i < n; ++i) {
+          basis_output->at(i, basis_column) =
+              static_cast<Scalar>(productBasis(factors, n, i, mode));
+        }
+        ++basis_column;
+      }
+    } else {
+      Index first = 0;
+      for (const auto& factor : factors) {
+        const Index order = factor.values.size();
+        for (Index mode = 0; mode < order; ++mode) {
+          if (retained[first + mode] == 0) {
+            continue;
+          }
+          for (Index i = 0; i < order; ++i) {
+            basis_output->at(first + i, basis_column) =
+                static_cast<Scalar>(basisEntry(factor, i, mode));
+          }
+          ++basis_column;
+        }
+        first += order;
+      }
+    }
+  }
+  WideVector values(workspace);
+  WideVector work(workspace);
+  WideVector scratch(p == 0 ? 0 : Action::scratchSize(spec, n));
+  const Action apply(spec, n, scratch);
+  for (Index col = 0; col < p; ++col) {
+    if (is_product) {
+      for (Index i = 0; i < n; ++i) {
+        values[i] = rhs.at(i, col);
+      }
+      rotateProduct(factors, values, work, true);
+      for (Index i = 0; i < n; ++i) {
+        values[i] = retained[i] != 0 ? values[i] / modes[i].value : 0;
+      }
+      rotateProduct(factors, values, work, false);
+    } else {
+      Index first = 0;
+      for (const auto& factor : factors) {
+        const Index order = factor.values.size();
+        if (factor.basis.empty()) {
+          for (Index i = 0; i < order; ++i) {
+            values[first + i] =
+                retained[first + i] != 0
+                    ? rhs.at(first + i, col) / modes[first + i].value
+                    : 0;
+          }
+          first += order;
+          continue;
+        }
+        const Index basis_modes = factor.basis.columns();
+        for (Index mode = 0; mode < basis_modes; ++mode) {
+          work[first + mode] = retained[first + mode] != 0
+                                   ? sum(order,
+                                         [&](Index i) {
+                                           return basisEntry(factor, i, mode) *
+                                                  rhs.at(first + i, col);
+                                         }) /
+                                         modes[first + mode].value
+                                   : 0;
+        }
+        for (Index i = 0; i < order; ++i) {
+          values[first + i] = sum(basis_modes, [&](Index mode) {
+            return retained[first + mode] != 0
+                       ? basisEntry(factor, i, mode) * work[first + mode]
+                       : 0;
+          });
+        }
+        first += order;
+      }
+    }
+    for (Index i = 0; i < n; ++i) {
+      if (!representable(values[i])) {
+        return fail<LinearEstimate>(ErrorCode::NonFiniteResult,
+                                    "covariance solution is not representable");
+      }
+      result.parameters.at(i, col) = static_cast<Scalar>(values[i]);
+      values[i] = result.parameters.at(i, col);
+    }
+    apply(values, work);
+    for (Index i = 0; i < n; ++i) {
+      work[i] -= rhs.at(i, col);
+    }
+    const Wide residual = norm(work);
+    if (!representable(residual)) {
+      return fail<LinearEstimate>(ErrorCode::NonFiniteResult,
+                                  "covariance residual is not representable");
+    }
+    result.residual_norms.at(col) = static_cast<Scalar>(residual);
+  }
+  return Result<LinearEstimate>::success(std::move(result));
+}
+
+Result<Bounds> jacobiBounds(const StructuredSpec& spec,
+                            std::span<Wide> diagonal, SolvePolicy policy,
+                            Limits limits, Mode& maximum) {
+  const Index n = diagonal.size();
+  Bounds bounds{infinity, 0};
+  const Wide slack = 64 * wide_epsilon * static_cast<Wide>(n);
+  switch (spec.kind) {
+  case StructureKind::diagonal_low_rank: {
+    Wide highest_diagonal = 0;
+    for (Index i = 0; i < n; ++i) {
+      const Wide value = spec.diagonal_or_lags.at(i);
+      diagonal[i] = value;
+      bounds.lower = std::min(bounds.lower, value);
+      highest_diagonal = std::max(highest_diagonal, value);
+    }
+    Wide update = 0;
+    if (spec.low_rank_or_points) {
+      const auto u = *spec.low_rank_or_points;
+      for (Index i = 0; i < n; ++i) {
+        const Wide energy = sum(u.columns(), [&](Index k) {
+          const Wide value = u.at(i, k);
+          return value * value;
+        });
+        diagonal[i] += energy;
+        update += energy;
+      }
+    }
+    bounds.upper = (highest_diagonal + update) * (1 + slack);
+    if (update == 0) {
+      maximum = exact(highest_diagonal);
+      bounds.upper = highest_diagonal;
     }
     break;
   }
   case StructureKind::toeplitz:
-    if (s.diagonal_or_lags.size() != s.dimension ||
-        !finite(s.diagonal_or_lags.view()))
-      return fail<Vector>(ErrorCode::InvalidDomain,
-                          "invalid Toeplitz covariance payload");
-    for (Index i = 0; i < s.dimension; ++i) {
-      long double sum = 0;
-      for (Index j = 0; j < s.dimension; ++j)
-        sum += static_cast<long double>(
-                   s.diagonal_or_lags.at(i > j ? i - j : j - i)) *
-               x.at(j);
-      if (!std::isfinite(sum) ||
-          std::abs(sum) > std::numeric_limits<Scalar>::max())
-        return fail<Vector>(ErrorCode::NonFiniteResult,
-                            "Toeplitz action is not representable");
-      y.data()[i] = static_cast<Scalar>(sum);
+  case StructureKind::gaussian_kernel: {
+    const bool toeplitz = spec.kind == StructureKind::toeplitz;
+    const Index width = toeplitz ? bandwidth(spec.diagonal_or_lags) : n - 1;
+    const Wide d =
+        toeplitz ? spec.diagonal_or_lags.at(0) : spec.kernel_scale.value_or(0);
+    const Wide kernel_width =
+        spec.low_rank_or_points
+            ? 1 + static_cast<Wide>(spec.low_rank_or_points->columns())
+            : 1;
+    std::ranges::fill(diagonal, d);
+    for (Index i = 0; i < n; ++i) {
+      const Index first = i - std::min(i, width);
+      const Index last = i + std::min(n - i - 1, width);
+      const Wide radius = sum(last - first + 1, [&](Index offset) {
+        const Index j = first + offset;
+        if (i == j) {
+          return Wide{0};
+        }
+        return toeplitz ? std::abs(static_cast<Wide>(
+                              spec.diagonal_or_lags.at(i < j ? j - i : i - j)))
+                        : kernelEntry(spec, i, j);
+      });
+      const Wide error = slack * kernel_width * (d + radius);
+      bounds.lower = std::min(bounds.lower, d - radius - error);
+      bounds.upper = std::max(bounds.upper, d + radius + error);
     }
-    break;
-  case StructureKind::block: {
-    Index off = 0;
-    for (const auto& b : s.factors.view()) {
-      if (b.rows() != b.columns() || b.rows() > s.dimension - off ||
-          !finite(b.view()))
-        return fail<Vector>(ErrorCode::InvalidDomain,
-                            "invalid block covariance payload");
-      for (Index i = 0; i < b.rows(); ++i) {
-        long double sum = 0;
-        for (Index j = 0; j < b.columns(); ++j)
-          sum += static_cast<long double>(b.at(i, j)) * x.at(off + j);
-        if (!std::isfinite(sum) ||
-            std::abs(sum) > std::numeric_limits<Scalar>::max())
-          return fail<Vector>(ErrorCode::NonFiniteResult,
-                              "block action is not representable");
-        y.data()[off + i] = static_cast<Scalar>(sum);
-      }
-      off += b.rows();
+    if (width == 0 || n == 1) {
+      bounds = {d, d};
+      maximum = exact(d);
     }
-    if (off != s.dimension)
-      return fail<Vector>(ErrorCode::InvalidDomain,
-                          "block dimensions disagree with stored dimension");
     break;
   }
+  case StructureKind::block:
   case StructureKind::kronecker: {
-    if (s.factors.view().empty()) {
-      if (s.dimension != 1)
-        return fail<Vector>(ErrorCode::InvalidDomain,
-                            "empty Kronecker covariance must be scalar");
-      y.data()[0] = x.at(0);
+    auto decompositions = factorSpectra(spec, policy, limits);
+    if (!decompositions.hasValue()) {
+      return forward<Bounds>(decompositions.status());
+    }
+    const auto& factors = decompositions.value();
+    if (spec.kind == StructureKind::block) {
+      Index first = 0;
+      for (Index k = 0; k < factors.size(); ++k) {
+        const auto& factor = factors[k];
+        for (Index i = 0; i < factor.values.size(); ++i) {
+          diagonal[first++] = spec.factors[k].at(i, i);
+        }
+        for (const Mode m : factor.values) {
+          bounds.lower = std::min(bounds.lower, m.lower);
+          maximum = {std::max(maximum.value, m.value),
+                     std::max(maximum.lower, m.lower),
+                     std::max(maximum.upper, m.upper)};
+        }
+      }
+    } else {
+      const auto factorMaximum = [&](Index i, Wide Mode::*field) {
+        Wide largest = 0;
+        for (const Mode mode : factors[i].values) {
+          largest = std::max(largest, mode.*field);
+        }
+        return largest;
+      };
+      maximum = {
+          scaledProduct(
+              factors.size(),
+              [&](Index i) { return factorMaximum(i, &Mode::value); }),
+          scaledProduct(
+              factors.size(),
+              [&](Index i) { return factorMaximum(i, &Mode::lower); }, -1),
+          scaledProduct(
+              factors.size(),
+              [&](Index i) { return factorMaximum(i, &Mode::upper); }, 1)};
+      bounds.lower = scaledProduct(
+          factors.size(),
+          [&](Index i) { return extremes(factors[i].values).lower; }, -1);
+      for (Index i = 0; i < n; ++i) {
+        Index stride = n;
+        diagonal[i] = scaledProduct(spec.factors.size(), [&](Index k) {
+          const auto& factor = spec.factors[k];
+          stride /= factor.rows();
+          const Index local = (i / stride) % factor.rows();
+          return factor.at(local, local);
+        });
+      }
+    }
+    bounds.upper = maximum.upper;
+    break;
+  }
+  }
+  return Result<Bounds>::success(bounds);
+}
+
+class EvaluationBudget final {
+public:
+  explicit EvaluationBudget(Index count) : remaining_(count) {}
+  [[nodiscard]] bool charge(Index count = 1) {
+    if (count > remaining_) {
+      return false;
+    }
+    remaining_ -= count;
+    return true;
+  }
+  [[nodiscard]] Index remaining() const { return remaining_; }
+
+private:
+  Index remaining_;
+};
+
+Result<Wide> refineMaximum(const Action& action, Index n, Wide upper,
+                           Wide lower, Wide arithmetic_scale, Index rounds,
+                           Limits limits, EvaluationBudget& evaluations) {
+  if (!reserve<Wide>(limits, n, 3)) {
+    return fail<Wide>(ErrorCode::ResourceLimit,
+                      "spectral refinement workspace exceeds limits");
+  }
+  WideVector vector(n);
+  WideVector next(n);
+  WideVector row_sums(n);
+  // Divide by a power of two that bounds the exact operator norm.
+  const int exponent = std::ilogb(upper) + 1;
+  const Wide normalized_upper = std::scalbn(upper, -exponent);
+  Wide lower_bound = std::scalbn(lower, -exponent);
+  Wide upper_bound = normalized_upper;
+  const Wide envelope = 64 * epsilon * static_cast<Wide>(n) * normalized_upper;
+  const auto apply_scaled = [&] {
+    action(vector, next);
+    for (Wide& value : next) {
+      value = std::scalbn(value, -exponent);
+    }
+  };
+  Index power = 1;
+  for (Index round = 0; round < rounds; ++round) {
+    if (power == std::numeric_limits<Index>::max() ||
+        power + 1 > evaluations.remaining() / n) {
+      return fail<Wide>(ErrorCode::ResourceLimit,
+                        "spectral operator evaluations exceed limits");
+    }
+    if (!evaluations.charge(n * (power + 1))) {
+      return fail<Wide>(ErrorCode::ResourceLimit,
+                        "spectral operator evaluations exceed limits");
+    }
+    const Wide unit_error = 32 * wide_epsilon * arithmetic_scale *
+                            static_cast<Wide>(n) * normalized_upper;
+    std::ranges::fill(row_sums, 0);
+    for (Index coordinate = 0; coordinate < n; ++coordinate) {
+      std::ranges::fill(vector, 0);
+      vector[coordinate] = 1;
+      Wide error = 0;
+      for (Index k = 0; k < power; ++k) {
+        const Wide length = norm(vector);
+        apply_scaled();
+        error = std::nextafter(normalized_upper * error + unit_error * length,
+                               infinity);
+        vector.swap(next);
+      }
+      for (Index i = 0; i < n; ++i) {
+        row_sums[i] =
+            std::nextafter(row_sums[i] + std::abs(vector[i]) + error, infinity);
+      }
+      const Wide length = norm(vector);
+      if (std::isfinite(length) && length > 0) {
+        for (Wide& value : vector) {
+          value /= length;
+        }
+        apply_scaled();
+        const Wide quotient =
+            sum(n, [&](Index i) { return vector[i] * next[i]; });
+        lower_bound = std::max(lower_bound, quotient - 4 * unit_error);
+      }
+    }
+    const Wide maximum_sum = *std::ranges::max_element(row_sums);
+    if (!std::isfinite(maximum_sum)) {
       break;
     }
-    Index n = 1;
-    for (const auto& f : s.factors.view()) {
-      if (f.rows() != f.columns() || !finite(f.view()) || !mul(n, f.rows(), n))
-        return fail<Vector>(ErrorCode::InvalidDomain,
-                            "invalid Kronecker covariance payload");
+    const Wide root = std::pow(maximum_sum, 1 / static_cast<Wide>(power));
+    upper_bound = std::min(upper_bound, root + 8 * wide_epsilon * root);
+    if (lower_bound <= upper_bound && upper_bound - lower_bound <= envelope) {
+      return Result<Wide>::success(
+          std::scalbn(std::midpoint(lower_bound, upper_bound), exponent));
     }
-    if (n != s.dimension)
-      return fail<Vector>(ErrorCode::InvalidDomain,
-                          "Kronecker factors disagree with stored dimension");
-    for (Index row = 0; row < n; ++row) {
-      long double sum = 0;
-      for (Index col = 0; col < n; ++col) {
-        long double a = 1;
-        Index rr = row, cc = col;
-        for (auto it = s.factors.view().rbegin(); it != s.factors.view().rend();
-             ++it) {
-          const Index d = it->rows();
-          a *= it->at(rr % d, cc % d);
-          rr /= d;
-          cc /= d;
-        }
-        sum += a * x.at(col);
-      }
-      if (!std::isfinite(sum) ||
-          std::abs(sum) > std::numeric_limits<Scalar>::max())
-        return fail<Vector>(ErrorCode::NonFiniteResult,
-                            "Kronecker action is not representable");
-      y.data()[row] = static_cast<Scalar>(sum);
+    if (power > std::numeric_limits<Index>::max() / 2) {
+      break;
     }
-    break;
+    power *= 2;
   }
-  case StructureKind::gaussian_kernel: {
-    if (!s.low_rank_or_points || !s.kernel_scale || !s.kernel_length ||
-        s.low_rank_or_points->rows() != s.dimension ||
-        s.low_rank_or_points->columns() == 0 || *s.kernel_scale < 0 ||
-        !(*s.kernel_length > 0) || !std::isfinite(*s.kernel_scale) ||
-        !std::isfinite(*s.kernel_length) ||
-        !finite(s.low_rank_or_points->view()))
-      return fail<Vector>(ErrorCode::InvalidDomain,
-                          "invalid Gaussian covariance payload");
-    const auto& p = *s.low_rank_or_points;
-    const long double ell = *s.kernel_length;
-    for (Index i = 0; i < s.dimension; ++i) {
-      long double sum = 0;
-      for (Index j = 0; j < s.dimension; ++j) {
-        long double d2 = 0;
-        for (Index k = 0; k < p.columns(); ++k) {
-          const long double d =
-              static_cast<long double>(p.at(i, k)) - p.at(j, k);
-          const long double z = d / ell;
-          d2 += z * z;
-        }
-        sum += static_cast<long double>(*s.kernel_scale) *
-               std::exp(-0.5L * d2) * x.at(j);
-      }
-      if (!std::isfinite(sum) ||
-          std::abs(sum) > std::numeric_limits<Scalar>::max())
-        return fail<Vector>(ErrorCode::NonFiniteResult,
-                            "Gaussian covariance action is not representable");
-      y.data()[i] = static_cast<Scalar>(sum);
-    }
-    break;
-  }
-  }
-  for (Index i = 0; i < y.size(); ++i)
-    if (!std::isfinite(y.at(i)))
-      return fail<Vector>(ErrorCode::NonFiniteResult,
-                          "structured covariance result is non-finite");
-  return Result<Vector>::success(std::move(y));
+  return fail<Wide>(ErrorCode::NoConvergence,
+                    "largest covariance eigenvalue interval remains too wide");
 }
 
-Result<linear::LinearEstimate> pcgDiagonal(const StructuredCovariance& s,
-                                           ConstMatrixView rhs,
-                                           SolvePolicy policy, Limits limits) {
-  if (s.kind != StructureKind::diagonal_low_rank || s.low_rank_or_points ||
-      s.diagonal_or_lags.size() != s.dimension || policy.rank_rel != 0.0)
-    return fail<linear::LinearEstimate>(
-        ErrorCode::NoConvergence, "PCG currently requires diagonal covariance "
-                                  "and an absolute rank cutoff");
-  Index output = 0U, work = 0U;
-  if (!mul(s.dimension, rhs.columns(), output) || !mul(s.dimension, 4U, work) ||
-      !add(output, work, work) || !add(work, rhs.columns(), work) ||
-      work > limits.elements || work > limits.bytes / sizeof(Scalar))
-    return fail<linear::LinearEstimate>(ErrorCode::ResourceLimit,
-                                        "PCG workspace exceeds limits");
-  Scalar lo = std::numeric_limits<Scalar>::infinity(), hi = 0.0;
-  for (Index i = 0; i < s.dimension; ++i) {
-    const Scalar d = s.diagonal_or_lags.at(i);
-    if (!std::isfinite(d))
-      return fail<linear::LinearEstimate>(ErrorCode::NonFiniteInput,
-                                          "diagonal covariance is non-finite");
-    lo = std::min(lo, d);
-    hi = std::max(hi, d);
+Result<LinearEstimate> iterativeSolve(const StructuredSpec& spec, Index n,
+                                      ConstMatrixView rhs, SolvePolicy policy,
+                                      Limits limits) {
+  const Index p = rhs.columns();
+  if (!reserve<Scalar>(limits, n, p) || !reserve<Scalar>(limits, p) ||
+      !reserve<Wide>(limits, n) ||
+      !reserve<Wide>(limits, Action::scratchSize(spec, n))) {
+    return fail<LinearEstimate>(ErrorCode::ResourceLimit,
+                                "iterative covariance storage exceeds limits");
   }
-  if (!(lo > policy.rank_abs) || !(hi > 0.0) ||
-      static_cast<long double>(lo) / hi < policy.reciprocal_condition_floor)
-    return fail<linear::LinearEstimate>(
+  if (n == 0) {
+    return Result<LinearEstimate>::success({.parameters = Matrix(0, p),
+                                            .covariance = std::nullopt,
+                                            .identified_basis = std::nullopt,
+                                            .residual_norms = Vector(p),
+                                            .rank = 0,
+                                            .rank_cutoff = policy.rank_abs});
+  }
+  WideVector diagonal(n);
+  WideVector scratch(Action::scratchSize(spec, n));
+  const Action apply(spec, n, scratch);
+  Mode maximum{};
+  auto certificate = jacobiBounds(spec, diagonal, policy, limits, maximum);
+  if (!certificate.hasValue()) {
+    return forward<LinearEstimate>(certificate.status());
+  }
+  const Bounds bounds = certificate.value();
+  const Wide relative_ceiling =
+      policy.rank_rel == 0 ? 0 : policy.rank_rel * bounds.upper;
+  if (!std::isfinite(bounds.upper) ||
+      !(bounds.lower > std::max<Wide>(policy.rank_abs, relative_ceiling)) ||
+      bounds.lower / bounds.upper < policy.reciprocal_condition_floor ||
+      std::ranges::any_of(diagonal, [](Wide value) {
+        return !std::isfinite(value) || value <= 0;
+      })) {
+    return fail<LinearEstimate>(
         ErrorCode::NoConvergence,
-        "diagonal covariance does not certify retained full-rank SPD support");
-  if (policy.iteration.max_iterations == 0U ||
-      !std::isfinite(policy.iteration.abs) || policy.iteration.abs < 0.0 ||
-      !std::isfinite(policy.iteration.rel) || policy.iteration.rel < 0.0)
-    return fail<linear::LinearEstimate>(ErrorCode::InvalidTolerance,
-                                        "PCG convergence policy is invalid");
-  linear::LinearEstimate out{.parameters =
-                                 Matrix(s.dimension, rhs.columns(), 0.0),
-                             .covariance = std::nullopt,
-                             .identified_basis = std::nullopt,
-                             .residual_norms = Vector(rhs.columns(), 0.0),
-                             .rank = s.dimension,
-                             .rank_cutoff = policy.rank_abs};
-  std::uint64_t evaluations = 0U;
-  const auto cap =
-      std::min(limits.evaluations, policy.iteration.max_evaluations);
-  for (Index c = 0; c < rhs.columns(); ++c) {
-    long double norm_b = 0.0L;
-    Vector residual(s.dimension, 0.0), z(s.dimension, 0.0),
-        direction(s.dimension, 0.0), product(s.dimension, 0.0);
-    long double rz = 0.0L;
-    for (Index i = 0; i < s.dimension; ++i)
-      norm_b = std::hypot(norm_b, static_cast<long double>(rhs.at(i, c)));
-    const long double target =
-        std::max(static_cast<long double>(policy.iteration.abs),
-                 static_cast<long double>(policy.iteration.rel) * norm_b);
-    for (Index i = 0; i < s.dimension; ++i) {
-      residual.data()[i] = rhs.at(i, c);
-      z.data()[i] = residual.at(i) / s.diagonal_or_lags.at(i);
-      direction.data()[i] = z.at(i);
-      rz += static_cast<long double>(residual.at(i)) * z.at(i);
-    }
-    long double true_norm = norm_b;
-    bool converged = true_norm <= target;
-    for (Index step = 0; !converged && step < policy.iteration.max_iterations;
-         ++step) {
-      if (evaluations >= cap)
-        return fail<linear::LinearEstimate>(ErrorCode::ResourceLimit,
-                                            "PCG evaluation budget exhausted");
-      ++evaluations;
-      long double curvature = 0.0L;
-      for (Index i = 0; i < s.dimension; ++i) {
-        product.data()[i] = s.diagonal_or_lags.at(i) * direction.at(i);
-        curvature += static_cast<long double>(direction.at(i)) * product.at(i);
-      }
-      if (!(curvature > 0.0L) || !(rz > 0.0L))
-        return fail<linear::LinearEstimate>(
-            ErrorCode::NoConvergence, "PCG encountered non-positive curvature");
-      const long double alpha = rz / curvature;
-      for (Index i = 0; i < s.dimension; ++i) {
-        const long double value =
-            static_cast<long double>(out.parameters.at(i, c)) +
-            alpha * direction.at(i);
-        if (!std::isfinite(value) ||
-            std::abs(value) > std::numeric_limits<Scalar>::max())
-          return fail<linear::LinearEstimate>(
-              ErrorCode::NonFiniteResult, "PCG iterate is not representable");
-        out.parameters.at(i, c) = static_cast<Scalar>(value);
-        residual.data()[i] = static_cast<Scalar>(
-            static_cast<long double>(residual.at(i)) - alpha * product.at(i));
-      }
-      if (evaluations >= cap)
-        return fail<linear::LinearEstimate>(
-            ErrorCode::ResourceLimit, "PCG true-residual budget exhausted");
-      ++evaluations;
-      true_norm = 0.0L;
-      long double next_rz = 0.0L;
-      for (Index i = 0; i < s.dimension; ++i) {
-        const long double r =
-            static_cast<long double>(s.diagonal_or_lags.at(i)) *
-                out.parameters.at(i, c) -
-            rhs.at(i, c);
-        true_norm = std::hypot(true_norm, r);
-        z.data()[i] = residual.at(i) / s.diagonal_or_lags.at(i);
-        next_rz += static_cast<long double>(residual.at(i)) * z.at(i);
-      }
-      if (true_norm <= target) {
-        converged = true;
-        break;
-      }
-      const long double beta = next_rz / rz;
-      for (Index i = 0; i < s.dimension; ++i)
-        direction.data()[i] =
-            static_cast<Scalar>(z.at(i) + beta * direction.at(i));
-      rz = next_rz;
-    }
-    if (!converged)
-      return fail<linear::LinearEstimate>(
-          ErrorCode::NoConvergence, "PCG did not satisfy its independently "
-                                    "recomputed residual tolerance");
-    out.residual_norms.data()[c] = static_cast<Scalar>(true_norm);
+        "iterative covariance solve cannot certify full SPD support");
   }
-  return Result<linear::LinearEstimate>::success(std::move(out));
+  EvaluationBudget evaluations(
+      std::min<Index>(limits.evaluations, policy.iteration.max_evaluations));
+  Wide cutoff = policy.rank_abs;
+  if (relative_ceiling > cutoff) {
+    const Wide envelope = 64 * epsilon * static_cast<Wide>(n) * bounds.upper;
+    if (maximum.upper == 0 || maximum.upper - maximum.lower > envelope) {
+      const Wide arithmetic_scale =
+          spec.low_rank_or_points
+              ? 1 + static_cast<Wide>(spec.low_rank_or_points->columns())
+              : 1;
+      const auto refined =
+          refineMaximum(apply, n, bounds.upper, bounds.lower, arithmetic_scale,
+                        policy.iteration.max_iterations, limits, evaluations);
+      if (!refined.hasValue()) {
+        return forward<LinearEstimate>(refined.status());
+      }
+      maximum.value = refined.value();
+    }
+    cutoff = std::max<Wide>(cutoff, policy.rank_rel * maximum.value);
+  }
+  if (!representable(cutoff)) {
+    return fail<LinearEstimate>(
+        ErrorCode::NonFiniteResult,
+        "iterative covariance cutoff is not representable");
+  }
+  if (p != 0 && !reserve<Wide>(limits, n, 5)) {
+    return fail<LinearEstimate>(ErrorCode::ResourceLimit,
+                                "PCG vectors exceed limits");
+  }
+  LinearEstimate result{.parameters = Matrix(n, p),
+                        .covariance = std::nullopt,
+                        .identified_basis = std::nullopt,
+                        .residual_norms = Vector(p),
+                        .rank = n,
+                        .rank_cutoff = static_cast<Scalar>(cutoff)};
+  if (p == 0) {
+    return Result<LinearEstimate>::success(std::move(result));
+  }
+  WideVector x(n);
+  WideVector r(n);
+  WideVector z(n);
+  WideVector direction(n);
+  WideVector image(n);
+  for (Index col = 0; col < p; ++col) {
+    std::ranges::fill(x, 0);
+    if (!evaluations.charge()) {
+      return fail<LinearEstimate>(
+          ErrorCode::ResourceLimit,
+          "initial PCG residual exceeds evaluation limit");
+    }
+    apply(x, image);
+    for (Index i = 0; i < n; ++i) {
+      r[i] = static_cast<Wide>(rhs.at(i, col)) - image[i];
+    }
+    Wide true_residual = norm(r);
+    const Wide tolerance =
+        policy.iteration.abs + policy.iteration.rel * true_residual;
+    Wide previous_energy = 0;
+    for (Index step = 0;
+         true_residual > tolerance && step < policy.iteration.max_iterations;
+         ++step) {
+      if (!evaluations.charge(3)) {
+        return fail<LinearEstimate>(ErrorCode::ResourceLimit,
+                                    "PCG step exceeds evaluation limit");
+      }
+      for (Index i = 0; i < n; ++i) {
+        z[i] = r[i] / diagonal[i];
+      }
+      const Wide energy = sum(n, [&](Index i) { return r[i] * z[i]; });
+      if (!(energy > 0) || !std::isfinite(energy)) {
+        return fail<LinearEstimate>(ErrorCode::NoConvergence,
+                                    "PCG preconditioned residual broke down");
+      }
+      const Wide beta = step == 0 ? 0 : energy / previous_energy;
+      for (Index i = 0; i < n; ++i) {
+        direction[i] = std::fma(beta, direction[i], z[i]);
+      }
+      apply(direction, image);
+      const Wide curvature =
+          sum(n, [&](Index i) { return direction[i] * image[i]; });
+      if (!(curvature > 0) || !std::isfinite(curvature)) {
+        return fail<LinearEstimate>(ErrorCode::NoConvergence,
+                                    "PCG curvature broke down");
+      }
+      const Wide alpha = energy / curvature;
+      for (Index i = 0; i < n; ++i) {
+        x[i] = std::fma(alpha, direction[i], x[i]);
+        r[i] = std::fma(-alpha, image[i], r[i]);
+        if (!representable(x[i])) {
+          return fail<LinearEstimate>(ErrorCode::NonFiniteResult,
+                                      "PCG solution is not representable");
+        }
+        z[i] = static_cast<Scalar>(x[i]);
+        result.parameters.at(i, col) = static_cast<Scalar>(x[i]);
+      }
+      apply(z, image);
+      for (Index i = 0; i < n; ++i) {
+        image[i] -= rhs.at(i, col);
+      }
+      true_residual = norm(image);
+      previous_energy = energy;
+    }
+    if (!std::isfinite(true_residual) || true_residual > tolerance) {
+      return fail<LinearEstimate>(
+          ErrorCode::NoConvergence,
+          "PCG did not meet its true-residual tolerance");
+    }
+    if (!representable(true_residual)) {
+      return fail<LinearEstimate>(ErrorCode::NonFiniteResult,
+                                  "PCG residual is not representable");
+    }
+    result.residual_norms.at(col) = static_cast<Scalar>(true_residual);
+  }
+  return Result<LinearEstimate>::success(std::move(result));
 }
+
+Status checkPolicy(SolvePolicy policy) {
+  if (!linear::detail::validNumericalPolicy(policy)) {
+    return Status::failure(ErrorCode::InvalidTolerance,
+                           "invalid structured covariance tolerance");
+  }
+  if (policy.rank != RankPolicy::reject &&
+      policy.rank != RankPolicy::supported_subspace &&
+      policy.rank != RankPolicy::minimum_norm) {
+    return Status::failure(ErrorCode::InvalidDomain,
+                           "invalid covariance rank policy");
+  }
+  return Status::success();
+}
+
+Result<Index> validateOwned(const StructuredCovariance& covariance,
+                            const StructuredSpec& spec) {
+  auto size = validate(spec);
+  if (size.hasValue() && size.value() != covariance.dimension) {
+    return fail<Index>(
+        ErrorCode::DimensionMismatch,
+        "stored covariance dimension does not match its payload");
+  }
+  return size;
+}
+
 } // namespace
 
-Result<StructuredCovariance> structuredCovariance(const StructuredSpec& s,
-                                                  SolvePolicy p, Limits lim) {
-  if (!validPolicy(p))
-    return fail<StructuredCovariance>(
-        ErrorCode::InvalidTolerance, "structured covariance policy is invalid");
-  if (static_cast<unsigned>(s.kind) >
-      static_cast<unsigned>(StructureKind::gaussian_kernel))
-    return fail<StructuredCovariance>(ErrorCode::InvalidDomain,
-                                      "unknown covariance structure");
-  Index n = s.diagonal_or_lags.size();
-  Vector diag;
-  std::optional<Matrix> auxiliary;
-  std::vector<Matrix> factors;
-  std::optional<Scalar> scale, length;
-  const auto noExtra = [&] {
-    return !s.low_rank_or_points && s.factors.empty() && !s.kernel_scale &&
-           !s.kernel_length;
-  };
-  Index preflight = 0U;
-  if (s.kind == StructureKind::diagonal_low_rank) {
-    preflight = n;
-    if (s.low_rank_or_points) {
-      Index count = 0U;
-      if (!mul(s.low_rank_or_points->rows(), s.low_rank_or_points->columns(),
-               count) ||
-          !add(preflight, count, preflight))
-        return fail<StructuredCovariance>(ErrorCode::SizeOverflow,
-                                          "low-rank payload size overflows");
-    }
-  } else if (s.kind == StructureKind::toeplitz) {
-    Index square = 0U;
-    if (!mul(n, n, square) || !mul(square, 6U, preflight) ||
-        !add(preflight, n, preflight))
-      return fail<StructuredCovariance>(ErrorCode::SizeOverflow,
-                                        "Toeplitz certificate size overflows");
-  } else if (s.kind == StructureKind::gaussian_kernel && s.low_rank_or_points) {
-    if (!mul(s.low_rank_or_points->rows(), s.low_rank_or_points->columns(),
-             preflight))
-      return fail<StructuredCovariance>(ErrorCode::SizeOverflow,
-                                        "Gaussian point storage overflows");
-  } else if (s.kind == StructureKind::block ||
-             s.kind == StructureKind::kronecker) {
-    Index copied = 0U;
-    Index largest_square = 0U;
-    for (const Matrix& factor : s.factors) {
-      Index square = 0U;
-      if (!mul(factor.rows(), factor.rows(), square) ||
-          !add(copied, factor.size(), copied))
-        return fail<StructuredCovariance>(ErrorCode::SizeOverflow,
-                                          "factor payload size overflows");
-      largest_square = std::max(largest_square, square);
-    }
-    Index validation = 0U;
-    if (!mul(largest_square, 6U, validation) ||
-        !add(copied, validation, preflight))
-      return fail<StructuredCovariance>(ErrorCode::SizeOverflow,
-                                        "factor certificate size overflows");
+Result<StructuredCovariance> structuredCovariance(const StructuredSpec& spec,
+                                                  SolvePolicy policy,
+                                                  Limits limits) {
+  if (const auto status = checkPolicy(policy); !status.ok()) {
+    return forward<StructuredCovariance>(status);
   }
-  if (preflight > lim.elements || preflight > lim.bytes / sizeof(Scalar))
-    return fail<StructuredCovariance>(ErrorCode::ResourceLimit,
-                                      "construction output and simultaneous "
-                                      "certificate workspace exceed limits");
-  if (s.kind == StructureKind::diagonal_low_rank) {
-    if (!s.factors.empty() || s.kernel_scale || s.kernel_length)
-      return fail<StructuredCovariance>(
-          ErrorCode::InvalidDomain, "inactive covariance fields must be empty");
-    if (!finite(s.diagonal_or_lags))
-      return fail<StructuredCovariance>(ErrorCode::NonFiniteInput,
-                                        "diagonal covariance is non-finite");
-    for (Index i = 0; i < n; ++i)
-      if (s.diagonal_or_lags.at(i) < 0)
-        return fail<StructuredCovariance>(ErrorCode::NotPositiveSemidefinite,
-                                          "diagonal covariance is negative");
-    if (s.low_rank_or_points) {
-      if (s.low_rank_or_points->rows() != n || !finite(*s.low_rank_or_points))
-        return fail<StructuredCovariance>(ErrorCode::DimensionMismatch,
-                                          "low-rank factor shape is invalid");
-      auxiliary.emplace(n, s.low_rank_or_points->columns());
-      for (Index i = 0; i < n; ++i)
-        for (Index j = 0; j < auxiliary->columns(); ++j)
-          auxiliary->at(i, j) = s.low_rank_or_points->at(i, j);
-    }
-  } else if (s.kind == StructureKind::toeplitz) {
-    if (!noExtra())
-      return fail<StructuredCovariance>(
-          ErrorCode::InvalidDomain, "inactive covariance fields must be empty");
-    if (!finite(s.diagonal_or_lags))
-      return fail<StructuredCovariance>(ErrorCode::NonFiniteInput,
-                                        "Toeplitz lags are non-finite");
-    if (n) {
-      Index elems = 0;
-      if (!mul(n, n, elems) || elems > lim.elements ||
-          elems > lim.bytes / sizeof(Scalar))
-        return fail<StructuredCovariance>(
-            ErrorCode::ResourceLimit,
-            "Toeplitz PSD certificate exceeds limits");
-      Matrix dense(n, n, 0.0);
-      for (Index i = 0; i < n; ++i)
-        for (Index j = 0; j < n; ++j)
-          dense.at(i, j) = s.diagonal_or_lags.at(i > j ? i - j : j - i);
-      auto cert = analyzeCovariance(dense.view());
-      if (!cert.hasValue())
-        return fail<StructuredCovariance>(cert.status().code(),
-                                          "Toeplitz PSD certification failed");
-      if (cert.value().classification() ==
-          CovarianceClassification::NotPositiveSemidefinite)
-        return fail<StructuredCovariance>(ErrorCode::NotPositiveSemidefinite,
-                                          "Toeplitz covariance is not PSD");
-    }
-  } else if (s.kind == StructureKind::block ||
-             s.kind == StructureKind::kronecker) {
-    if (!empty(s.diagonal_or_lags) || s.low_rank_or_points || s.kernel_scale ||
-        s.kernel_length)
-      return fail<StructuredCovariance>(
-          ErrorCode::InvalidDomain, "inactive covariance fields must be empty");
-    n = s.kind == StructureKind::block ? 0U : 1U;
-    for (const auto& f : s.factors) {
-      if (f.rows() != f.columns() || !finite(f.view()))
-        return fail<StructuredCovariance>(
-            ErrorCode::DimensionMismatch,
-            "covariance factors must be finite and square");
-      if (s.kind == StructureKind::block) {
-        if (!add(n, f.rows(), n))
-          return fail<StructuredCovariance>(
-              ErrorCode::SizeOverflow, "block covariance dimension overflows");
-      } else if (!mul(n, f.rows(), n))
-        return fail<StructuredCovariance>(
-            ErrorCode::SizeOverflow,
-            "Kronecker covariance dimension overflows");
-      if (f.rows()) {
-        auto cert = analyzeCovariance(f.view());
-        if (!cert.hasValue() ||
-            cert.value().classification() ==
-                CovarianceClassification::NotPositiveSemidefinite)
-          return fail<StructuredCovariance>(ErrorCode::NotPositiveSemidefinite,
-                                            "covariance factor is not PSD");
-      }
-      factors.push_back(f);
-    }
-  } else {
-    if (!empty(s.diagonal_or_lags) || !s.low_rank_or_points ||
-        !s.factors.empty() || !s.kernel_scale || !s.kernel_length)
-      return fail<StructuredCovariance>(
-          ErrorCode::InvalidDomain,
-          "Gaussian kernel fields are incomplete or contain inactive values");
-    if (s.low_rank_or_points->columns() == 0 ||
-        !finite(*s.low_rank_or_points) || !std::isfinite(*s.kernel_scale) ||
-        *s.kernel_scale < 0 || !std::isfinite(*s.kernel_length) ||
-        !(*s.kernel_length > 0))
-      return fail<StructuredCovariance>(
-          ErrorCode::InvalidDomain, "Gaussian kernel parameters are invalid");
-    n = s.low_rank_or_points->rows();
-    auxiliary.emplace(n, s.low_rank_or_points->columns());
-    for (Index i = 0; i < n; ++i)
-      for (Index j = 0; j < auxiliary->columns(); ++j)
-        auxiliary->at(i, j) = s.low_rank_or_points->at(i, j);
-    scale = s.kernel_scale;
-    length = s.kernel_length;
+  const auto dimension = validate(spec);
+  if (!dimension.hasValue()) {
+    return forward<StructuredCovariance>(dimension.status());
   }
-  Index payload = 0;
-  if (!add(n, auxiliary ? auxiliary->size() : 0, payload))
-    return fail<StructuredCovariance>(
-        ErrorCode::SizeOverflow, "structured covariance payload overflows");
-  for (const auto& f : factors)
-    if (!add(payload, f.size(), payload))
-      return fail<StructuredCovariance>(
-          ErrorCode::SizeOverflow, "structured covariance payload overflows");
-  if (!add(payload,
-           s.kind == StructureKind::diagonal_low_rank ||
-                   s.kind == StructureKind::toeplitz
-               ? n
-               : 0,
-           payload) ||
-      payload > lim.elements || payload > lim.bytes / sizeof(Scalar))
+  const Index n = dimension.value();
+  if (spec.kind == StructureKind::toeplitz &&
+      bandwidth(spec.diagonal_or_lags) != 0) {
+    auto spectrum = symmetricSpectrum(
+        n,
+        [&](Index i, Index j) {
+          return static_cast<Wide>(
+              spec.diagonal_or_lags.at(i < j ? j - i : i - j));
+        },
+        policy, limits);
+    if (!spectrum.hasValue()) {
+      return forward<StructuredCovariance>(spectrum.status());
+    }
+    if (const auto status = certifyPsd(spectrum.value().values); !status.ok()) {
+      return forward<StructuredCovariance>(status);
+    }
+  }
+  for (const auto& factor : spec.factors) {
+    auto spectrum = symmetricSpectrum(
+        factor.rows(),
+        [&](Index i, Index j) { return symmetricEntry(factor, i, j); }, policy,
+        limits);
+    if (!spectrum.hasValue()) {
+      return forward<StructuredCovariance>(spectrum.status());
+    }
+    if (const auto status = certifyPsd(spectrum.value().values); !status.ok()) {
+      return forward<StructuredCovariance>(status);
+    }
+  }
+
+  Limits copy_budget = limits;
+  if (!reserve<Scalar>(copy_budget, spec.diagonal_or_lags.size()) ||
+      (spec.low_rank_or_points &&
+       !reserve<Scalar>(copy_budget, spec.low_rank_or_points->rows(),
+                        spec.low_rank_or_points->columns())) ||
+      !reserve<Matrix>(copy_budget, spec.factors.size(), 2)) {
     return fail<StructuredCovariance>(
         ErrorCode::ResourceLimit,
-        "structured covariance payload exceeds limits");
-  if (s.kind == StructureKind::diagonal_low_rank ||
-      s.kind == StructureKind::toeplitz) {
-    diag = Vector(n, 0.0);
-    for (Index i = 0; i < n; ++i)
-      diag.data()[i] = s.diagonal_or_lags.at(i);
+        "owned covariance payload exceeds storage limits");
   }
-  auto copied = Array<Matrix>::copy(factors, lim);
-  if (!copied.hasValue())
-    return fail<StructuredCovariance>(copied.status().code(),
-                                      "covariance factors exceed limits");
+  for (const auto& factor : spec.factors) {
+    if (!reserve<Scalar>(copy_budget, factor.size(), 2)) {
+      return fail<StructuredCovariance>(
+          ErrorCode::ResourceLimit, "copied covariance factors exceed limits");
+    }
+  }
+  std::vector<Matrix> canonical;
+  canonical.reserve(spec.factors.size());
+  for (const auto& factor : spec.factors) {
+    Matrix matrix(factor.rows(), factor.columns());
+    for (Index i = 0; i < factor.rows(); ++i) {
+      for (Index j = 0; j <= i; ++j) {
+        const auto value = static_cast<Scalar>(symmetricEntry(factor, i, j));
+        matrix.at(i, j) = value;
+        matrix.at(j, i) = value;
+      }
+    }
+    canonical.push_back(std::move(matrix));
+  }
+  auto factors = Array<Matrix>::copy(canonical, limits);
+  if (!factors.hasValue()) {
+    return forward<StructuredCovariance>(factors.status());
+  }
+  Vector lags(spec.diagonal_or_lags.size());
+  for (Index i = 0; i < lags.size(); ++i) {
+    lags.at(i) = spec.diagonal_or_lags.at(i);
+  }
+  std::optional<Matrix> auxiliary;
+  if (spec.low_rank_or_points) {
+    const auto values = *spec.low_rank_or_points;
+    auxiliary.emplace(values.rows(), values.columns());
+    for (Index i = 0; i < values.rows(); ++i) {
+      for (Index j = 0; j < values.columns(); ++j) {
+        auxiliary->at(i, j) = values.at(i, j);
+      }
+    }
+  }
   return Result<StructuredCovariance>::success(
-      StructuredCovariance{s.kind, n, std::move(diag), std::move(auxiliary),
-                           std::move(copied).value(), scale, length});
+      {spec.kind, n, std::move(lags), std::move(auxiliary),
+       std::move(factors).value(), spec.kernel_scale, spec.kernel_length});
 }
 
 Result<StructuredCovariance>
-kroneckerCovariance(std::span<const Matrix> factors, SolvePolicy p,
-                    Limits lim) {
-  const Vector empty_vector;
-  return structuredCovariance(
-      StructuredSpec{StructureKind::kronecker, empty_vector.view(),
-                     std::nullopt, factors, std::nullopt, std::nullopt},
-      p, lim);
+kroneckerCovariance(std::span<const Matrix> factors, SolvePolicy policy,
+                    Limits limits) {
+  const Vector empty;
+  return structuredCovariance({StructureKind::kronecker, empty.view(),
+                               std::nullopt, factors, std::nullopt,
+                               std::nullopt},
+                              policy, limits);
 }
 
-Result<Vector> applyStructuredCovariance(const StructuredCovariance& s,
-                                         ConstVectorView x, Limits lim) {
-  return applyRaw(s, x, lim);
+Result<Vector> applyStructuredCovariance(const StructuredCovariance& covariance,
+                                         ConstVectorView value, Limits limits) {
+  const auto spec = borrow(covariance);
+  const auto size = validateOwned(covariance, spec);
+  if (!size.hasValue()) {
+    return forward<Vector>(size.status());
+  }
+  const Index n = size.value();
+  if (value.size() != n) {
+    return fail<Vector>(ErrorCode::DimensionMismatch,
+                        "structured covariance vector size differs");
+  }
+  if (!finite(value)) {
+    return fail<Vector>(ErrorCode::NonFiniteInput,
+                        "structured covariance vector is non-finite");
+  }
+  if (!reserve<Scalar>(limits, n) || !reserve<Wide>(limits, n, 2) ||
+      !reserve<Wide>(limits, Action::scratchSize(spec, n))) {
+    return fail<Vector>(ErrorCode::ResourceLimit,
+                        "structured covariance action exceeds limits");
+  }
+  WideVector input(n);
+  WideVector output(n);
+  WideVector scratch(Action::scratchSize(spec, n));
+  for (Index i = 0; i < n; ++i) {
+    input[i] = value.at(i);
+  }
+  Action(spec, n, scratch)(input, output);
+  Vector result(n);
+  for (Index i = 0; i < n; ++i) {
+    if (!representable(output[i])) {
+      return fail<Vector>(ErrorCode::NonFiniteResult,
+                          "structured covariance action is not representable");
+    }
+    result.at(i) = static_cast<Scalar>(output[i]);
+  }
+  return Result<Vector>::success(std::move(result));
 }
 
-Result<linear::LinearEstimate>
-solveStructuredCovariance(const StructuredCovariance& s, ConstMatrixView rhs,
-                          StructuredSolveKind mode, SolvePolicy p, Limits lim) {
-  if (!validPolicy(p))
-    return fail<linear::LinearEstimate>(
-        ErrorCode::InvalidTolerance,
-        "structured covariance solve policy is invalid");
+Result<LinearEstimate>
+solveStructuredCovariance(const StructuredCovariance& covariance,
+                          ConstMatrixView rhs, StructuredSolveKind mode,
+                          SolvePolicy policy, Limits limits) {
+  if (const auto status = checkPolicy(policy); !status.ok()) {
+    return forward<LinearEstimate>(status);
+  }
   if (mode != StructuredSolveKind::factorized &&
-      mode != StructuredSolveKind::iterative)
-    return fail<linear::LinearEstimate>(ErrorCode::InvalidDomain,
-                                        "unknown structured solve mode");
-  if (rhs.rows() != s.dimension)
-    return fail<linear::LinearEstimate>(
-        ErrorCode::DimensionMismatch, "structured covariance RHS row mismatch");
-  if (!finite(rhs))
-    return fail<linear::LinearEstimate>(
-        ErrorCode::NonFiniteInput, "structured covariance RHS is non-finite");
-  if (mode == StructuredSolveKind::iterative)
-    return pcgDiagonal(s, rhs, p, lim);
-  if (s.dimension == 0U) {
-    return Result<linear::LinearEstimate>::success(
-        linear::LinearEstimate{.parameters = Matrix(0U, rhs.columns()),
-                               .covariance = std::nullopt,
-                               .identified_basis = std::nullopt,
-                               .residual_norms = Vector(rhs.columns(), 0.0),
-                               .rank = 0U,
-                               .rank_cutoff = p.rank_abs});
+      mode != StructuredSolveKind::iterative) {
+    return fail<LinearEstimate>(ErrorCode::InvalidDomain,
+                                "invalid structured solve mode");
   }
-  Index square = 0, out = 0;
-  if (!mul(s.dimension, s.dimension, square) ||
-      !mul(s.dimension, rhs.columns(), out))
-    return fail<linear::LinearEstimate>(ErrorCode::SizeOverflow,
-                                        "structured solve size overflows");
-  Index required = 0U, rows_work = 0U, bytes = 0U, index_bytes = 0U;
-  if (!mul(square, 5U, required) || !add(required, out, required) ||
-      !mul(s.dimension, 8U, rows_work) || !add(required, rows_work, required) ||
-      !mul(rhs.columns(), 2U, rows_work) ||
-      !add(required, rows_work, required) ||
-      !mul(required, sizeof(Scalar), bytes) ||
-      !mul(s.dimension, sizeof(Index), index_bytes) ||
-      !add(bytes, index_bytes, bytes) || required > lim.elements ||
-      bytes > lim.bytes)
-    return fail<linear::LinearEstimate>(
-        ErrorCode::ResourceLimit,
-        "factorized structured solve and eigensolver peak exceed limits");
-  Matrix dense(s.dimension, s.dimension, 0.0);
-  Vector unit(s.dimension, 0.0);
-  for (Index j = 0; j < s.dimension; ++j) {
-    unit.data()[j] = 1.0;
-    auto col = applyRaw(s, unit.view(),
-                        Limits{.elements = s.dimension,
-                               .bytes = s.dimension * sizeof(Scalar),
-                               .evaluations = lim.evaluations});
-    unit.data()[j] = 0.0;
-    if (!col.hasValue())
-      return fail<linear::LinearEstimate>(
-          col.status().code(),
-          "structured operator application failed during factorization");
-    for (Index i = 0; i < s.dimension; ++i)
-      dense.at(i, j) = col.value().at(i);
+  const auto spec = borrow(covariance);
+  const auto size = validateOwned(covariance, spec);
+  if (!size.hasValue()) {
+    return forward<LinearEstimate>(size.status());
   }
-  for (Index i = 0; i < s.dimension; ++i)
-    for (Index j = 0; j < i; ++j) {
-      const Scalar v = 0.5 * dense.at(i, j) + 0.5 * dense.at(j, i);
-      dense.at(i, j) = v;
-      dense.at(j, i) = v;
-    }
-  auto eig = linear::decomposeSymmetricEigen(dense.view());
-  if (!eig.hasValue())
-    return fail<linear::LinearEstimate>(
-        eig.status().code(), "structured covariance spectrum failed");
-  if (eig.value().definiteness() ==
-      linear::PositiveDefiniteness::NotPositiveSemidefinite)
-    return fail<linear::LinearEstimate>(ErrorCode::NotPositiveSemidefinite,
-                                        "represented covariance is not PSD");
-  const auto values = eig.value().eigenvalues();
-  const auto q = eig.value().eigenvectors();
-  Scalar max =
-      values.empty() ? 0.0 : std::max(0.0, values.at(values.size() - 1));
-  const long double tw = std::max(static_cast<long double>(p.rank_abs),
-                                  static_cast<long double>(p.rank_rel) * max);
-  if (!std::isfinite(tw) || tw > std::numeric_limits<Scalar>::max())
-    return fail<linear::LinearEstimate>(
-        ErrorCode::NonFiniteResult,
-        "structured rank cutoff is not representable");
-  Scalar tau = static_cast<Scalar>(tw);
-  Index rank = 0;
-  Scalar minret = max;
-  for (Index k = 0; k < values.size(); ++k)
-    if (values.at(k) > tau) {
-      ++rank;
-      minret = std::min(minret, values.at(k));
-    }
-  if (p.rank == RankPolicy::reject && rank != s.dimension) {
-    return fail<linear::LinearEstimate>(
-        ErrorCode::RankDeficient, "structured covariance is rank deficient");
+  if (size.value() != rhs.rows()) {
+    return fail<LinearEstimate>(ErrorCode::DimensionMismatch,
+                                "covariance RHS height differs from order");
   }
-  if (rank && max > 0.0 &&
-      static_cast<long double>(minret) / max < p.reciprocal_condition_floor) {
-    return fail<linear::LinearEstimate>(
-        ErrorCode::IllConditioned,
-        "structured covariance fails condition floor");
+  if (!finite(rhs)) {
+    return fail<LinearEstimate>(ErrorCode::NonFiniteInput,
+                                "structured covariance RHS is non-finite");
   }
-  const bool deficient = rank < s.dimension;
-  Index basis_elems = deficient ? s.dimension * rank : 0;
-  Index total = 0;
-  if (!add(out, rhs.columns(), total) || !add(total, basis_elems, total) ||
-      !add(total, square, total) || total > lim.elements ||
-      total > lim.bytes / sizeof(Scalar))
-    return fail<linear::LinearEstimate>(
-        ErrorCode::ResourceLimit, "structured solve workspace exceeds limits");
-  linear::LinearEstimate result{
-      .parameters = Matrix(s.dimension, rhs.columns(), 0.0),
-      .covariance = std::nullopt,
-      .identified_basis =
-          deficient ? std::optional<Matrix>(Matrix(s.dimension, rank, 0.0))
-                    : std::nullopt,
-      .residual_norms = Vector(rhs.columns(), 0.0),
-      .rank = rank,
-      .rank_cutoff = tau};
-  Index bc = 0;
-  for (Index k = 0; k < values.size(); ++k)
-    if (values.at(k) > tau) {
-      if (deficient) {
-        for (Index i = 0; i < s.dimension; ++i)
-          result.identified_basis->at(i, bc) = q.at(i, k);
-        ++bc;
-      }
-      for (Index col = 0; col < rhs.columns(); ++col) {
-        long double proj = 0;
-        for (Index i = 0; i < s.dimension; ++i)
-          proj += static_cast<long double>(q.at(i, k)) * rhs.at(i, col);
-        proj /= values.at(k);
-        for (Index i = 0; i < s.dimension; ++i)
-          result.parameters.at(i, col) = static_cast<Scalar>(
-              static_cast<long double>(result.parameters.at(i, col)) +
-              q.at(i, k) * proj);
-      }
-    }
-  for (Index col = 0; col < rhs.columns(); ++col) {
-    Vector x(s.dimension, 0.0);
-    for (Index i = 0; i < s.dimension; ++i)
-      x.data()[i] = result.parameters.at(i, col);
-    auto ax = applyRaw(s, x.view(), lim);
-    if (!ax.hasValue())
-      return fail<linear::LinearEstimate>(ax.status().code(),
-                                          "structured residual action failed");
-    long double norm = 0;
-    for (Index i = 0; i < s.dimension; ++i)
-      norm = std::hypot(norm, static_cast<long double>(ax.value().at(i)) -
-                                  rhs.at(i, col));
-    if (!std::isfinite(norm) || norm > std::numeric_limits<Scalar>::max())
-      return fail<linear::LinearEstimate>(
-          ErrorCode::NonFiniteResult,
-          "structured residual is not representable");
-    result.residual_norms.data()[col] = static_cast<Scalar>(norm);
-  }
-  return Result<linear::LinearEstimate>::success(std::move(result));
+  return mode == StructuredSolveKind::factorized
+             ? factorizedSolve(spec, size.value(), rhs, policy, limits)
+             : iterativeSolve(spec, size.value(), rhs, policy, limits);
 }
+
 } // namespace vss::math::covariance

@@ -25,6 +25,7 @@
 #include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/covariance/Diagnostics.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/covariance/Structured.hpp>
 #include <vss/math/covariance/UncertaintySummary.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
@@ -32,6 +33,8 @@
 #include <vss/math/linear/RankAware.hpp>
 #include <vss/math/linear/Reduction.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
+#include <vss/math/linear/Sparse.hpp>
+#include <vss/math/linear/Structured.hpp>
 #include <vss/math/version.hpp>
 
 namespace {
@@ -71,6 +74,44 @@ int main() {
   }
 
   const Limits limits{.elements = 64U, .bytes = 4096U, .evaluations = 64U};
+  {
+    const Vector input(std::array{2.0, 3.0});
+    const Vector diagonal(std::array{4.0, 5.0});
+    const auto action =
+        linear::apply(linear::DiagonalMatrix{diagonal}, input.view(), limits);
+    const auto structured = covariance::structuredCovariance(
+        {covariance::StructureKind::diagonal_low_rank,
+         diagonal.view(),
+         std::nullopt,
+         {},
+         std::nullopt,
+         std::nullopt},
+        SolvePolicy{}, limits);
+    if (!require(
+            action.hasValue() && action.value().at(0) == 8 &&
+                structured.hasValue(),
+            "installed structured construction or diagonal action failed")) {
+      return 1;
+    }
+    const auto applied = covariance::applyStructuredCovariance(
+        structured.value(), input.view(), limits);
+    if (!require(applied.hasValue() && applied.value().at(1) == 15,
+                 "installed structured covariance action failed")) {
+      return 1;
+    }
+    const auto sparse = linear::sparseCSRFromTriplets(
+        2, 2, std::array{linear::Triplet{0, 1, 4}}, limits);
+    if (!require(sparse.hasValue(), "installed sparse construction failed")) {
+      return 1;
+    }
+    const auto sparse_product =
+        linear::apply(sparse.value(), input.view(), limits);
+    if (!require(sparse_product.hasValue() &&
+                     sparse_product.value().at(0) == 12,
+                 "installed sparse action failed")) {
+      return 1;
+    }
+  }
   const auto tensorProduct = hadamard(tensor.value(), tensor.value(), limits);
   if (!require(tensorProduct.hasValue() &&
                    tensorProduct.value().at(std::array<Index, 2>{1U, 1U}) ==
