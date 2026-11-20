@@ -1,5 +1,6 @@
 #include "BandSolve.hpp"
 #include "DenseWorkspace.hpp"
+#include "ScaledContraction.hpp"
 
 #include <algorithm>
 #include <array>
@@ -54,53 +55,7 @@ bool finite(ConstMatrixView matrix) noexcept {
 }
 
 Result<Scalar> scaledProducts(Index count, const auto& pair_at) {
-  int common_exponent = std::numeric_limits<int>::min();
-  for (Index i = 0U; i < count; ++i) {
-    const auto [lhs, rhs] = pair_at(i);
-    if (lhs == 0.0 || rhs == 0.0) {
-      continue;
-    }
-    int lhs_exponent = 0;
-    int rhs_exponent = 0;
-    static_cast<void>(std::frexp(lhs, &lhs_exponent));
-    static_cast<void>(std::frexp(rhs, &rhs_exponent));
-    common_exponent = std::max(common_exponent, lhs_exponent + rhs_exponent);
-  }
-  if (common_exponent == std::numeric_limits<int>::min()) {
-    return Result<Scalar>::success(0.0);
-  }
-  Scalar sum = 0.0;
-  Scalar correction = 0.0;
-  const auto add = [&sum, &correction](Scalar value) {
-    const Scalar next = sum + value;
-    if (!std::isfinite(next)) {
-      return false;
-    }
-    correction += std::abs(sum) >= std::abs(value) ? (sum - next) + value
-                                                   : (value - next) + sum;
-    sum = next;
-    return std::isfinite(correction);
-  };
-  for (Index i = 0U; i < count; ++i) {
-    const auto [lhs, rhs] = pair_at(i);
-    if (lhs == 0.0 || rhs == 0.0) {
-      continue;
-    }
-    int lhs_exponent = 0;
-    int rhs_exponent = 0;
-    const Scalar lhs_fraction = std::frexp(lhs, &lhs_exponent);
-    const Scalar rhs_fraction = std::frexp(rhs, &rhs_exponent);
-    const int exponent = lhs_exponent + rhs_exponent;
-    const Scalar product = lhs_fraction * rhs_fraction;
-    const Scalar product_error = std::fma(lhs_fraction, rhs_fraction, -product);
-    const int shift = exponent - common_exponent;
-    if (!add(std::scalbn(product, shift)) ||
-        !add(std::scalbn(product_error, shift))) {
-      return failure<Scalar>(ErrorCode::NonFiniteResult,
-                             "structured row accumulation overflowed");
-    }
-  }
-  const Scalar result = std::scalbn(sum + correction, common_exponent);
+  const auto result = static_cast<Scalar>(detail::scaledDot(count, pair_at));
   if (!std::isfinite(result)) {
     return failure<Scalar>(ErrorCode::NonFiniteResult,
                            "structured row result is not representable");
@@ -109,52 +64,7 @@ Result<Scalar> scaledProducts(Index count, const auto& pair_at) {
 }
 
 Result<Wide> scaledProductsWide(Index count, const auto& pair_at) {
-  int common_exponent = std::numeric_limits<int>::min();
-  for (Index i = 0U; i < count; ++i) {
-    const auto [lhs, rhs] = pair_at(i);
-    if (lhs == 0.0 || rhs == 0.0) {
-      continue;
-    }
-    int lhs_exponent = 0;
-    int rhs_exponent = 0;
-    static_cast<void>(std::frexp(lhs, &lhs_exponent));
-    static_cast<void>(std::frexp(rhs, &rhs_exponent));
-    common_exponent = std::max(common_exponent, lhs_exponent + rhs_exponent);
-  }
-  if (common_exponent == std::numeric_limits<int>::min()) {
-    return Result<Wide>::success(0.0L);
-  }
-  Scalar sum = 0.0;
-  Scalar correction = 0.0;
-  const auto add = [&sum, &correction](Scalar value) {
-    const Scalar next = sum + value;
-    if (!std::isfinite(next)) {
-      return false;
-    }
-    correction += std::abs(sum) >= std::abs(value) ? (sum - next) + value
-                                                   : (value - next) + sum;
-    sum = next;
-    return std::isfinite(correction);
-  };
-  for (Index i = 0U; i < count; ++i) {
-    const auto [lhs, rhs] = pair_at(i);
-    if (lhs == 0.0 || rhs == 0.0) {
-      continue;
-    }
-    int lhs_exponent = 0;
-    int rhs_exponent = 0;
-    const Scalar lhs_fraction = std::frexp(lhs, &lhs_exponent);
-    const Scalar rhs_fraction = std::frexp(rhs, &rhs_exponent);
-    const int shift = lhs_exponent + rhs_exponent - common_exponent;
-    const Scalar product = lhs_fraction * rhs_fraction;
-    const Scalar error = std::fma(lhs_fraction, rhs_fraction, -product);
-    if (!add(std::scalbn(product, shift)) || !add(std::scalbn(error, shift))) {
-      return failure<Wide>(ErrorCode::NoConvergence,
-                           "wide scaled product accumulation was unresolved");
-    }
-  }
-  const Wide result =
-      std::scalbn(static_cast<Wide>(sum + correction), common_exponent);
+  const Wide result = detail::scaledDot(count, pair_at);
   if (!std::isfinite(result)) {
     return failure<Wide>(ErrorCode::NonFiniteResult,
                          "wide scaled product accumulation overflowed");

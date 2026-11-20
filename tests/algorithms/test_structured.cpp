@@ -368,6 +368,15 @@ void structuredActionFailureAndAccuracyCases() {
                                             0, 0, matrix({{value, value}})}})},
                     pair.view(), limits());
   VSS_CHECK(cancellation.hasValue() && cancellation.value().at(0) == 0);
+  const Scalar very_large = std::scalbn(1.0, 1023);
+  const Vector mixed_input(std::array{very_large, -very_large, 1.0});
+  const auto after_cancellation = linear::apply(
+      linear::BlockMatrix{one, array(std::array<Index, 1>{3}),
+                          array(std::array{linear::MatrixBlock{
+                              0, 0, matrix({{very_large, very_large, 1}})}})},
+      mixed_input.view(), limits());
+  VSS_CHECK(after_cancellation.hasValue() &&
+            after_cancellation.value().at(0) == 1);
   const auto operation = [&](const Matrix& tile, const Vector& input,
                              Limits bound) {
     return linear::apply(

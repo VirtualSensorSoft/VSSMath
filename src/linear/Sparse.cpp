@@ -1,3 +1,5 @@
+#include "ScaledContraction.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -29,21 +31,6 @@ bool multiplyFits(std::size_t lhs, std::size_t rhs) noexcept {
   return lhs == 0U || rhs <= std::numeric_limits<std::size_t>::max() / lhs;
 }
 
-bool accumulateCompensated(Scalar value, Scalar& sum,
-                           Scalar& correction) noexcept {
-  const Scalar next = sum + value;
-  if (!std::isfinite(next)) {
-    return false;
-  }
-  if (std::abs(sum) >= std::abs(value)) {
-    correction += (sum - next) + value;
-  } else {
-    correction += (value - next) + sum;
-  }
-  sum = next;
-  return std::isfinite(correction);
-}
-
 Result<Scalar> scaledSum(const std::vector<Triplet>& entries, Index begin,
                          Index end) {
   int common_exponent = std::numeric_limits<int>::min();
@@ -56,18 +43,12 @@ Result<Scalar> scaledSum(const std::vector<Triplet>& entries, Index begin,
     return Result<Scalar>::success(0.0);
   }
 
-  Scalar sum = 0.0;
-  Scalar correction = 0.0;
+  detail::ScaledAccumulator sum;
   for (Index i = begin; i < end; ++i) {
-    int exponent = 0;
-    const Scalar fraction = std::frexp(entries[i].value, &exponent);
-    const Scalar scaled = std::scalbn(fraction, exponent - common_exponent);
-    if (!accumulateCompensated(scaled, sum, correction)) {
-      return failure<Scalar>(ErrorCode::NonFiniteResult,
-                             "sparse duplicate sum is not representable");
-    }
+    const auto value = static_cast<detail::Wide>(entries[i].value);
+    sum.add(std::scalbn(value, -common_exponent));
   }
-  const Scalar value = std::scalbn(sum + correction, common_exponent);
+  const auto value = static_cast<Scalar>(sum.value(common_exponent));
   if (!std::isfinite(value)) {
     return failure<Scalar>(ErrorCode::NonFiniteResult,
                            "sparse duplicate sum is not representable");
@@ -130,47 +111,11 @@ Result<Scalar> scaledRowDot(const CSR& matrix, ConstVectorView vector,
                             Index begin, Index end) {
   const auto columns = matrix.columns_by_entry.view();
   const auto values = matrix.values.view();
-  int common_exponent = std::numeric_limits<int>::min();
-  for (Index entry = begin; entry < end; ++entry) {
-    const Scalar lhs = values.at(entry);
-    const Scalar rhs = vector.at(columns[entry]);
-    if (lhs == 0.0 || rhs == 0.0) {
-      continue;
-    }
-    int lhs_exponent = 0;
-    int rhs_exponent = 0;
-    static_cast<void>(std::frexp(lhs, &lhs_exponent));
-    static_cast<void>(std::frexp(rhs, &rhs_exponent));
-    common_exponent = std::max(common_exponent, lhs_exponent + rhs_exponent);
-  }
-  if (common_exponent == std::numeric_limits<int>::min()) {
-    return Result<Scalar>::success(0.0);
-  }
-
-  Scalar sum = 0.0;
-  Scalar correction = 0.0;
-  for (Index entry = begin; entry < end; ++entry) {
-    const Scalar lhs = values.at(entry);
-    const Scalar rhs = vector.at(columns[entry]);
-    if (lhs == 0.0 || rhs == 0.0) {
-      continue;
-    }
-    int lhs_exponent = 0;
-    int rhs_exponent = 0;
-    const Scalar lhs_fraction = std::frexp(lhs, &lhs_exponent);
-    const Scalar rhs_fraction = std::frexp(rhs, &rhs_exponent);
-    const int exponent = lhs_exponent + rhs_exponent;
-    const Scalar product = lhs_fraction * rhs_fraction;
-    const Scalar product_error = std::fma(lhs_fraction, rhs_fraction, -product);
-    const int shift = exponent - common_exponent;
-    if (!accumulateCompensated(std::scalbn(product, shift), sum, correction) ||
-        !accumulateCompensated(std::scalbn(product_error, shift), sum,
-                               correction)) {
-      return failure<Scalar>(ErrorCode::NonFiniteResult,
-                             "sparse row accumulation is not representable");
-    }
-  }
-  const Scalar value = std::scalbn(sum + correction, common_exponent);
+  const auto product = detail::scaledDot(end - begin, [&](Index offset) {
+    const Index entry = begin + offset;
+    return std::pair{values.at(entry), vector.at(columns[entry])};
+  });
+  const auto value = static_cast<Scalar>(product);
   if (!std::isfinite(value)) {
     return failure<Scalar>(ErrorCode::NonFiniteResult,
                            "sparse row result is not representable");

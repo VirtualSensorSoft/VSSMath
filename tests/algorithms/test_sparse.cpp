@@ -1,6 +1,7 @@
 #include "Test.hpp"
 
 #include <array>
+#include <cmath>
 #include <limits>
 #include <span>
 #include <vss/math/Array.hpp>
@@ -143,6 +144,26 @@ void scaledRowActionDefersOverflowUntilFinalResult() {
       linear::apply(sparse.value(), cancellation.view(), limits());
   VSS_CHECK(exact_zero.hasValue());
   VSS_CHECK(exact_zero.value().at(0U) == 0.0);
+
+  const Scalar large = std::scalbn(1.0, 1023);
+  const std::array mixed_entries{linear::Triplet{0, 0, large},
+                                 linear::Triplet{0, 1, large},
+                                 linear::Triplet{0, 2, 1}};
+  const auto mixed =
+      linear::sparseCSRFromTriplets(1, 3, mixed_entries, limits());
+  VSS_CHECK(mixed.hasValue());
+  const Vector weighted(std::array{large, -large, 1.0});
+  const auto one = linear::apply(mixed.value(), weighted.view(), limits());
+  VSS_CHECK(one.hasValue() && one.value().at(0) == 1);
+
+  const Scalar tiny = std::numeric_limits<Scalar>::denorm_min();
+  const std::array duplicate_entries{linear::Triplet{0, 0, large},
+                                     linear::Triplet{0, 0, -large},
+                                     linear::Triplet{0, 0, tiny}};
+  const auto combined =
+      linear::sparseCSRFromTriplets(1, 1, duplicate_entries, limits());
+  VSS_CHECK(combined.hasValue() && combined.value().values.size() == 1);
+  VSS_CHECK(combined.value().values.at(0) == tiny);
 
   const Vector overflow(std::array<Scalar, 2U>{2.0, 2.0});
   const auto nonfinite =
