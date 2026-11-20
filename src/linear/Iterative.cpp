@@ -4,11 +4,20 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/linear/Iterative.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
+#include <vss/math/linear/Structured.hpp>
 
 namespace vss::math::linear {
 namespace {
@@ -223,7 +232,7 @@ Status trueResidual(const LinearMap& a, ConstVectorView b,
                     std::span<const Wide> candidate, std::span<Wide> residual,
                     std::span<Wide> image, EvaluationBudget& evaluations,
                     Wide& norm) {
-  const Status status = applyAction(a, candidate, image, evaluations);
+  Status status = applyAction(a, candidate, image, evaluations);
   if (!status.ok()) {
     return status;
   }
@@ -552,8 +561,9 @@ Result<IterativeSolve> gmres(const LinearMap& a, ConstVectorView b,
     bool closed = false;
 
     for (Index j = 0U; j < cycle_limit; ++j) {
-      const std::span<const Wide> qj{q.data() + j * n, n};
-      const std::span<Wide> zj{z.data() + j * n, n};
+      const std::span<const Wide> qj =
+          std::span<const Wide>{q}.subspan(j * n, n);
+      const std::span<Wide> zj = std::span<Wide>{z}.subspan(j * n, n);
       status = preconditionAction(preconditioner, qj, zj, evaluations);
       if (!status.ok()) {
         return failure(status);
@@ -564,7 +574,8 @@ Result<IterativeSolve> gmres(const LinearMap& a, ConstVectorView b,
       }
       for (Index pass = 0U; pass < 2U; ++pass) {
         for (Index i = 0U; i <= j; ++i) {
-          const std::span<const Wide> qi{q.data() + i * n, n};
+          const std::span<const Wide> qi =
+              std::span<const Wide>{q}.subspan(i * n, n);
           const Wide correction = detail::compensatedDot(qi, w);
           h[i * restart + j] += correction;
           for (Index k = 0U; k < n; ++k) {
@@ -575,7 +586,8 @@ Result<IterativeSolve> gmres(const LinearMap& a, ConstVectorView b,
       const Wide next_norm = detail::scaledNorm(w);
       h[(j + 1U) * restart + j] = next_norm;
       if (next_norm > 0.0L) {
-        const std::span<Wide> qnext{q.data() + (j + 1U) * n, n};
+        const std::span<Wide> qnext =
+            std::span<Wide>{q}.subspan((j + 1U) * n, n);
         for (Index k = 0U; k < n; ++k) {
           qnext[k] = w[k] / next_norm;
         }
@@ -621,7 +633,8 @@ Result<IterativeSolve> gmres(const LinearMap& a, ConstVectorView b,
       }
       std::ranges::copy(cycle_base, candidate.begin());
       for (Index column = 0U; column <= j; ++column) {
-        const std::span<const Wide> zj_values{z.data() + column * n, n};
+        const std::span<const Wide> zj_values =
+            std::span<const Wide>{z}.subspan(column * n, n);
         for (Index k = 0U; k < n; ++k) {
           candidate[k] =
               std::fma(coefficients[column], zj_values[k], candidate[k]);
