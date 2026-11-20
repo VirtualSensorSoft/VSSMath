@@ -224,6 +224,109 @@ void failureAndScaleBoundaries() {
   VSS_CHECK(nonFinite.status().code() == ErrorCode::NonFiniteInput);
 }
 
+void whiteningAndMahalanobis() {
+  const Matrix covariance = matrix({{4.0, 3.0}, {3.0, 9.0}});
+  const vss::math::Vector x{std::array<Scalar, 2U>{2.0, 3.0}};
+  const auto whitened = vss::math::covariance::whitenSupported(
+      covariance.view(), x.view(), policy(), {128U, 8192U, 0U});
+  VSS_CHECK(whitened.hasValue());
+  VSS_CHECK(whitened.value().rank == 2U);
+  VSS_CHECK(
+      std::abs(whitened.value().value.at(0U) * whitened.value().value.at(0U) +
+               whitened.value().value.at(1U) * whitened.value().value.at(1U) -
+               4.0 / 3.0) < 1.0e-12);
+  const auto distance =
+      vss::math::covariance::mahalanobisSquared(whitened.value(), x.view());
+  VSS_CHECK(distance.hasValue());
+  VSS_CHECK(std::abs(distance.value() - 4.0 / 3.0) < 1.0e-12);
+
+  const Matrix singular = matrix({{2.0, 2.0}, {2.0, 2.0}});
+  const vss::math::Vector onSupport{std::array<Scalar, 2U>{2.0, 2.0}};
+  const vss::math::Vector offSupport{std::array<Scalar, 2U>{2.0, -2.0}};
+  SolvePolicy supported = policy();
+  supported.rank = RankPolicy::supported_subspace;
+  const auto singularWhite = vss::math::covariance::whitenSupported(
+      singular.view(), onSupport.view(), supported, {128U, 8192U, 0U});
+  VSS_CHECK(singularWhite.hasValue());
+  VSS_CHECK(singularWhite.value().rank == 1U);
+  VSS_CHECK(singularWhite.value().support_basis.rows() == 2U);
+  VSS_CHECK(singularWhite.value().support_basis.columns() == 1U);
+  VSS_CHECK(std::abs(singularWhite.value().value.at(0U) - 1.0) < 1.0e-12);
+  VSS_CHECK(std::abs(singularWhite.value().value.at(1U) - 1.0) < 1.0e-12);
+  VSS_CHECK(singularWhite.value().null_residual < 1.0e-12);
+  const auto supportedDistance = vss::math::covariance::mahalanobisSquared(
+      singularWhite.value(), onSupport.view());
+  VSS_CHECK(supportedDistance.hasValue());
+  VSS_CHECK(std::abs(supportedDistance.value() - 2.0) < 1.0e-12);
+  const auto offSupportWhite = vss::math::covariance::whitenSupported(
+      singular.view(), offSupport.view(), supported, {128U, 8192U, 0U});
+  VSS_CHECK(!offSupportWhite.hasValue());
+  VSS_CHECK(offSupportWhite.status().code() == ErrorCode::InvalidDomain);
+  const auto offSupportDistance = vss::math::covariance::mahalanobisSquared(
+      singularWhite.value(), offSupport.view());
+  VSS_CHECK(!offSupportDistance.hasValue());
+  VSS_CHECK(offSupportDistance.status().code() == ErrorCode::InvalidDomain);
+  const vss::math::Vector mixedSupport{std::array<Scalar, 2U>{4.0, 0.0}};
+  const auto mixedDistance = vss::math::covariance::mahalanobisSquared(
+      singularWhite.value(), mixedSupport.view());
+  VSS_CHECK(!mixedDistance.hasValue());
+  VSS_CHECK(mixedDistance.status().code() == ErrorCode::InvalidDomain);
+  const auto rejectedRank = vss::math::covariance::whitenSupported(
+      singular.view(), onSupport.view(), policy(), {128U, 8192U, 0U});
+  VSS_CHECK(!rejectedRank.hasValue());
+  VSS_CHECK(rejectedRank.status().code() == ErrorCode::RankDeficient);
+
+  const vss::math::Vector zero(2U, 0.0);
+  const auto zeroWhitening = vss::math::covariance::whitenSupported(
+      Matrix(2U, 2U).view(), zero.view(), supported, {128U, 8192U, 0U});
+  VSS_CHECK(zeroWhitening.hasValue());
+  VSS_CHECK(zeroWhitening.value().rank == 0U);
+  const auto zeroDistance = vss::math::covariance::mahalanobisSquared(
+      zeroWhitening.value(), zero.view());
+  VSS_CHECK(zeroDistance.hasValue() && zeroDistance.value() == 0.0);
+  const auto zeroOffSupport = vss::math::covariance::mahalanobisSquared(
+      zeroWhitening.value(), onSupport.view());
+  VSS_CHECK(!zeroOffSupport.hasValue());
+  VSS_CHECK(zeroOffSupport.status().code() == ErrorCode::InvalidDomain);
+
+  const auto wrongVector = vss::math::covariance::whitenSupported(
+      covariance.view(), vss::math::Vector(1U).view(), policy(),
+      {128U, 8192U, 0U});
+  VSS_CHECK(!wrongVector.hasValue());
+  VSS_CHECK(wrongVector.status().code() == ErrorCode::DimensionMismatch);
+  const auto wrongDistance = vss::math::covariance::mahalanobisSquared(
+      whitened.value(), vss::math::Vector(1U).view());
+  VSS_CHECK(!wrongDistance.hasValue());
+  VSS_CHECK(wrongDistance.status().code() == ErrorCode::DimensionMismatch);
+  const auto resource = vss::math::covariance::whitenSupported(
+      covariance.view(), x.view(), policy(), {0U, 0U, 0U});
+  VSS_CHECK(!resource.hasValue());
+  VSS_CHECK(resource.status().code() == ErrorCode::ResourceLimit);
+
+  const vss::math::Vector nonFinite(2U,
+                                    std::numeric_limits<Scalar>::infinity());
+  const auto badInput = vss::math::covariance::whitenSupported(
+      singular.view(), nonFinite.view(), supported, {128U, 8192U, 0U});
+  VSS_CHECK(!badInput.hasValue());
+  VSS_CHECK(badInput.status().code() == ErrorCode::NonFiniteInput);
+  const auto badDistance = vss::math::covariance::mahalanobisSquared(
+      singularWhite.value(), nonFinite.view());
+  VSS_CHECK(!badDistance.hasValue());
+  VSS_CHECK(badDistance.status().code() == ErrorCode::NonFiniteInput);
+  auto malformed = singularWhite.value();
+  malformed.support_basis = Matrix(2U, 2U);
+  const auto malformedDistance =
+      vss::math::covariance::mahalanobisSquared(malformed, onSupport.view());
+  VSS_CHECK(!malformedDistance.hasValue());
+  VSS_CHECK(malformedDistance.status().code() == ErrorCode::DimensionMismatch);
+  const Scalar maximum = std::numeric_limits<Scalar>::max();
+  const vss::math::Vector huge(2U, maximum);
+  const auto overflowDistance = vss::math::covariance::mahalanobisSquared(
+      singularWhite.value(), huge.view());
+  VSS_CHECK(!overflowDistance.hasValue());
+  VSS_CHECK(overflowDistance.status().code() == ErrorCode::NonFiniteResult);
+}
+
 } // namespace
 
 int main() {
@@ -232,5 +335,6 @@ int main() {
   singularPoliciesAndNegativeSpectrum();
   conditionalOrderAndValidation();
   failureAndScaleBoundaries();
+  whiteningAndMahalanobis();
   return 0;
 }

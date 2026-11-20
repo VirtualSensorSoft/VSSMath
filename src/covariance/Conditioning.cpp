@@ -61,6 +61,15 @@ bool finite(ConstMatrixView value) noexcept {
   return true;
 }
 
+bool finite(ConstVectorView value) noexcept {
+  for (Index index = 0U; index < value.size(); ++index) {
+    if (!std::isfinite(value.at(index))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 Scalar maximumMagnitude(ConstMatrixView value) noexcept {
   Scalar scale = 0.0;
   for (Index row = 0U; row < value.rows(); ++row) {
@@ -506,6 +515,244 @@ Result<CovarianceResult> conditionalCovariance(ConstMatrixView covariance,
   return Result<CovarianceResult>::success(
       CovarianceResult{std::move(conditional), classification, rank, cutoff,
                        reportedReciprocal});
+}
+
+Result<Whitening> whitenSupported(ConstMatrixView covariance,
+                                  ConstVectorView value, SolvePolicy policy,
+                                  Limits limits) {
+  if (!validPolicy(policy)) {
+    return failure<Whitening>(ErrorCode::InvalidTolerance,
+                              "whitening solve policy is invalid");
+  }
+  if (covariance.rows() != covariance.columns() ||
+      value.size() != covariance.rows()) {
+    return failure<Whitening>(
+        ErrorCode::DimensionMismatch,
+        "whitening covariance and vector dimensions differ");
+  }
+  const Extent n = covariance.rows();
+  if (!budget(n, n, limits)) {
+    return failure<Whitening>(ErrorCode::ResourceLimit,
+                              "whitening scratch exceeds configured limits");
+  }
+  if (!finite(covariance) || !finite(value)) {
+    return failure<Whitening>(ErrorCode::NonFiniteInput,
+                              "whitening input contains a non-finite value");
+  }
+  Matrix symmetricCovariance;
+  if (!symmetrize(covariance, symmetricCovariance)) {
+    return failure<Whitening>(
+        ErrorCode::NotSymmetric,
+        "whitening covariance failed symmetry validation");
+  }
+  auto spec = spectrum(symmetricCovariance.view(), policy);
+  if (!spec.hasValue()) {
+    return Result<Whitening>::failure(spec.status().code(),
+                                      std::string(spec.status().message()));
+  }
+  const auto& eigen = spec.value().decomposition;
+  const Scalar psdAllowance = symmetryAllowance(n);
+  Extent rank = 0U;
+  Scalar minimumPositive = std::numeric_limits<Scalar>::infinity();
+  Scalar maximumPositive = 0.0;
+  for (Index index = 0U; index < n; ++index) {
+    const Scalar eigenvalue = eigen.eigenvalues().at(index);
+    if (eigenvalue < -psdAllowance) {
+      return failure<Whitening>(
+          ErrorCode::NotPositiveSemidefinite,
+          "whitening covariance is not positive semidefinite");
+    }
+    if (eigenvalue > spec.value().cutoffScaled) {
+      ++rank;
+      minimumPositive = std::min(minimumPositive, eigenvalue);
+      maximumPositive = std::max(maximumPositive, eigenvalue);
+    }
+  }
+  if (rank < n && policy.rank == RankPolicy::reject) {
+    return failure<Whitening>(ErrorCode::RankDeficient,
+                              "whitening covariance is rank deficient");
+  }
+  if (rank > 0U &&
+      minimumPositive / maximumPositive < policy.reciprocal_condition_floor) {
+    return failure<Whitening>(
+        ErrorCode::IllConditioned,
+        "whitening retained covariance is ill-conditioned");
+  }
+
+  long double inputNorm = 0.0L;
+  for (Index index = 0U; index < n; ++index) {
+    inputNorm =
+        std::hypot(inputNorm, static_cast<long double>(value.at(index)));
+  }
+  long double nullResidual = 0.0L;
+  if (rank < n) {
+    if (rank == 0U) {
+      for (Index index = 0U; index < n; ++index) {
+        if (value.at(index) != 0.0) {
+          return failure<Whitening>(
+              ErrorCode::InvalidDomain,
+              "zero-rank whitening requires the exact zero vector");
+        }
+      }
+    } else {
+      for (Index row = 0U; row < n; ++row) {
+        long double projection = 0.0L;
+        for (Index k = 0U; k < n; ++k) {
+          if (!(eigen.eigenvalues().at(k) > spec.value().cutoffScaled)) {
+            continue;
+          }
+          long double coefficient = 0.0L;
+          for (Index inner = 0U; inner < n; ++inner) {
+            coefficient +=
+                static_cast<long double>(eigen.eigenvectors().at(inner, k)) *
+                value.at(inner);
+          }
+          projection +=
+              static_cast<long double>(eigen.eigenvectors().at(row, k)) *
+              coefficient;
+        }
+        nullResidual = std::hypot(
+            nullResidual, static_cast<long double>(value.at(row)) - projection);
+      }
+      const long double supportAllowance =
+          static_cast<long double>(symmetryAllowance(n)) * inputNorm;
+      if (nullResidual > supportAllowance) {
+        return failure<Whitening>(
+            ErrorCode::InvalidDomain,
+            "whitening vector has a component outside covariance support");
+      }
+    }
+  }
+  if (nullResidual > std::numeric_limits<Scalar>::max()) {
+    return failure<Whitening>(ErrorCode::NonFiniteResult,
+                              "whitening null residual is not representable");
+  }
+
+  Matrix map(n, n, 0.0);
+  Matrix support(n, rank, 0.0);
+  Extent destination = 0U;
+  for (Index k = 0U; k < n; ++k) {
+    const Scalar eigenvalue = eigen.eigenvalues().at(k);
+    if (!(eigenvalue > spec.value().cutoffScaled)) {
+      continue;
+    }
+    const long double originalEigenvalue =
+        static_cast<long double>(spec.value().scale) * eigenvalue;
+    const long double inverseRoot = 1.0L / std::sqrt(originalEigenvalue);
+    for (Index row = 0U; row < n; ++row) {
+      support.at(row, destination) = eigen.eigenvectors().at(row, k);
+      for (Index column = row; column < n; ++column) {
+        const long double next =
+            static_cast<long double>(map.at(row, column)) +
+            static_cast<long double>(eigen.eigenvectors().at(row, k)) *
+                eigen.eigenvectors().at(column, k) * inverseRoot;
+        if (!std::isfinite(next) ||
+            std::abs(next) > std::numeric_limits<Scalar>::max()) {
+          return failure<Whitening>(ErrorCode::NonFiniteResult,
+                                    "whitening map is not representable");
+        }
+        map.at(row, column) = static_cast<Scalar>(next);
+        map.at(column, row) = map.at(row, column);
+      }
+    }
+    ++destination;
+  }
+  Vector whitened(n, 0.0);
+  for (Index row = 0U; row < n; ++row) {
+    long double total = 0.0L;
+    for (Index column = 0U; column < n; ++column) {
+      total += static_cast<long double>(map.at(row, column)) * value.at(column);
+    }
+    if (!std::isfinite(total) ||
+        std::abs(total) > std::numeric_limits<Scalar>::max()) {
+      return failure<Whitening>(ErrorCode::NonFiniteResult,
+                                "whitened vector is not representable");
+    }
+    whitened.at(row) = static_cast<Scalar>(total);
+  }
+  const long double cutoff =
+      std::max(static_cast<long double>(policy.rank_abs),
+               static_cast<long double>(policy.rank_rel) * spec.value().scale *
+                   maximumPositive);
+  const Scalar reportedCutoff = cutoff > std::numeric_limits<Scalar>::max()
+                                    ? std::numeric_limits<Scalar>::infinity()
+                                    : static_cast<Scalar>(cutoff);
+  return Result<Whitening>::success(
+      Whitening{std::move(map), std::move(whitened), rank, reportedCutoff,
+                static_cast<Scalar>(nullResidual), std::move(support)});
+}
+
+Result<Scalar> mahalanobisSquared(const Whitening& factor,
+                                  ConstVectorView value) {
+  const Extent n = factor.map.rows();
+  if (factor.map.columns() != n || value.size() != n ||
+      factor.support_basis.rows() != n ||
+      factor.support_basis.columns() != factor.rank || factor.rank > n) {
+    return failure<Scalar>(ErrorCode::DimensionMismatch,
+                           "Mahalanobis factor and vector dimensions differ");
+  }
+  if (!finite(factor.map.view()) || !finite(factor.support_basis.view()) ||
+      !finite(value)) {
+    return failure<Scalar>(ErrorCode::NonFiniteInput,
+                           "Mahalanobis input contains a non-finite value");
+  }
+  long double inputNorm = 0.0L;
+  for (Index index = 0U; index < n; ++index) {
+    inputNorm =
+        std::hypot(inputNorm, static_cast<long double>(value.at(index)));
+  }
+  if (factor.rank == 0U) {
+    for (Index index = 0U; index < n; ++index) {
+      if (value.at(index) != 0.0) {
+        return failure<Scalar>(
+            ErrorCode::InvalidDomain,
+            "zero-rank Mahalanobis factor requires the exact zero vector");
+      }
+    }
+  } else if (factor.rank < n) {
+    long double residualNorm = 0.0L;
+    for (Index row = 0U; row < n; ++row) {
+      long double projection = 0.0L;
+      for (Index k = 0U; k < factor.rank; ++k) {
+        long double coefficient = 0.0L;
+        for (Index column = 0U; column < n; ++column) {
+          coefficient +=
+              static_cast<long double>(factor.support_basis.at(column, k)) *
+              value.at(column);
+        }
+        projection +=
+            static_cast<long double>(factor.support_basis.at(row, k)) *
+            coefficient;
+      }
+      residualNorm = std::hypot(
+          residualNorm, static_cast<long double>(value.at(row)) - projection);
+    }
+    if (residualNorm >
+        static_cast<long double>(symmetryAllowance(n)) * inputNorm) {
+      return failure<Scalar>(
+          ErrorCode::InvalidDomain,
+          "Mahalanobis vector has a component outside factor support");
+    }
+  }
+  long double whitenedNorm = 0.0L;
+  for (Index row = 0U; row < n; ++row) {
+    long double component = 0.0L;
+    for (Index column = 0U; column < n; ++column) {
+      component += static_cast<long double>(factor.map.at(row, column)) *
+                   value.at(column);
+    }
+    if (!std::isfinite(component)) {
+      return failure<Scalar>(ErrorCode::NonFiniteResult,
+                             "Mahalanobis whitening is not finite");
+    }
+    whitenedNorm = std::hypot(whitenedNorm, component);
+  }
+  const long double squared = whitenedNorm * whitenedNorm;
+  if (!std::isfinite(squared) || squared > std::numeric_limits<Scalar>::max()) {
+    return failure<Scalar>(ErrorCode::NonFiniteResult,
+                           "squared Mahalanobis distance is not representable");
+  }
+  return Result<Scalar>::success(static_cast<Scalar>(squared));
 }
 
 } // namespace vss::math::covariance

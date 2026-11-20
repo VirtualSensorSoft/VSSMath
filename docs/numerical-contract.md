@@ -70,6 +70,10 @@ Fixture provenance and expected bounds are documented alongside the test map.
   covariance first validates the complete joint covariance as positive
   semidefinite, preserves requested coordinate order, and reports the
   conditional spectrum without projecting its result.
+- Covariance whitening constructs the symmetric inverse square root on the
+  retained positive support. It reports the discarded-space residual and
+  rejects vectors outside that support; Mahalanobis distance does not silently
+  project an incompatible residual.
 - Finite-difference operations use deterministic formulas and callback order;
   invalid steps or callback results fail without publishing partial output.
 - Descriptive statistics and chi-square tail functions follow explicit domain,

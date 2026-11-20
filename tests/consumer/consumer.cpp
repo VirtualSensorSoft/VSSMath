@@ -395,6 +395,21 @@ int main() {
                "installed conditional covariance API failed")) {
     return 1;
   }
+  const Vector whiteningInput{std::array<Scalar, 2U>{2.0, 3.0}};
+  const auto whitening =
+      covariance::whitenSupported(jointCovariance.view(), whiteningInput.view(),
+                                  decompositionPolicy, limits);
+  const auto mahalanobis =
+      whitening.hasValue()
+          ? covariance::mahalanobisSquared(whitening.value(),
+                                           whiteningInput.view())
+          : Result<Scalar>::failure(ErrorCode::InvalidDomain,
+                                    "whitening consumer setup failed");
+  if (!require(whitening.hasValue() && mahalanobis.hasValue() &&
+                   std::abs(mahalanobis.value() - 4.0 / 3.0) < 1.0e-12,
+               "installed covariance whitening APIs failed")) {
+    return 1;
+  }
 
   std::cout << "VirtualSensorMath " << version::string << " consumer passed\n";
   return 0;
