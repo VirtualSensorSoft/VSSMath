@@ -86,7 +86,10 @@ void emptyScaledAndInvalidInputs() {
 }
 
 PropagationResult propagation(Vector mean, Matrix covariance) {
-  return {std::move(mean), std::move(covariance), Approximation::exact, {},
+  return {std::move(mean),
+          std::move(covariance),
+          Approximation::exact,
+          {},
           PropagationCovarianceCheck::positive_semidefinite};
 }
 
@@ -117,8 +120,8 @@ void uncertaintySummaries() {
                       std::optional<ConstVectorView> low,
                       std::optional<ConstVectorView> high, Limits cap,
                       ErrorCode expected) {
-    const auto result = covariance::summarizeUncertainty(
-        candidate, factor, low, high, cap);
+    const auto result =
+        covariance::summarizeUncertainty(candidate, factor, low, high, cap);
     VSS_CHECK(!result.hasValue());
     VSS_CHECK(result.status().code() == expected);
   };
@@ -131,9 +134,11 @@ void uncertaintySummaries() {
            ErrorCode::DimensionMismatch);
   rejected(value, 1.0, lower.view(), wrongSize.view(), limits(),
            ErrorCode::DimensionMismatch);
-  rejected(value, 1.0, Vector{std::array<Scalar, 2>{0.0,
-             std::numeric_limits<Scalar>::quiet_NaN()}}.view(), upper.view(),
-           limits(), ErrorCode::NonFiniteInput);
+  rejected(value, 1.0,
+           Vector{std::array<Scalar, 2>{
+                      0.0, std::numeric_limits<Scalar>::quiet_NaN()}}
+               .view(),
+           upper.view(), limits(), ErrorCode::NonFiniteInput);
   rejected(value, std::numeric_limits<Scalar>::infinity(), std::nullopt,
            std::nullopt, limits(), ErrorCode::NonFiniteInput);
   rejected(value, 1.0, lower.view(), upper.view(), {0U, 0U, 0U},
@@ -155,8 +160,8 @@ void uncertaintySummaries() {
   auto asymmetric = propagation(Vector(2U), matrix({{1.0, 0.0}, {0.25, 1.0}}));
   rejected(asymmetric, 1.0, std::nullopt, std::nullopt, limits(),
            ErrorCode::NotSymmetric);
-  auto asymmetricIndefinite = propagation(Vector(2U), matrix({{-1.0, 0.0},
-                                                               {0.25, 1.0}}));
+  auto asymmetricIndefinite =
+      propagation(Vector(2U), matrix({{-1.0, 0.0}, {0.25, 1.0}}));
   rejected(asymmetricIndefinite, 1.0, std::nullopt, std::nullopt, limits(),
            ErrorCode::NotSymmetric);
   auto negativeDiagonal = propagation(Vector(1U), Matrix(1U, 1U, -1.0));

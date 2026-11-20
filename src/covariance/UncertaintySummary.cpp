@@ -88,9 +88,8 @@ Result<bool> covarianceIsAdmissible(ConstMatrixView covariance) {
     for (Index column = row + 1U; column < dimension; ++column) {
       const Scalar upper = covariance.at(row, column);
       const Scalar lower = covariance.at(column, row);
-      const Scalar difference = scale == 0.0
-                                    ? 0.0
-                                    : std::abs((upper / scale) - (lower / scale));
+      const Scalar difference =
+          scale == 0.0 ? 0.0 : std::abs((upper / scale) - (lower / scale));
       if (static_cast<long double>(difference) > allowance) {
         return Result<bool>::failure(ErrorCode::NotSymmetric,
                                      "covariance failed scaled symmetry check");
@@ -121,7 +120,8 @@ Result<bool> covarianceIsAdmissible(ConstMatrixView covariance) {
   options.rankTolerance = {.absolute = 0.0, .relative = 0.0};
   options.symmetryTolerance = {.absolute = 0.0, .relative = 0.0};
   options.maximumSweeps = 64U;
-  const auto eigen = linear::decomposeSymmetricEigen(normalized.view(), options);
+  const auto eigen =
+      linear::decomposeSymmetricEigen(normalized.view(), options);
   if (!eigen.hasValue()) {
     return Result<bool>::failure(eigen.status().code(),
                                  std::string(eigen.status().message()));
@@ -204,22 +204,24 @@ summarizeUncertainty(const PropagationResult& value, Scalar coverageFactor,
   const bool hasBounds = lowerQuantile.has_value();
   if (hasBounds && (lowerQuantile->size() != dimension ||
                     upperQuantile->size() != dimension)) {
-    return failure<UncertaintySummary>(ErrorCode::DimensionMismatch,
-                                       "uncertainty bounds have the wrong size");
+    return failure<UncertaintySummary>(
+        ErrorCode::DimensionMismatch, "uncertainty bounds have the wrong size");
   }
   if (dimension == 0U) {
-    return failure<UncertaintySummary>(ErrorCode::InsufficientSamples,
-                                       "uncertainty summary needs a nonempty mean");
+    return failure<UncertaintySummary>(
+        ErrorCode::InsufficientSamples,
+        "uncertainty summary needs a nonempty mean");
   }
   if (!summaryBudget(dimension, hasBounds, limits)) {
-    return failure<UncertaintySummary>(ErrorCode::ResourceLimit,
-                                       "uncertainty summary exceeds supplied limits");
+    return failure<UncertaintySummary>(
+        ErrorCode::ResourceLimit,
+        "uncertainty summary exceeds supplied limits");
   }
   if (!finite(value.mean.view()) || !finite(value.covariance.view()) ||
       !std::isfinite(coverageFactor) ||
       (hasBounds && (!finite(*lowerQuantile) || !finite(*upperQuantile)))) {
-    return failure<UncertaintySummary>(ErrorCode::NonFiniteInput,
-                                       "uncertainty summary inputs must be finite");
+    return failure<UncertaintySummary>(
+        ErrorCode::NonFiniteInput, "uncertainty summary inputs must be finite");
   }
   if (coverageFactor < 0.0) {
     return failure<UncertaintySummary>(ErrorCode::InvalidDomain,
@@ -235,8 +237,8 @@ summarizeUncertainty(const PropagationResult& value, Scalar coverageFactor,
   }
   const auto admissible = covarianceIsAdmissible(value.covariance.view());
   if (!admissible.hasValue()) {
-    return Result<UncertaintySummary>::failure(admissible.status().code(),
-                                               std::string(admissible.status().message()));
+    return Result<UncertaintySummary>::failure(
+        admissible.status().code(), std::string(admissible.status().message()));
   }
   if (!admissible.value()) {
     return failure<UncertaintySummary>(
@@ -252,8 +254,9 @@ summarizeUncertainty(const PropagationResult& value, Scalar coverageFactor,
     const long double expandedValue =
         static_cast<long double>(coverageFactor) * deviation;
     if (!representable(expandedValue)) {
-      return failure<UncertaintySummary>(ErrorCode::NonFiniteResult,
-                                         "expanded uncertainty is not representable");
+      return failure<UncertaintySummary>(
+          ErrorCode::NonFiniteResult,
+          "expanded uncertainty is not representable");
     }
     standard.at(index) = deviation;
     expanded.at(index) = static_cast<Scalar>(expandedValue);
@@ -268,9 +271,9 @@ summarizeUncertainty(const PropagationResult& value, Scalar coverageFactor,
       upper->at(index) = upperQuantile->at(index);
     }
   }
-  return Result<UncertaintySummary>::success(UncertaintySummary{
-      value.mean, std::move(standard), std::move(expanded), std::move(lower),
-      std::move(upper), coverageFactor});
+  return Result<UncertaintySummary>::success(
+      UncertaintySummary{value.mean, std::move(standard), std::move(expanded),
+                         std::move(lower), std::move(upper), coverageFactor});
 }
 
 Result<Matrix> crossCovarianceFromMaps(ConstMatrixView left,
