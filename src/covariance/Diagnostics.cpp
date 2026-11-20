@@ -1,9 +1,20 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
+#include <span>
 #include <string>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/covariance/Diagnostics.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::covariance {
 namespace {
@@ -72,14 +83,16 @@ Result<CovarianceResult> inverseSquareRoot(ConstMatrixView covariance,
     long double maximumInverseRoot = 0.0L;
     for (Index mode = 0U; mode < result.rank; ++mode) {
       long double eigenvalue = 0.0L;
-      for (Index row = 0U; row < covariance.rows(); ++row) {
-        for (Index column = 0U; column < covariance.rows(); ++column) {
+      for (Index coordinate = 0U; coordinate < covariance.rows();
+           ++coordinate) {
+        for (Index other = 0U; other < covariance.rows(); ++other) {
           eigenvalue +=
               static_cast<long double>(
-                  transform.value().support_basis.at(row, mode)) *
-              static_cast<long double>(transform.value().map.at(row, column)) *
+                  transform.value().support_basis.at(coordinate, mode)) *
               static_cast<long double>(
-                  transform.value().support_basis.at(column, mode));
+                  transform.value().map.at(coordinate, other)) *
+              static_cast<long double>(
+                  transform.value().support_basis.at(other, mode));
         }
       }
       if (!(eigenvalue > 0.0L) || !std::isfinite(eigenvalue)) {

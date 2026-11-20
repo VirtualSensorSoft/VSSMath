@@ -2,10 +2,21 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <optional>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/covariance/Conditioning.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 
 namespace vss::math::covariance {
@@ -106,18 +117,18 @@ bool symmetrize(ConstMatrixView input, Matrix& output) {
     return true;
   }
   const Scalar allowance = symmetryAllowance(input.rows());
-  for (Index row = 0U; row < input.rows(); ++row) {
-    output.at(row, row) = input.at(row, row);
-    for (Index column = row + 1U; column < input.columns(); ++column) {
-      const Scalar upper = input.at(row, column) / scale;
-      const Scalar lower = input.at(column, row) / scale;
+  for (Index first = 0U; first < input.rows(); ++first) {
+    output.at(first, first) = input.at(first, first);
+    for (Index second = first + 1U; second < input.columns(); ++second) {
+      const Scalar upper = input.at(first, second) / scale;
+      const Scalar lower = input.at(second, first) / scale;
       if (std::abs(upper - lower) > allowance) {
         return false;
       }
       const Scalar average =
-          std::midpoint(input.at(row, column), input.at(column, row));
-      output.at(row, column) = average;
-      output.at(column, row) = average;
+          std::midpoint(input.at(first, second), input.at(second, first));
+      output.at(first, second) = average;
+      output.at(second, first) = average;
     }
   }
   return true;
@@ -172,12 +183,15 @@ Result<Spectrum> spectrum(ConstMatrixView input, const SolvePolicy& policy) {
     largest =
         std::max(largest, std::abs(eigen.value().eigenvalues().at(index)));
   }
-  const long double absCutoff =
-      scale == 0.0 ? (policy.rank_abs == 0.0
-                          ? 0.0L
-                          : std::numeric_limits<long double>::infinity())
-                   : static_cast<long double>(policy.rank_abs) /
-                         static_cast<long double>(scale);
+  long double absCutoff = 0.0L;
+  if (scale == 0.0) {
+    if (policy.rank_abs != 0.0) {
+      absCutoff = std::numeric_limits<long double>::infinity();
+    }
+  } else {
+    absCutoff = static_cast<long double>(policy.rank_abs) /
+                static_cast<long double>(scale);
+  }
   const long double relativeCutoff =
       static_cast<long double>(policy.rank_rel) * largest;
   const long double cutoff = std::max(absCutoff, relativeCutoff);
@@ -196,19 +210,23 @@ Result<Spectrum> spectrum(ConstMatrixView input, const SolvePolicy& policy) {
       cutoff > static_cast<long double>(std::numeric_limits<Scalar>::max())
           ? std::numeric_limits<Scalar>::infinity()
           : static_cast<Scalar>(cutoff);
-  return Result<Spectrum>::success(Spectrum{std::move(eigen).value(), scale,
-                                            cutoffScaled, rank, minimumRetained,
-                                            maximumRetained});
+  return Result<Spectrum>::success(
+      Spectrum{.decomposition = std::move(eigen).value(),
+               .scale = scale,
+               .cutoffScaled = cutoffScaled,
+               .rank = rank,
+               .minimumRetained = minimumRetained,
+               .maximumRetained = maximumRetained});
 }
 
 bool compatibleWithDiscarded(ConstMatrixView cross, const Spectrum& spec,
                              ConstMatrixView selected,
                              bool covarianceCompatibility) {
-  Scalar crossScale = maximumMagnitude(cross);
+  const Scalar crossScale = maximumMagnitude(cross);
   if (crossScale == 0.0) {
     return true;
   }
-  Scalar selectedScale = maximumMagnitude(selected);
+  const Scalar selectedScale = maximumMagnitude(selected);
   const long double allowance = static_cast<long double>(symmetryAllowance(
                                     cross.rows() + cross.columns())) *
                                 std::max(crossScale, selectedScale);
@@ -305,8 +323,8 @@ Result<Matrix> schurImpl(ConstMatrixView aa, ConstMatrixView ab,
                            "Schur correction is not representable");
   }
   const auto& eigen = spec.value().decomposition;
-  for (Index row = 0U; row < aa.rows(); ++row) {
-    for (Index column = row; column < aa.rows(); ++column) {
+  for (Index first = 0U; first < aa.rows(); ++first) {
+    for (Index second = first; second < aa.rows(); ++second) {
       long double sum = 0.0L;
       long double compensation = 0.0L;
       for (Index k = 0U; k < n; ++k) {
@@ -318,8 +336,8 @@ Result<Matrix> schurImpl(ConstMatrixView aa, ConstMatrixView ab,
         long double right = 0.0L;
         for (Index inner = 0U; inner < n; ++inner) {
           const long double q = eigen.eigenvectors().at(inner, k);
-          left += static_cast<long double>(ab.at(row, inner) / bScale) * q;
-          right += static_cast<long double>(ab.at(column, inner) / bScale) * q;
+          left += static_cast<long double>(ab.at(first, inner) / bScale) * q;
+          right += static_cast<long double>(ab.at(second, inner) / bScale) * q;
         }
         const long double term = left * right / lambda;
         const long double adjusted = term - compensation;
@@ -329,15 +347,15 @@ Result<Matrix> schurImpl(ConstMatrixView aa, ConstMatrixView ab,
       }
       const long double correction = correctionScale * sum;
       const long double result =
-          static_cast<long double>(symmetricA.at(row, column)) - correction;
+          static_cast<long double>(symmetricA.at(first, second)) - correction;
       if (!std::isfinite(result) ||
           std::abs(result) > std::numeric_limits<Scalar>::max()) {
         return failure<Matrix>(ErrorCode::NonFiniteResult,
                                "Schur complement is not representable");
       }
-      const Scalar rounded = static_cast<Scalar>(result);
-      output.at(row, column) = rounded;
-      output.at(column, row) = rounded;
+      const auto rounded = static_cast<Scalar>(result);
+      output.at(first, second) = rounded;
+      output.at(second, first) = rounded;
     }
   }
   return Result<Matrix>::success(std::move(output));
@@ -456,8 +474,7 @@ Result<CovarianceResult> conditionalCovariance(ConstMatrixView covariance,
       bb.at(row, column) = joint.at(given[row], given[column]);
     }
   }
-  const auto schur =
-      schurImpl(aa.view(), ab.view(), bb.view(), policy, limits, true);
+  auto schur = schurImpl(aa.view(), ab.view(), bb.view(), policy, limits, true);
   if (!schur.hasValue()) {
     return Result<CovarianceResult>::failure(
         schur.status().code(), std::string(schur.status().message()));
@@ -513,8 +530,11 @@ Result<CovarianceResult> conditionalCovariance(ConstMatrixView covariance,
                          : CovarianceKind::positive_definite;
   }
   return Result<CovarianceResult>::success(
-      CovarianceResult{std::move(conditional), classification, rank, cutoff,
-                       reportedReciprocal});
+      CovarianceResult{.covariance = std::move(conditional),
+                       .classification = classification,
+                       .rank = rank,
+                       .cutoff = cutoff,
+                       .reciprocal_condition = reportedReciprocal});
 }
 
 Result<Whitening> whitenSupported(ConstMatrixView covariance,
@@ -639,20 +659,20 @@ Result<Whitening> whitenSupported(ConstMatrixView covariance,
     const long double originalEigenvalue =
         static_cast<long double>(spec.value().scale) * eigenvalue;
     const long double inverseRoot = 1.0L / std::sqrt(originalEigenvalue);
-    for (Index row = 0U; row < n; ++row) {
-      support.at(row, destination) = eigen.eigenvectors().at(row, k);
-      for (Index column = row; column < n; ++column) {
+    for (Index first = 0U; first < n; ++first) {
+      support.at(first, destination) = eigen.eigenvectors().at(first, k);
+      for (Index second = first; second < n; ++second) {
         const long double next =
-            static_cast<long double>(map.at(row, column)) +
-            static_cast<long double>(eigen.eigenvectors().at(row, k)) *
-                eigen.eigenvectors().at(column, k) * inverseRoot;
+            static_cast<long double>(map.at(first, second)) +
+            (static_cast<long double>(eigen.eigenvectors().at(first, k)) *
+             (eigen.eigenvectors().at(second, k) * inverseRoot));
         if (!std::isfinite(next) ||
             std::abs(next) > std::numeric_limits<Scalar>::max()) {
           return failure<Whitening>(ErrorCode::NonFiniteResult,
                                     "whitening map is not representable");
         }
-        map.at(row, column) = static_cast<Scalar>(next);
-        map.at(column, row) = map.at(row, column);
+        map.at(first, second) = static_cast<Scalar>(next);
+        map.at(second, first) = map.at(first, second);
       }
     }
     ++destination;
@@ -678,8 +698,12 @@ Result<Whitening> whitenSupported(ConstMatrixView covariance,
                                     ? std::numeric_limits<Scalar>::infinity()
                                     : static_cast<Scalar>(cutoff);
   return Result<Whitening>::success(
-      Whitening{std::move(map), std::move(whitened), rank, reportedCutoff,
-                static_cast<Scalar>(nullResidual), std::move(support)});
+      Whitening{.map = std::move(map),
+                .value = std::move(whitened),
+                .rank = rank,
+                .cutoff = reportedCutoff,
+                .null_residual = static_cast<Scalar>(nullResidual),
+                .support_basis = std::move(support)});
 }
 
 Result<Scalar> mahalanobisSquared(const Whitening& factor,
