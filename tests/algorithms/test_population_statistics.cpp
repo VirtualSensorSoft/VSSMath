@@ -3,11 +3,23 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <initializer_list>
+#include <iostream>
 #include <limits>
+#include <optional>
 #include <span>
-#include <vector>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/covariance/Conditioning.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/statistics/Population.hpp>
 
 using namespace vss::math;
@@ -32,32 +44,41 @@ Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
   return result;
 }
 
-SampleView sample(const Matrix& values) { return {values.view(), {}, {}}; }
+SampleView sample(const Matrix& values) {
+  return {.rows = values.view(), .observation_shape = {}, .valid = {}};
+}
 
 Limits ampleLimits() {
-  return {std::numeric_limits<std::size_t>::max(),
-          std::numeric_limits<std::size_t>::max(), 0U};
+  return {.elements = std::numeric_limits<std::size_t>::max(),
+          .bytes = std::numeric_limits<std::size_t>::max(),
+          .evaluations = 0U};
 }
 
 void close(Scalar actual, Scalar expected) {
   VSS_CHECK(std::abs(actual - expected) <=
-            1.0e-12 + 1.0e-10 * std::max(std::abs(actual), std::abs(expected)));
+            1.0e-12 +
+                (1.0e-10 * std::max(std::abs(actual), std::abs(expected))));
 }
 
 void scalarPopulationAndSampleCovariance() {
   const Matrix values = matrix({{-1.0}, {0.0}, {1.0}});
-  const CenterSpec estimated{CenterRule::estimated, std::nullopt};
-  const auto population = covarianceMatrix(
-      sample(values), estimated,
-      {VarianceMode::empirical, MissingMode::reject, Estimand::observed},
-      ampleLimits());
+  const CenterSpec estimated{.rule = CenterRule::estimated,
+                             .center = std::nullopt};
+  const auto population =
+      covarianceMatrix(sample(values), estimated,
+                       {.normalization = VarianceMode::empirical,
+                        .missingness = MissingMode::reject,
+                        .estimand = Estimand::observed},
+                       ampleLimits());
   VSS_CHECK(population.hasValue());
   close(population.value().value.at(0U, 0U), 2.0 / 3.0);
 
-  const auto sampleCovariance = covarianceMatrix(
-      sample(values), estimated,
-      {VarianceMode::iid_sample, MissingMode::reject, Estimand::observed},
-      ampleLimits());
+  const auto sampleCovariance =
+      covarianceMatrix(sample(values), estimated,
+                       {.normalization = VarianceMode::iid_sample,
+                        .missingness = MissingMode::reject,
+                        .estimand = Estimand::observed},
+                       ampleLimits());
   VSS_CHECK(sampleCovariance.hasValue());
   close(sampleCovariance.value().value.at(0U, 0U), 1.0);
 }
@@ -65,23 +86,32 @@ void scalarPopulationAndSampleCovariance() {
 void knownCenterAndCrossCovariance() {
   const Matrix left = matrix({{1.0}, {2.0}, {4.0}});
   const Matrix right = matrix({{2.0}, {1.0}, {5.0}});
-  const CenterSpec leftCenter{CenterRule::estimated, std::nullopt};
-  const CenterSpec rightCenter{CenterRule::estimated, std::nullopt};
-  const PopulationPolicy empirical{VarianceMode::empirical, MissingMode::reject,
-                                   Estimand::observed};
+  const CenterSpec leftCenter{.rule = CenterRule::estimated,
+                              .center = std::nullopt};
+  const CenterSpec rightCenter{.rule = CenterRule::estimated,
+                               .center = std::nullopt};
+  const PopulationPolicy empirical{.normalization = VarianceMode::empirical,
+                                   .missingness = MissingMode::reject,
+                                   .estimand = Estimand::observed};
   const auto cross = crossCovariance(sample(left), sample(right), leftCenter,
                                      rightCenter, empirical, ampleLimits());
   VSS_CHECK(cross.hasValue());
   close(cross.value().value.at(0U, 0U), 16.0 / 9.0);
-  const auto reverse = crossCovariance(sample(right), sample(left), rightCenter,
-                                       leftCenter, empirical, ampleLimits());
+  const auto reverse =
+      crossCovariance( // NOLINT(readability-suspicious-call-argument): operands
+                       // and matching centers are intentionally reversed
+          sample(right), sample(left), rightCenter, leftCenter, empirical,
+          ampleLimits());
   VSS_CHECK(reverse.hasValue());
   close(reverse.value().value.at(0U, 0U), cross.value().value.at(0U, 0U));
 
   const Vector centerValue(1U, 0.0);
-  const CenterSpec known{CenterRule::known, centerValue.view()};
-  const PopulationPolicy aroundKnown{VarianceMode::known_center,
-                                     MissingMode::reject, Estimand::observed};
+  const CenterSpec known{.rule = CenterRule::known,
+                         .center = centerValue.view()};
+  const PopulationPolicy aroundKnown{.normalization =
+                                         VarianceMode::known_center,
+                                     .missingness = MissingMode::reject,
+                                     .estimand = Estimand::observed};
   const auto knownCovariance =
       covarianceMatrix(sample(left), known, aroundKnown, ampleLimits());
   VSS_CHECK(knownCovariance.hasValue());
@@ -89,8 +119,9 @@ void knownCenterAndCrossCovariance() {
 
   const Matrix symmetricLeft = matrix({{-1.0}, {0.0}, {1.0}});
   const Matrix symmetricRight = matrix({{-2.0}, {0.0}, {2.0}});
-  const PopulationPolicy sampleMode{VarianceMode::iid_sample,
-                                    MissingMode::reject, Estimand::observed};
+  const PopulationPolicy sampleMode{.normalization = VarianceMode::iid_sample,
+                                    .missingness = MissingMode::reject,
+                                    .estimand = Estimand::observed};
   const auto sampleCross =
       crossCovariance(sample(symmetricLeft), sample(symmetricRight), leftCenter,
                       rightCenter, sampleMode, ampleLimits());
@@ -102,11 +133,15 @@ void crossCovariancePreservesOrientationAndCommonRows() {
   const Matrix left = matrix({{0.0, 1.0}, {1.0, 0.0}, {2.0, 2.0}});
   const Matrix right = matrix({{2.0, 0.0}, {1.0, 4.0}, {5.0, 1.0}});
   const std::array<Extent, 1U> shape{2U};
-  const SampleView leftView{left.view(), shape, {}};
-  const SampleView rightView{right.view(), shape, {}};
-  const CenterSpec estimated{CenterRule::estimated, std::nullopt};
-  const PopulationPolicy empirical{VarianceMode::empirical, MissingMode::reject,
-                                   Estimand::observed};
+  const SampleView leftView{
+      .rows = left.view(), .observation_shape = shape, .valid = {}};
+  const SampleView rightView{
+      .rows = right.view(), .observation_shape = shape, .valid = {}};
+  const CenterSpec estimated{.rule = CenterRule::estimated,
+                             .center = std::nullopt};
+  const PopulationPolicy empirical{.normalization = VarianceMode::empirical,
+                                   .missingness = MissingMode::reject,
+                                   .estimand = Estimand::observed};
   const auto cross = crossCovariance(leftView, rightView, estimated, estimated,
                                      empirical, ampleLimits());
   VSS_CHECK(cross.hasValue());
@@ -117,20 +152,26 @@ void crossCovariancePreservesOrientationAndCommonRows() {
   close(value.at(1U, 0U), 4.0 / 3.0);
   close(value.at(1U, 1U), -1.0);
 
-  const auto reverse = crossCovariance(rightView, leftView, estimated,
-                                       estimated, empirical, ampleLimits());
+  const auto reverse =
+      crossCovariance( // NOLINT(readability-suspicious-call-argument): operands
+                       // are intentionally reversed to verify transposition
+          rightView, leftView, estimated, estimated, empirical, ampleLimits());
   VSS_CHECK(reverse.hasValue());
   for (Index row = 0U; row < 2U; ++row) {
     for (Index column = 0U; column < 2U; ++column) {
-      close(reverse.value().value.at(row, column), value.at(column, row));
+      close(reverse.value().value.at(row, column),
+            value.at( // NOLINT(readability-suspicious-call-argument):
+                      // transposed covariance entry
+                column, row));
     }
   }
 
   const Matrix differentDimension =
       matrix({{2.0, 0.0, 3.0}, {1.0, 4.0, 4.0}, {5.0, 1.0, 7.0}});
   const std::array<Extent, 1U> threeCoordinates{3U};
-  const SampleView threeDimensionalView{
-      differentDimension.view(), threeCoordinates, {}};
+  const SampleView threeDimensionalView{.rows = differentDimension.view(),
+                                        .observation_shape = threeCoordinates,
+                                        .valid = {}};
   const auto rectangular =
       crossCovariance(leftView, threeDimensionalView, estimated, estimated,
                       empirical, ampleLimits());
@@ -138,12 +179,17 @@ void crossCovariancePreservesOrientationAndCommonRows() {
   VSS_CHECK(rectangular.value().value.rows() == 2U &&
             rectangular.value().value.columns() == 3U);
   const auto rectangularReverse =
-      crossCovariance(threeDimensionalView, leftView, estimated, estimated,
-                      empirical, ampleLimits());
+      crossCovariance( // NOLINT(readability-suspicious-call-argument): operands
+                       // are intentionally reversed to verify transposition
+          threeDimensionalView, leftView, estimated, estimated, empirical,
+          ampleLimits());
   VSS_CHECK(rectangularReverse.hasValue());
   for (Index row = 0U; row < 2U; ++row) {
     for (Index column = 0U; column < 3U; ++column) {
-      close(rectangularReverse.value().value.at(column, row),
+      close(rectangularReverse.value()
+                .value.at( // NOLINT(readability-suspicious-call-argument):
+                           // transposed covariance entry
+                    column, row),
             rectangular.value().value.at(row, column));
     }
   }
@@ -152,17 +198,20 @@ void crossCovariancePreservesOrientationAndCommonRows() {
 void rejectsMismatchedSupportAndInsufficientSample() {
   const Matrix left = matrix({{1.0}, {2.0}, {3.0}});
   const Matrix right = matrix({{1.0}, {2.0}});
-  const CenterSpec estimated{CenterRule::estimated, std::nullopt};
-  const PopulationPolicy empirical{VarianceMode::empirical, MissingMode::reject,
-                                   Estimand::observed};
+  const CenterSpec estimated{.rule = CenterRule::estimated,
+                             .center = std::nullopt};
+  const PopulationPolicy empirical{.normalization = VarianceMode::empirical,
+                                   .missingness = MissingMode::reject,
+                                   .estimand = Estimand::observed};
   const auto mismatch = crossCovariance(sample(left), sample(right), estimated,
                                         estimated, empirical, ampleLimits());
   VSS_CHECK(!mismatch.hasValue());
   VSS_CHECK(mismatch.status().code() == ErrorCode::DimensionMismatch);
 
   const Matrix one = matrix({{1.0}});
-  const PopulationPolicy sampleMode{VarianceMode::iid_sample,
-                                    MissingMode::reject, Estimand::observed};
+  const PopulationPolicy sampleMode{.normalization = VarianceMode::iid_sample,
+                                    .missingness = MissingMode::reject,
+                                    .estimand = Estimand::observed};
   const auto insufficient =
       covarianceMatrix(sample(one), estimated, sampleMode, ampleLimits());
   VSS_CHECK(!insufficient.hasValue());
@@ -174,29 +223,36 @@ void completeRowMaskUsesCommonSupport() {
   const Matrix left = matrix({{1.0}, {missing}, {3.0}});
   const Matrix right = matrix({{2.0}, {missing}, {6.0}});
   const std::array<std::uint8_t, 3U> mask{1U, 0U, 1U};
-  const SampleView leftView{left.view(), {}, mask};
-  const SampleView rightView{right.view(), {}, mask};
-  const CenterSpec estimated{CenterRule::estimated, std::nullopt};
+  const SampleView leftView{
+      .rows = left.view(), .observation_shape = {}, .valid = mask};
+  const SampleView rightView{
+      .rows = right.view(), .observation_shape = {}, .valid = mask};
+  const CenterSpec estimated{.rule = CenterRule::estimated,
+                             .center = std::nullopt};
   const Vector zeroCenter(1U, 0.0);
-  const CenterSpec known{CenterRule::known, zeroCenter.view()};
-  const PopulationPolicy empirical{
-      VarianceMode::empirical, MissingMode::complete_row, Estimand::observed};
+  const CenterSpec known{.rule = CenterRule::known,
+                         .center = zeroCenter.view()};
+  const PopulationPolicy empirical{.normalization = VarianceMode::empirical,
+                                   .missingness = MissingMode::complete_row,
+                                   .estimand = Estimand::observed};
   const auto cross = crossCovariance(leftView, rightView, estimated, estimated,
                                      empirical, ampleLimits());
   VSS_CHECK(cross.hasValue());
   close(cross.value().value.at(0U, 0U), 2.0);
   VSS_CHECK(cross.value().diagnostics.global.valid == 2U);
 
-  const PopulationPolicy aroundKnown{VarianceMode::known_center,
-                                     MissingMode::complete_row,
-                                     Estimand::observed};
+  const PopulationPolicy aroundKnown{.normalization =
+                                         VarianceMode::known_center,
+                                     .missingness = MissingMode::complete_row,
+                                     .estimand = Estimand::observed};
   const auto knownCross = crossCovariance(leftView, rightView, known, known,
                                           aroundKnown, ampleLimits());
   VSS_CHECK(knownCross.hasValue());
   close(knownCross.value().value.at(0U, 0U), 10.0);
 
-  const PopulationPolicy rejecting{VarianceMode::empirical, MissingMode::reject,
-                                   Estimand::observed};
+  const PopulationPolicy rejecting{.normalization = VarianceMode::empirical,
+                                   .missingness = MissingMode::reject,
+                                   .estimand = Estimand::observed};
   const auto rejected = crossCovariance(leftView, rightView, estimated,
                                         estimated, rejecting, ampleLimits());
   VSS_CHECK(!rejected.hasValue());
@@ -205,11 +261,14 @@ void completeRowMaskUsesCommonSupport() {
 
 void enforcesOutputLimitsAndRejectsNonFiniteRetainedValues() {
   const Matrix values = matrix({{-1.0}, {0.0}, {1.0}});
-  const CenterSpec estimated{CenterRule::estimated, std::nullopt};
-  const PopulationPolicy empirical{VarianceMode::empirical, MissingMode::reject,
-                                   Estimand::observed};
+  const CenterSpec estimated{.rule = CenterRule::estimated,
+                             .center = std::nullopt};
+  const PopulationPolicy empirical{.normalization = VarianceMode::empirical,
+                                   .missingness = MissingMode::reject,
+                                   .estimand = Estimand::observed};
   const auto limited =
-      covarianceMatrix(sample(values), estimated, empirical, {0U, 0U, 0U});
+      covarianceMatrix(sample(values), estimated, empirical,
+                       {.elements = 0U, .bytes = 0U, .evaluations = 0U});
   VSS_CHECK(!limited.hasValue());
   VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
 
@@ -245,7 +304,9 @@ void correlationAndPartialCorrelationAcceptanceCases() {
   VSS_CHECK(conditionLimited.value().classification ==
             covariance::CovarianceKind::ill_conditioned);
   VSS_CHECK(conditionLimited.value().rank == 2U);
-  close(*conditionLimited.value().reciprocal_condition, 1.0 / 3.0);
+  close(conditionLimited.value().reciprocal_condition.value_or(
+            std::numeric_limits<Scalar>::quiet_NaN()),
+        1.0 / 3.0);
   const std::array<Index, 2U> both{0U, 1U};
   const std::array<Index, 1U> secondCoordinate{1U};
   const auto marginal =
@@ -352,7 +413,8 @@ void correlationAndPartialCorrelationAcceptanceCases() {
   VSS_CHECK(!nonfiniteResult.hasValue());
   VSS_CHECK(nonfiniteResult.status().code() == ErrorCode::NonFiniteInput);
   const auto denied =
-      correlationMatrix(singular.view(), policy, Limits{0U, 0U, 0U});
+      correlationMatrix(singular.view(), policy,
+                        Limits{.elements = 0U, .bytes = 0U, .evaluations = 0U});
   VSS_CHECK(!denied.hasValue());
   VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
   const Matrix empty;
@@ -426,14 +488,15 @@ void correlationAndPartialCorrelationAcceptanceCases() {
             ErrorCode::InvalidTolerance);
 
   const auto deniedPartial = partialCorrelation(
-      joint.view(), selected, conditioned, policy, Limits{0U, 0U, 0U});
+      joint.view(), selected, conditioned, policy,
+      Limits{.elements = 0U, .bytes = 0U, .evaluations = 0U});
   VSS_CHECK(!deniedPartial.hasValue());
   VSS_CHECK(deniedPartial.status().code() == ErrorCode::ResourceLimit);
 }
 
 } // namespace
 
-int main() {
+int main() try {
   scalarPopulationAndSampleCovariance();
   knownCenterAndCrossCovariance();
   crossCovariancePreservesOrientationAndCommonRows();
@@ -441,4 +504,7 @@ int main() {
   completeRowMaskUsesCommonSupport();
   enforcesOutputLimitsAndRejectsNonFiniteRetainedValues();
   correlationAndPartialCorrelationAcceptanceCases();
+} catch (const std::exception& error) {
+  std::cerr << error.what() << '\n';
+  return 1;
 }
