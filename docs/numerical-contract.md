@@ -111,6 +111,10 @@ Fixture provenance and expected bounds are documented alongside the test map.
   solves use a single cutoff across the constituent spectra. Regularized
   least squares factors the square-root augmented system and reports residuals
   against the original observations.
+- Matrix-free linear solves provide preconditioned conjugate gradients for
+  caller-declared SPD maps, MINRES for symmetric maps, and restarted
+  right-preconditioned GMRES for general maps. They do not materialize the
+  operator, and accept candidates only after recomputing the original residual.
 - Structured covariance supports diagonal updates, Toeplitz, direct sum,
   Kronecker, and Gaussian kernel representations. Factorized solves report
   rank and the original residual. Iterative solves require certified

@@ -64,6 +64,8 @@ vss_math_add_algorithm_test(test_structured algorithms/test_structured.cpp
 vss_math_add_algorithm_test(test_structured_covariance
                              algorithms/test_structured_covariance.cpp
                              math.structured_covariance)
+vss_math_add_algorithm_test(test_iterative algorithms/test_iterative.cpp
+                             math.iterative)
 vss_math_add_algorithm_test(test_conditioning
                              algorithms/test_conditioning.cpp
                              math.conditioning)

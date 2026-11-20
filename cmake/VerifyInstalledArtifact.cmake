@@ -153,6 +153,7 @@ set(vss_expected_files
   include/vss/math/linear/SolvePolicy.hpp
   include/vss/math/linear/FactorizationOptions.hpp
   include/vss/math/linear/LinearSolve.hpp
+  include/vss/math/linear/Iterative.hpp
   include/vss/math/linear/LU.hpp
   include/vss/math/linear/QR.hpp
   include/vss/math/linear/RankAware.hpp

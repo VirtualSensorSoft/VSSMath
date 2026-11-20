@@ -44,6 +44,7 @@ add_library(vss_math STATIC
   src/linear/StructuredProducts.cpp
   src/linear/Sparse.cpp
   src/linear/Structured.cpp
+  src/linear/Iterative.cpp
   src/Tensor.cpp
   src/TensorLimits.cpp
   src/TensorShape.cpp

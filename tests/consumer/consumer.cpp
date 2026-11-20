@@ -29,6 +29,7 @@
 #include <vss/math/covariance/UncertaintySummary.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
+#include <vss/math/linear/Iterative.hpp>
 #include <vss/math/linear/LU.hpp>
 #include <vss/math/linear/RankAware.hpp>
 #include <vss/math/linear/Reduction.hpp>
@@ -109,6 +110,32 @@ int main() {
     if (!require(sparse_product.hasValue() &&
                      sparse_product.value().at(0) == 12,
                  "installed sparse action failed")) {
+      return 1;
+    }
+    const Vector iterative_rhs(std::array{2.0, 8.0});
+    const Vector iterative_start(2U);
+    const linear::LinearMap iterative_map{
+        2U,
+        2U,
+        [](ConstVectorView x) {
+          return Result<Vector>::success(
+              Vector{std::array{2.0 * x.at(0U), 4.0 * x.at(1U)}});
+        },
+        {}};
+    SolvePolicy iterative_policy;
+    iterative_policy.iteration.abs = 1e-12;
+    iterative_policy.iteration.rel = 1e-12;
+    iterative_policy.iteration.max_iterations = 4U;
+    iterative_policy.iteration.max_evaluations = limits.evaluations;
+    iterative_policy.restart = 2U;
+    const auto iterative =
+        linear::cg(iterative_map, iterative_rhs.view(), iterative_start.view(),
+                   nullptr, iterative_policy, limits);
+    if (!require(iterative.hasValue() &&
+                     iterative.value().termination == Termination::converged &&
+                     std::abs(iterative.value().value.at(0U) - 1.0) < 1e-12 &&
+                     std::abs(iterative.value().value.at(1U) - 2.0) < 1e-12,
+                 "installed iterative solver API failed")) {
       return 1;
     }
   }
