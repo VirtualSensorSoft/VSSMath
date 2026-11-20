@@ -70,14 +70,18 @@ Result<Scalar> scaledSum(const std::vector<Triplet>& entries, Index begin,
 Status validateCSR(const CSR& matrix) {
   if (matrix.rows == std::numeric_limits<Extent>::max() ||
       matrix.row_offsets.view().size() != matrix.rows + 1U) {
-    return Status::failure(ErrorCode::InvalidDomain,
+    return Status::failure(ErrorCode::DimensionMismatch,
                            "CSR row offsets have an invalid extent");
   }
   const auto offsets = matrix.row_offsets.view();
   const auto columns = matrix.column_indices.view();
   const auto values = matrix.values.view();
-  if (columns.size() != values.size() || offsets.empty() ||
-      offsets.front() != 0U || offsets.back() != values.size()) {
+  if (columns.size() != values.size()) {
+    return Status::failure(ErrorCode::DimensionMismatch,
+                           "CSR index and value arrays differ in length");
+  }
+  if (offsets.empty() || offsets.front() != 0U ||
+      offsets.back() != values.size()) {
     return Status::failure(ErrorCode::InvalidDomain,
                            "CSR arrays have inconsistent extents");
   }
@@ -91,8 +95,11 @@ Status validateCSR(const CSR& matrix) {
     Index previous = 0U;
     bool has_previous = false;
     for (Index entry = begin; entry < end; ++entry) {
-      if (columns[entry] >= matrix.columns ||
-          (has_previous && columns[entry] <= previous)) {
+      if (columns[entry] >= matrix.columns) {
+        return Status::failure(ErrorCode::IndexOutOfRange,
+                               "CSR column lies outside the matrix shape");
+      }
+      if (has_previous && columns[entry] <= previous) {
         return Status::failure(ErrorCode::InvalidDomain,
                                "CSR columns are not canonical");
       }
@@ -207,16 +214,13 @@ Result<CSR> sparseCSRFromTriplets(Extent rows, Extent columns,
                           "sparse triplet contains a non-finite value");
     }
   }
-  std::sort(sorted.begin(), sorted.end(),
-            [](const Triplet& lhs, const Triplet& rhs) {
-              if (lhs.row != rhs.row) {
-                return lhs.row < rhs.row;
-              }
-              if (lhs.column != rhs.column) {
-                return lhs.column < rhs.column;
-              }
-              return lhs.value < rhs.value;
-            });
+  std::stable_sort(sorted.begin(), sorted.end(),
+                   [](const Triplet& lhs, const Triplet& rhs) {
+                     if (lhs.row != rhs.row) {
+                       return lhs.row < rhs.row;
+                     }
+                     return lhs.column < rhs.column;
+                   });
 
   std::vector<Index> offsets(offset_count, 0U);
   std::vector<Index> output_columns;
