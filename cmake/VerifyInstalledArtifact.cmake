@@ -148,6 +148,7 @@ set(vss_expected_files
   include/vss/math/differentiation/FiniteDifference.hpp
   include/vss/math/probability/ChiSquare.hpp
   include/vss/math/statistics/Descriptive.hpp
+  include/vss/math/statistics/Order.hpp
   include/vss/math/linear/Cholesky.hpp
   include/vss/math/linear/Decomposition.hpp
   include/vss/math/linear/SolvePolicy.hpp

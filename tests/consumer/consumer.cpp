@@ -36,6 +36,7 @@
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/Sparse.hpp>
 #include <vss/math/linear/Structured.hpp>
+#include <vss/math/statistics/Order.hpp>
 #include <vss/math/version.hpp>
 
 namespace {
@@ -584,6 +585,31 @@ int main() {
   if (!require(transformedCross.hasValue() &&
                    transformedCross.value().at(0U, 0U) == 3.0,
                "installed cross-covariance transformation API failed")) {
+    return 1;
+  }
+
+  const Vector orderSample{std::array<Scalar, 4U>{1.0, 2.0, 4.0, 8.0}};
+  constexpr Limits orderLimits{64U, 4096U, 0U};
+  const auto installedQuantile = statistics::quantile(
+      orderSample.view(), 0.25, QuantileRule::linear, orderLimits);
+  const auto installedTrimmed =
+      statistics::trimmedMean(orderSample.view(), 0.25, orderLimits);
+  const auto installedGeometric = statistics::geometricMean(orderSample.view());
+  const auto installedHarmonic = statistics::harmonicMean(orderSample.view());
+  const auto installedMad =
+      statistics::medianAbsoluteDeviation(orderSample.view(), 1.0, orderLimits);
+  const auto installedIqr = statistics::interquartileRange(
+      orderSample.view(), QuantileRule::linear, orderLimits);
+  if (!require(
+          installedQuantile.hasValue() && installedQuantile.value() == 1.75 &&
+              installedTrimmed.hasValue() && installedTrimmed.value() == 3.0 &&
+              installedGeometric.hasValue() &&
+              std::abs(installedGeometric.value() - std::sqrt(8.0)) < 1.0e-12 &&
+              installedHarmonic.hasValue() &&
+              std::abs(installedHarmonic.value() - 32.0 / 15.0) < 1.0e-12 &&
+              installedMad.hasValue() && installedMad.value() == 1.5 &&
+              installedIqr.hasValue() && installedIqr.value() == 3.25,
+          "installed order-statistics API failed")) {
     return 1;
   }
 

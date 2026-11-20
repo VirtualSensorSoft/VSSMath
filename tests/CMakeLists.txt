@@ -82,6 +82,9 @@ vss_math_add_algorithm_test(test_finite_difference
 vss_math_add_algorithm_test(test_descriptive_statistics
                              algorithms/test_descriptive_statistics.cpp
                              math.descriptive_statistics PRIVATE_DETAIL)
+vss_math_add_algorithm_test(test_order_statistics
+                             algorithms/test_order_statistics.cpp
+                             math.order_statistics)
 vss_math_add_algorithm_test(test_chi_square algorithms/test_chi_square.cpp
                              math.probability PRIVATE_DETAIL)
 vss_math_add_test(test_error_precedence unit/test_error_precedence.cpp
