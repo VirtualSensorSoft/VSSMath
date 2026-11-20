@@ -76,7 +76,7 @@ template <class Rhs, class Apply, class Precondition>
 Result<PcgProgress>
 runPcg(const Rhs& rhs, const Apply& apply, const Precondition& precondition,
        const IterPolicy& policy, EvaluationBudget& evaluations,
-       PcgWorkspace workspace) {
+       PcgWorkspace workspace, bool count_preconditioner = true) {
   using Output = Result<PcgProgress>;
   const auto x = workspace.solution;
   const auto r = workspace.residual;
@@ -85,8 +85,9 @@ runPcg(const Rhs& rhs, const Apply& apply, const Precondition& precondition,
   const auto image = workspace.image;
   const auto checkedAction = [&evaluations](const auto& action,
                                             std::span<const Wide> input,
-                                            std::span<Wide> output) {
-    if (!evaluations.charge()) {
+                                            std::span<Wide> output,
+                                            bool count = true) {
+    if (count && !evaluations.charge()) {
       return Status::failure(ErrorCode::ResourceLimit,
                              "PCG evaluation limit reached");
     }
@@ -109,7 +110,9 @@ runPcg(const Rhs& rhs, const Apply& apply, const Precondition& precondition,
   Wide previous_energy = 0;
   Index step = 0;
   while (true_residual > tolerance && step < policy.max_iterations) {
-    if (const auto status = checkedAction(precondition, r, z); !status.ok()) {
+    if (const auto status =
+            checkedAction(precondition, r, z, count_preconditioner);
+        !status.ok()) {
       return copyFailure(status);
     }
     const Wide energy = compensatedDot(r, z);
