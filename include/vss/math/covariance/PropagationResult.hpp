@@ -92,7 +92,7 @@ struct EstimatorDiagnostics final {
   /// @brief Per-coordinate support when support differs across coordinates.
   Array<Support> coordinate_support;
   /// @brief Per-tuple support when support differs across moment tuples.
-  Array<TupleSupport> tuple_support = {};
+  Array<TupleSupport> tuple_support;
   /// @brief Retained-spectrum reciprocal condition when available.
   std::optional<Scalar> reciprocal_condition = std::nullopt;
   /// @brief Bound or estimate for numerical error when available.

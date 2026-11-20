@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vss/math/Array.hpp>
@@ -15,6 +16,7 @@
 #include <vss/math/Operations.hpp>
 #include <vss/math/PrintOptions.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/TensorElementwise.hpp>
 #include <vss/math/TensorOperations.hpp>
@@ -22,6 +24,7 @@
 #include <vss/math/Vector.hpp>
 #include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/covariance/Diagnostics.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/covariance/UncertaintySummary.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
@@ -409,7 +412,7 @@ int main() {
           : Result<Scalar>::failure(ErrorCode::InvalidDomain,
                                     "whitening consumer setup failed");
   if (!require(whitening.hasValue() && mahalanobis.hasValue() &&
-                   std::abs(mahalanobis.value() - 4.0 / 3.0) < 1.0e-12,
+                   std::abs(mahalanobis.value() - (4.0 / 3.0)) < 1.0e-12,
                "installed covariance whitening APIs failed")) {
     return 1;
   }
@@ -438,7 +441,8 @@ int main() {
 
   Matrix reductionInput(2U, 2U);
   reductionInput.at(0U, 0U) = 3.0;
-  const Limits reductionLimits{4096U, 262144U, 64U};
+  const Limits reductionLimits{
+      .elements = 4096U, .bytes = 262144U, .evaluations = 64U};
   const auto reduced = linear::lowRankApproximation(reductionInput.view(), 1U,
                                                     glsPolicy, reductionLimits);
   if (!require(reduced.hasValue() && reduced.value().singular.at(0U) == 3.0 &&
@@ -452,12 +456,13 @@ int main() {
   sampleRows.at(2U, 1U) = 1.0;
   sampleRows.at(3U, 1U) = -1.0;
   const std::array<Index, 1U> sampleShape{2U};
-  const SampleView sampleView{sampleRows.view(), sampleShape, {}};
+  const SampleView sampleView{
+      .rows = sampleRows.view(), .observation_shape = sampleShape, .valid = {}};
   const auto principal =
       linear::pca(sampleView, 1U, true, glsPolicy, reductionLimits);
   if (!require(principal.hasValue() &&
                    std::abs(principal.value().explained_variance.at(0U) -
-                            8.0 / 3.0) < 1.0e-12,
+                            (8.0 / 3.0)) < 1.0e-12,
                "installed centered PCA API failed")) {
     return 1;
   }
@@ -466,11 +471,11 @@ int main() {
   propagatedCovariance.at(0U, 0U) = 4.0;
   propagatedCovariance.at(1U, 1U) = 9.0;
   const PropagationResult propagated{
-      Vector{std::array<Scalar, 2U>{2.0, -3.0}},
-      propagatedCovariance,
-      Approximation::exact,
-      {},
-      PropagationCovarianceCheck::positive_semidefinite};
+      .mean = Vector{std::array<Scalar, 2U>{2.0, -3.0}},
+      .covariance = propagatedCovariance,
+      .method = Approximation::exact,
+      .diagnostics = {},
+      .covariance_check = PropagationCovarianceCheck::positive_semidefinite};
   const auto uncertainty = covariance::summarizeUncertainty(
       propagated, 2.0, std::nullopt, std::nullopt, reductionLimits);
   if (!require(uncertainty.hasValue() &&

@@ -1,10 +1,20 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <string>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/Reduction.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::linear {
 namespace {
@@ -110,7 +120,7 @@ public:
     }
     if (scale_ < magnitude) {
       const long double ratio = scale_ / magnitude;
-      sum_ = 1.0L + sum_ * ratio * ratio;
+      sum_ = 1.0L + (sum_ * ratio * ratio);
       scale_ = magnitude;
     } else {
       const long double ratio = magnitude / scale_;
@@ -289,7 +299,7 @@ Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
   Matrix axes(dimensions, rank, 0.0);
   Matrix scores(count, rank, 0.0);
   Vector explained(rank, 0.0);
-  const long double sampleDenominator = static_cast<long double>(count - 1U);
+  const auto sampleDenominator = static_cast<long double>(count - 1U);
   for (Index mode = 0U; mode < rank; ++mode) {
     const Scalar singular = factor.value().singular.at(mode);
     if (whiten && singular <= factor.value().cutoff) {

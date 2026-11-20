@@ -1,10 +1,15 @@
 #include "Test.hpp"
 
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/SampleView.hpp>
 #include <vss/math/linear/Reduction.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 
@@ -35,7 +40,9 @@ SolvePolicy policy() {
   return result;
 }
 
-Limits limits() { return {4096U, 262144U, 0U}; }
+Limits limits() {
+  return {.elements = 4096U, .bytes = 262144U, .evaluations = 0U};
+}
 
 void lowRankApproximation() {
   const Matrix diagonal = matrix({{3.0, 0.0}, {0.0, 0.0}});
@@ -89,8 +96,9 @@ void lowRankApproximation() {
   VSS_CHECK(!excessive.hasValue());
   VSS_CHECK(excessive.status().code() == ErrorCode::InvalidExtent);
 
-  const auto denied =
-      linear::lowRankApproximation(diagonal.view(), 1U, policy(), {0U, 0U, 0U});
+  const auto denied = linear::lowRankApproximation(
+      diagonal.view(), 1U, policy(),
+      {.elements = 0U, .bytes = 0U, .evaluations = 0U});
   VSS_CHECK(!denied.hasValue());
   VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
 
@@ -106,7 +114,8 @@ void centeredWhitenedPca() {
   const Matrix samples =
       matrix({{2.0, 0.0}, {-2.0, 0.0}, {0.0, 1.0}, {0.0, -1.0}});
   const std::array<Index, 1> shape{2U};
-  const SampleView sampleView{samples.view(), shape, {}};
+  const SampleView sampleView{
+      .rows = samples.view(), .observation_shape = shape, .valid = {}};
   const auto result = linear::pca(sampleView, 1U, true, policy(), limits());
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().center.size() == 2U);
@@ -116,7 +125,7 @@ void centeredWhitenedPca() {
   VSS_CHECK(result.value().axes.columns() == 1U);
   VSS_CHECK(std::abs(result.value().axes.at(0U, 0U)) > 1.0 - 1.0e-12);
   VSS_CHECK(std::abs(result.value().axes.at(1U, 0U)) < 1.0e-12);
-  VSS_CHECK(std::abs(result.value().explained_variance.at(0U) - 8.0 / 3.0) <
+  VSS_CHECK(std::abs(result.value().explained_variance.at(0U) - (8.0 / 3.0)) <
             1.0e-12);
   VSS_CHECK(result.value().scores.rows() == 4U);
   VSS_CHECK(result.value().scores.columns() == 1U);
@@ -142,14 +151,16 @@ void centeredWhitenedPca() {
   VSS_CHECK(meanOnly.value().explained_variance.empty());
 
   const Matrix twoRows = matrix({{1.0, 2.0}, {3.0, 4.0}});
-  const SampleView twoRowView{twoRows.view(), shape, {}};
+  const SampleView twoRowView{
+      .rows = twoRows.view(), .observation_shape = shape, .valid = {}};
   const auto centeredRankExceeded =
       linear::pca(twoRowView, 2U, false, policy(), limits());
   VSS_CHECK(!centeredRankExceeded.hasValue());
   VSS_CHECK(centeredRankExceeded.status().code() == ErrorCode::InvalidExtent);
 
   const Matrix oneRow = matrix({{4.0, 7.0}});
-  const SampleView oneRowView{oneRow.view(), shape, {}};
+  const SampleView oneRowView{
+      .rows = oneRow.view(), .observation_shape = shape, .valid = {}};
   const auto insufficient =
       linear::pca(oneRowView, 0U, false, policy(), limits());
   VSS_CHECK(!insufficient.hasValue());
@@ -157,7 +168,8 @@ void centeredWhitenedPca() {
 
   const Matrix translated =
       matrix({{12.0, -3.0}, {8.0, -3.0}, {10.0, -2.0}, {10.0, -4.0}});
-  const SampleView translatedView{translated.view(), shape, {}};
+  const SampleView translatedView{
+      .rows = translated.view(), .observation_shape = shape, .valid = {}};
   const auto translatedPca =
       linear::pca(translatedView, 1U, false, policy(), limits());
   VSS_CHECK(translatedPca.hasValue());
@@ -170,30 +182,68 @@ void centeredWhitenedPca() {
   VSS_CHECK(std::abs(populationVariance - 0.75) < 1.0e-12);
 
   const Matrix constant = matrix({{1.0, 2.0}, {1.0, 2.0}, {1.0, 2.0}});
-  const SampleView constantView{constant.view(), shape, {}};
+  const SampleView constantView{
+      .rows = constant.view(), .observation_shape = shape, .valid = {}};
   const auto zeroVariance =
       linear::pca(constantView, 1U, true, policy(), limits());
   VSS_CHECK(!zeroVariance.hasValue());
   VSS_CHECK(zeroVariance.status().code() == ErrorCode::RankDeficient);
 
+  SolvePolicy discardedPolicy = policy();
+  discardedPolicy.rank_rel = 0.75;
+  const auto discardedWhitening =
+      linear::pca(sampleView, 2U, true, discardedPolicy, limits());
+  VSS_CHECK(!discardedWhitening.hasValue());
+  VSS_CHECK(discardedWhitening.status().code() == ErrorCode::RankDeficient);
+
   const auto denied =
-      linear::pca(sampleView, 1U, false, policy(), {0U, 0U, 0U});
+      linear::pca(sampleView, 1U, false, policy(),
+                  {.elements = 0U, .bytes = 0U, .evaluations = 0U});
   VSS_CHECK(!denied.hasValue());
   VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
 
   const std::array<Index, 1> wrongShape{3U};
-  const SampleView malformedShape{samples.view(), wrongShape, {}};
+  const SampleView malformedShape{
+      .rows = samples.view(), .observation_shape = wrongShape, .valid = {}};
   const auto shapeMismatch =
       linear::pca(malformedShape, 1U, false, policy(), limits());
   VSS_CHECK(!shapeMismatch.hasValue());
   VSS_CHECK(shapeMismatch.status().code() == ErrorCode::DimensionMismatch);
 
   const std::array<std::uint8_t, 8> missing{1U, 1U, 1U, 1U, 1U, 1U, 1U, 0U};
-  const SampleView incomplete{samples.view(), shape, missing};
+  const SampleView incomplete{
+      .rows = samples.view(), .observation_shape = shape, .valid = missing};
   const auto missingRejected =
       linear::pca(incomplete, 1U, false, policy(), limits());
   VSS_CHECK(!missingRejected.hasValue());
   VSS_CHECK(missingRejected.status().code() == ErrorCode::InvalidDomain);
+
+  const std::array<std::uint8_t, 7> shortMask{1U, 1U, 1U, 1U, 1U, 1U, 1U};
+  const SampleView malformedMask{
+      .rows = samples.view(), .observation_shape = shape, .valid = shortMask};
+  const auto maskSizeRejected =
+      linear::pca(malformedMask, 1U, false, policy(), limits());
+  VSS_CHECK(!maskSizeRejected.hasValue());
+  VSS_CHECK(maskSizeRejected.status().code() == ErrorCode::DimensionMismatch);
+
+  const std::array<std::uint8_t, 8> nonBooleanMask{1U, 1U, 1U, 1U,
+                                                   1U, 1U, 1U, 2U};
+  const SampleView invalidMask{.rows = samples.view(),
+                               .observation_shape = shape,
+                               .valid = nonBooleanMask};
+  const auto maskValueRejected =
+      linear::pca(invalidMask, 1U, false, policy(), limits());
+  VSS_CHECK(!maskValueRejected.hasValue());
+  VSS_CHECK(maskValueRejected.status().code() == ErrorCode::InvalidDomain);
+
+  Matrix nonFiniteSamples = samples;
+  nonFiniteSamples.at(0U, 0U) = std::numeric_limits<Scalar>::quiet_NaN();
+  const SampleView nonFiniteView{
+      .rows = nonFiniteSamples.view(), .observation_shape = shape, .valid = {}};
+  const auto nonFiniteRejected =
+      linear::pca(nonFiniteView, 1U, false, policy(), limits());
+  VSS_CHECK(!nonFiniteRejected.hasValue());
+  VSS_CHECK(nonFiniteRejected.status().code() == ErrorCode::NonFiniteInput);
 }
 
 } // namespace
