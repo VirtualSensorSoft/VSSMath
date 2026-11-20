@@ -1,11 +1,20 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/RankAware.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::linear {
 namespace {
@@ -89,7 +98,7 @@ long double norm(ConstMatrixView value) noexcept {
       }
       if (scale < magnitude) {
         const long double ratio = scale / magnitude;
-        sum = 1.0L + sum * ratio * ratio;
+        sum = 1.0L + (sum * ratio * ratio);
         scale = magnitude;
       } else {
         const long double ratio = magnitude / scale;
@@ -102,9 +111,9 @@ long double norm(ConstMatrixView value) noexcept {
 
 Matrix transpose(ConstMatrixView value) {
   Matrix result(value.columns(), value.rows(), 0.0);
-  for (Index row = 0U; row < value.rows(); ++row) {
-    for (Index column = 0U; column < value.columns(); ++column) {
-      result.at(column, row) = value.at(row, column);
+  for (Index first = 0U; first < value.rows(); ++first) {
+    for (Index second = 0U; second < value.columns(); ++second) {
+      result.at(second, first) = value.at(first, second);
     }
   }
   return result;
@@ -221,8 +230,13 @@ generalizedLinearEstimate(ConstMatrixView design, ConstMatrixView observations,
     if (!constrained.hasValue()) {
       return copyFailure<LinearEstimate>(constrained.status());
     }
+    if (!constrained.value().identified_basis.has_value()) {
+      return failure<LinearEstimate>(
+          ErrorCode::InvalidDomain,
+          "exact-constraint solve omitted its identified basis");
+    }
     particular = constrained.value().parameters;
-    exactBasis = *constrained.value().identified_basis;
+    exactBasis = constrained.value().identified_basis.value();
     exactRank = constrained.value().rank;
 
     Matrix reproduced;
@@ -340,8 +354,14 @@ generalizedLinearEstimate(ConstMatrixView design, ConstMatrixView observations,
     }
   }
   if (tangentRank != 0U) {
+    if (!fitted.value().identified_basis.has_value()) {
+      return failure<LinearEstimate>(
+          ErrorCode::InvalidDomain,
+          "stochastic solve omitted its identified basis");
+    }
     Matrix tangentBasis;
-    if (!multiply(tangent.view(), fitted.value().identified_basis->view(),
+    if (!multiply(tangent.view(),
+                  fitted.value().identified_basis.value().view(),
                   tangentBasis)) {
       return failure<LinearEstimate>(ErrorCode::NonFiniteResult,
                                      "GLS identified basis overflowed");
@@ -376,21 +396,27 @@ generalizedLinearEstimate(ConstMatrixView design, ConstMatrixView observations,
               ErrorCode::NonFiniteResult,
               "GLS parameter covariance is not representable");
         }
-        for (Index row = 0U; row < tangent.columns(); ++row) {
-          for (Index column = 0U; column < tangent.columns(); ++column) {
+        for (Index coordinate = 0U; coordinate < tangent.columns();
+             ++coordinate) {
+          for (Index otherCoordinate = 0U; otherCoordinate < tangent.columns();
+               ++otherCoordinate) {
+            const long double firstProjection =
+                spectrum.value().right_transpose.at(mode, coordinate);
+            const long double secondProjection =
+                spectrum.value().right_transpose.at(mode, otherCoordinate);
+            const long double contribution =
+                (firstProjection * secondProjection * inverseVariance);
             const long double updated =
-                static_cast<long double>(tangentCovariance.at(row, column)) +
                 static_cast<long double>(
-                    spectrum.value().right_transpose.at(mode, row)) *
-                    static_cast<long double>(
-                        spectrum.value().right_transpose.at(mode, column)) *
-                    inverseVariance;
+                    tangentCovariance.at(coordinate, otherCoordinate)) +
+                contribution;
             if (!representable(updated)) {
               return failure<LinearEstimate>(
                   ErrorCode::NonFiniteResult,
                   "GLS tangent covariance is not representable");
             }
-            tangentCovariance.at(row, column) = static_cast<Scalar>(updated);
+            tangentCovariance.at(coordinate, otherCoordinate) =
+                static_cast<Scalar>(updated);
           }
         }
       }
