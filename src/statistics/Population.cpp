@@ -1,19 +1,24 @@
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdint>
 #include <detail/CompensatedSum.hpp>
 #include <limits>
 #include <numeric>
+#include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
-#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/covariance/Conditioning.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 #include <vss/math/statistics/Population.hpp>
@@ -77,7 +82,7 @@ bool rowValid(const SampleView& sample, Index row) {
   }
   const auto columns = sample.rows.columns();
   for (Index column = 0U; column < columns; ++column) {
-    if (sample.valid[row * columns + column] == 0U) {
+    if (sample.valid[(row * columns) + column] == 0U) {
       return false;
     }
   }
@@ -231,11 +236,25 @@ Result<Vector> estimatedCenter(const SampleView& sample,
   return Result<Vector>::success(std::move(center));
 }
 
+Result<ConstVectorView> resolvedCenter(const CenterSpec& center,
+                                       const Vector* estimated) {
+  if (center.rule == CenterRule::known) {
+    if (!center.center.has_value()) {
+      return fail<ConstVectorView>(ErrorCode::InvalidDomain,
+                                   "known center is missing its values");
+    }
+    return Result<ConstVectorView>::success(*center.center);
+  }
+  if (center.rule != CenterRule::estimated || estimated == nullptr) {
+    return fail<ConstVectorView>(ErrorCode::InvalidDomain,
+                                 "estimated center is missing its values");
+  }
+  return Result<ConstVectorView>::success(estimated->view());
+}
+
 Scalar centeredValue(const SampleView& sample, Index row, Index column,
-                     const CenterSpec& center, const Vector* estimated) {
-  return sample.rows.at(row, column) - (center.rule == CenterRule::known
-                                            ? center.center->at(column)
-                                            : estimated->at(column));
+                     ConstVectorView center) {
+  return sample.rows.at(row, column) - center.at(column);
 }
 
 Scalar scaledProduct(Scalar leftScale, Scalar rightScale, Scalar sum,
@@ -259,8 +278,23 @@ Result<Matrix> covarianceValues(const SampleView& left, const SampleView* right,
                                 PopulationPolicy policy, Index count) {
   const Extent rows = left.rows.columns();
   const Extent columns = right == nullptr ? rows : right->rows.columns();
-  const Scalar divisor = static_cast<Scalar>(
+  const auto divisor = static_cast<Scalar>(
       policy.normalization == VarianceMode::iid_sample ? count - 1U : count);
+  const auto leftCenterValues = resolvedCenter(leftCenter, leftEstimated);
+  if (!leftCenterValues) {
+    return Result<Matrix>::failure(
+        leftCenterValues.status().code(),
+        std::string(leftCenterValues.status().message()));
+  }
+  ConstVectorView rightCenterValues = leftCenterValues.value();
+  if (right != nullptr) {
+    auto values = resolvedCenter(*rightCenter, rightEstimated);
+    if (!values) {
+      return Result<Matrix>::failure(values.status().code(),
+                                     std::string(values.status().message()));
+    }
+    rightCenterValues = std::move(values).value();
+  }
   Matrix output(rows, columns);
   for (Index i = 0U; i < rows; ++i) {
     const Index begin = right == nullptr ? i : 0U;
@@ -271,11 +305,11 @@ Result<Matrix> covarianceValues(const SampleView& left, const SampleView* right,
         if (!commonRowValid(left, right, row)) {
           continue;
         }
-        const Scalar x = centeredValue(left, row, i, leftCenter, leftEstimated);
+        const Scalar x = centeredValue(left, row, i, leftCenterValues.value());
         const Scalar y =
             right == nullptr
-                ? centeredValue(left, row, j, leftCenter, leftEstimated)
-                : centeredValue(*right, row, j, *rightCenter, rightEstimated);
+                ? centeredValue(left, row, j, leftCenterValues.value())
+                : centeredValue(*right, row, j, rightCenterValues);
         if (!std::isfinite(x) || !std::isfinite(y)) {
           return fail<Matrix>(ErrorCode::NonFiniteResult,
                               "centered population value is non-finite");
@@ -290,11 +324,11 @@ Result<Matrix> covarianceValues(const SampleView& left, const SampleView* right,
             continue;
           }
           const Scalar x =
-              centeredValue(left, row, i, leftCenter, leftEstimated);
+              centeredValue(left, row, i, leftCenterValues.value());
           const Scalar y =
               right == nullptr
-                  ? centeredValue(left, row, j, leftCenter, leftEstimated)
-                  : centeredValue(*right, row, j, *rightCenter, rightEstimated);
+                  ? centeredValue(left, row, j, leftCenterValues.value())
+                  : centeredValue(*right, row, j, rightCenterValues);
           sum.add((x / leftScale) * (y / rightScale));
         }
       }
@@ -355,6 +389,10 @@ Result<Estimate<Matrix>> makeEstimate(const SampleView& left,
   const Extent outputRows = leftDimension.value();
   const Extent outputColumns =
       right == nullptr ? outputRows : rightDimension.value();
+  if (outputColumns == 0U) {
+    return fail<Estimate<Matrix>>(ErrorCode::InvalidExtent,
+                                  "covariance output must be nonempty");
+  }
   if (outputRows > std::numeric_limits<Extent>::max() / outputColumns) {
     return fail<Estimate<Matrix>>(ErrorCode::SizeOverflow,
                                   "covariance output extent overflows");
@@ -409,7 +447,7 @@ Result<Estimate<Matrix>> makeEstimate(const SampleView& left,
     }
     rightEstimated.emplace(std::move(value).value());
   }
-  const auto covariance = covarianceValues(
+  auto covariance = covarianceValues(
       left, right, leftCenter, rightCenter,
       leftEstimated ? &*leftEstimated : nullptr,
       rightEstimated ? &*rightEstimated : nullptr, policy, count);
@@ -420,37 +458,42 @@ Result<Estimate<Matrix>> makeEstimate(const SampleView& left,
 
   const CenterRule diagnosticCenter = leftCenter.rule;
   const Support support{
-      left.rows.rows(),
-      count,
-      count,
-      std::nullopt,
-      static_cast<Scalar>(count),
-      {1.0, 1.0 / static_cast<Scalar>(count),
-       1.0 / (static_cast<Scalar>(count) * static_cast<Scalar>(count))},
-      static_cast<Scalar>(count),
-      policy.normalization == VarianceMode::iid_sample
-          ? std::optional<Scalar>(static_cast<Scalar>(count - 1U))
-          : std::nullopt,
-      std::nullopt};
+      .input = left.rows.rows(),
+      .valid = count,
+      .positive = count,
+      .frequency_mass = std::nullopt,
+      .weight_mass = static_cast<Scalar>(count),
+      .normalized_weight_powers = {1.0, 1.0 / static_cast<Scalar>(count),
+                                   1.0 / (static_cast<Scalar>(count) *
+                                          static_cast<Scalar>(count))},
+      .effective_count = static_cast<Scalar>(count),
+      .degrees_of_freedom =
+          policy.normalization == VarianceMode::iid_sample
+              ? std::optional<Scalar>(static_cast<Scalar>(count - 1U))
+              : std::nullopt,
+      .squared_weight_mass = std::nullopt};
   EstimatorDiagnostics diagnostics{
-      policy.estimand,
-      WeightRule::unweighted,
-      diagnosticCenter,
-      Approximation::exact,
-      support,
-      {},
-      {},
-      std::nullopt,
-      std::nullopt,
-      std::nullopt,
-      std::nullopt,
-      "scale-normalized compensated two-pass population covariance",
-      policy.normalization == VarianceMode::iid_sample
-          ? "independent identically distributed paired rows"
-          : "descriptive finite-population covariance",
-      {}};
+      .estimand = policy.estimand,
+      .weight = WeightRule::unweighted,
+      .center = diagnosticCenter,
+      .approximation = Approximation::exact,
+      .global = support,
+      .coordinate_support = {},
+      .tuple_support = {},
+      .reciprocal_condition = std::nullopt,
+      .numerical_error = std::nullopt,
+      .sampling_error = std::nullopt,
+      .rank = std::nullopt,
+      .algorithm =
+          "scale-normalized compensated two-pass population covariance",
+      .premises = policy.normalization == VarianceMode::iid_sample
+                      ? "independent identically distributed paired rows"
+                      : "descriptive finite-population covariance",
+      .warnings = {}};
   return Result<Estimate<Matrix>>::success(
-      {std::move(covariance).value(), std::move(diagnostics), std::nullopt});
+      Estimate<Matrix>{.value = std::move(covariance).value(),
+                       .diagnostics = std::move(diagnostics),
+                       .error_covariance = std::nullopt});
 }
 
 bool validSolvePolicy(const SolvePolicy& policy) {
@@ -499,16 +542,20 @@ Scalar normalizedRatio(Scalar numerator, Scalar firstVariance,
                                    secondRootExponent);
 }
 
-struct LongCompensatedSum final {
-  long double sum{};
-  long double correction{};
-
+class LongCompensatedSum final {
+public:
   void add(long double value) {
     const long double adjusted = value - correction;
     const long double next = sum + adjusted;
     correction = (next - sum) - adjusted;
     sum = next;
   }
+
+  [[nodiscard]] long double total() const noexcept { return sum; }
+
+private:
+  long double sum{};
+  long double correction{};
 };
 
 Result<linear::SymmetricEigenDecomposition>
@@ -552,7 +599,7 @@ correlationResult(Matrix value, const SolvePolicy& policy) {
           ErrorCode::NotPositiveSemidefinite,
           "correlation matrix is not positive semidefinite");
     }
-    largest = std::max(largest, std::max(0.0, eigenvalues.at(i)));
+    largest = std::max({largest, 0.0, eigenvalues.at(i)});
   }
   const Scalar cutoff = std::max(policy.rank_abs, policy.rank_rel * largest);
   Index rank = 0U;
@@ -626,15 +673,24 @@ Result<Matrix> standardizedCovariance(ConstMatrixView input,
   Matrix symmetric(dimension, dimension, 0.0);
   for (Index row = 0U; row < dimension; ++row) {
     for (Index column = row; column < dimension; ++column) {
-      if (scale != 0.0 && std::abs(input.at(row, column) / scale -
-                                   input.at(column, row) / scale) > allowance) {
+      if (scale != 0.0 &&
+          std::abs((input.at(row, column) / scale) -
+                   (input.at( // NOLINT(readability-suspicious-call-argument):
+                              // mirrored matrix entry
+                        column, row) /
+                    scale)) > allowance) {
         return fail<Matrix>(ErrorCode::NotSymmetric,
                             "covariance mirrored entries are inconsistent");
       }
-      const Scalar entry =
-          std::midpoint(input.at(row, column), input.at(column, row));
+      const Scalar entry = std::midpoint(
+          input.at(row, column),
+          input.at( // NOLINT(readability-suspicious-call-argument):
+                    // mirrored matrix entry
+              column, row));
       symmetric.at(row, column) = entry;
-      symmetric.at(column, row) = entry;
+      symmetric
+          .at( // NOLINT(readability-suspicious-call-argument): mirror entry
+              column, row) = entry;
     }
   }
   for (Index row = 0U; row < dimension; ++row) {
@@ -645,7 +701,10 @@ Result<Matrix> standardizedCovariance(ConstMatrixView input,
     }
     if (variance == 0.0) {
       for (Index column = 0U; column < dimension; ++column) {
-        if (input.at(row, column) != 0.0 || input.at(column, row) != 0.0) {
+        if (input.at(row, column) != 0.0 ||
+            input.at( // NOLINT(readability-suspicious-call-argument):
+                      // mirrored matrix entry
+                column, row) != 0.0) {
           return fail<Matrix>(
               ErrorCode::NotPositiveSemidefinite,
               "zero-variance coordinate has nonzero covariance");
@@ -671,7 +730,9 @@ Result<Matrix> standardizedCovariance(ConstMatrixView input,
                             "correlation normalization is non-finite");
       }
       correlation.at(row, column) = value;
-      correlation.at(column, row) = value;
+      correlation
+          .at( // NOLINT(readability-suspicious-call-argument): mirror entry
+              column, row) = value;
     }
     correlation.at(row, row) = 1.0;
   }
@@ -711,16 +772,17 @@ crossCovariance(const SampleView& left, const SampleView& right,
 }
 
 Result<covariance::CovarianceResult>
-correlationMatrix(ConstMatrixView input, SolvePolicy policy, Limits limits) {
+correlationMatrix(ConstMatrixView covariance, SolvePolicy policy,
+                  Limits limits) {
   if (!validSolvePolicy(policy)) {
     return fail<covariance::CovarianceResult>(
         ErrorCode::InvalidTolerance, "correlation solve policy is invalid");
   }
-  if (input.rows() == 0U && input.columns() == 0U) {
+  if (covariance.rows() == 0U && covariance.columns() == 0U) {
     return fail<covariance::CovarianceResult>(
         ErrorCode::InsufficientSamples, "correlation needs a nonempty matrix");
   }
-  auto correlation = standardizedCovariance(input, policy, limits, false);
+  auto correlation = standardizedCovariance(covariance, policy, limits, false);
   if (!correlation.hasValue()) {
     return Result<covariance::CovarianceResult>::failure(
         correlation.status().code(),
@@ -730,7 +792,7 @@ correlationMatrix(ConstMatrixView input, SolvePolicy policy, Limits limits) {
 }
 
 Result<covariance::CovarianceResult>
-partialCorrelation(ConstMatrixView input, std::span<const Index> selected,
+partialCorrelation(ConstMatrixView covariance, std::span<const Index> selected,
                    std::span<const Index> conditioned, SolvePolicy policy,
                    Limits limits) {
   if (!validSolvePolicy(policy)) {
@@ -743,12 +805,12 @@ partialCorrelation(ConstMatrixView input, std::span<const Index> selected,
         ErrorCode::InsufficientSamples,
         "partial correlation requires at least one selected coordinate");
   }
-  const Extent inputDimension = input.rows();
+  const Extent inputDimension = covariance.rows();
   if (inputDimension == 0U) {
     return fail<covariance::CovarianceResult>(
         ErrorCode::InvalidExtent, "covariance matrix must be nonempty");
   }
-  if (inputDimension != input.columns()) {
+  if (inputDimension != covariance.columns()) {
     return fail<covariance::CovarianceResult>(
         ErrorCode::DimensionMismatch, "covariance matrix must be square");
   }
@@ -819,7 +881,7 @@ partialCorrelation(ConstMatrixView input, std::span<const Index> selected,
     }
     seen[index] = true;
   }
-  auto joint = standardizedCovariance(input, policy, limits, true);
+  auto joint = standardizedCovariance(covariance, policy, limits, true);
   if (!joint.hasValue()) {
     return Result<covariance::CovarianceResult>::failure(
         joint.status().code(), std::string(joint.status().message()));
@@ -876,7 +938,7 @@ partialCorrelation(ConstMatrixView input, std::span<const Index> selected,
             ErrorCode::NotPositiveSemidefinite,
             "conditioned correlation block is not positive semidefinite");
       }
-      largest = std::max(largest, std::max(0.0, eigenvalues.at(i)));
+      largest = std::max({largest, 0.0, eigenvalues.at(i)});
     }
     const Scalar cutoff = std::max(policy.rank_abs, policy.rank_rel * largest);
     std::vector<Index> retained;
@@ -914,7 +976,7 @@ partialCorrelation(ConstMatrixView input, std::span<const Index> selected,
         const long double permitted =
             std::sqrt(std::max(0.0, eigenvalues.at(k))) +
             compatibilityAllowance;
-        if (std::abs(projection.sum) > permitted) {
+        if (std::abs(projection.total()) > permitted) {
           return fail<covariance::CovarianceResult>(
               ErrorCode::NotPositiveSemidefinite,
               "selected coordinates are incompatible with discarded "
@@ -938,20 +1000,22 @@ partialCorrelation(ConstMatrixView input, std::span<const Index> selected,
                                     selected[column], conditioned[q])) *
                                 eigenvector);
           }
-          reduction.add(leftProjection.sum * rightProjection.sum /
+          reduction.add(leftProjection.total() * rightProjection.total() /
                         eigenvalues.at(k));
         }
         const long double residual = static_cast<long double>(joint.value().at(
                                          selected[row], selected[column])) -
-                                     reduction.sum;
-        const Scalar value = static_cast<Scalar>(residual);
+                                     reduction.total();
+        const auto value = static_cast<Scalar>(residual);
         if (!std::isfinite(value)) {
           return fail<covariance::CovarianceResult>(
               ErrorCode::NonFiniteResult,
               "conditional correlation covariance is non-finite");
         }
         conditional.at(row, column) = value;
-        conditional.at(column, row) = value;
+        conditional
+            .at( // NOLINT(readability-suspicious-call-argument): mirror entry
+                column, row) = value;
       }
     }
   }
@@ -980,7 +1044,8 @@ partialCorrelation(ConstMatrixView input, std::span<const Index> selected,
             "partial-correlation normalization is non-finite");
       }
       output.at(row, column) = value;
-      output.at(column, row) = value;
+      output.at( // NOLINT(readability-suspicious-call-argument): mirror entry
+          column, row) = value;
     }
     output.at(row, row) = 1.0;
   }

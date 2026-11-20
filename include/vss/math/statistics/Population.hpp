@@ -28,7 +28,7 @@ enum class MissingMode : std::uint8_t {
 ///        estimate or on a supplied point.
 struct CenterSpec final {
   /// @brief Identifies an estimated or explicitly supplied center.
-  CenterRule rule;
+  CenterRule rule{CenterRule::estimated};
   /// @brief Borrowed center coordinates, read only during the estimator call;
   ///        required for `known` and absent for `estimated`.
   std::optional<ConstVectorView> center;
