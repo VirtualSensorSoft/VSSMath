@@ -21,6 +21,8 @@
 #include <vss/math/TensorShape.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/covariance/Conditioning.hpp>
+#include <vss/math/covariance/Diagnostics.hpp>
+#include <vss/math/covariance/UncertaintySummary.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
 #include <vss/math/linear/LU.hpp>
@@ -456,6 +458,28 @@ int main() {
                    std::abs(principal.value().explained_variance.at(0U) -
                             8.0 / 3.0) < 1.0e-12,
                "installed centered PCA API failed")) {
+    return 1;
+  }
+
+  const std::array<Index, 1U> marginalIndex{1U};
+  const auto marginal = covariance::marginalCovariance(
+      jointCovariance.view(), marginalIndex, glsPolicy, reductionLimits);
+  const auto inverseRoot = covariance::inverseSquareRoot(
+      jointCovariance.view(), glsPolicy, reductionLimits);
+  if (!require(marginal.hasValue() && marginal.value().at(0U, 0U) == 9.0 &&
+                   inverseRoot.hasValue() && inverseRoot.value().rank == 2U,
+               "installed covariance diagnostic APIs failed")) {
+    return 1;
+  }
+
+  Matrix leftMap(1U, 1U, 2.0);
+  Matrix sourceCross(1U, 1U, 0.5);
+  Matrix rightMap(1U, 1U, 3.0);
+  const auto transformedCross = covariance::crossCovarianceFromMaps(
+      leftMap.view(), sourceCross.view(), rightMap.view(), reductionLimits);
+  if (!require(transformedCross.hasValue() &&
+                   transformedCross.value().at(0U, 0U) == 3.0,
+               "installed cross-covariance transformation API failed")) {
     return 1;
   }
 

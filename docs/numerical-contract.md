@@ -83,6 +83,11 @@ Fixture provenance and expected bounds are documented alongside the test map.
   constraints. It returns parameter covariance only when every parameter
   direction is identified; otherwise the covariance is disengaged and the
   identified subspace is explicit.
+- Covariance diagnostics validate the complete joint matrix before extracting
+  ordered marginals or constructing the supported symmetric inverse square
+  root. Cross-covariance transforms preserve their rectangular source ordering
+  and evaluate the full two-map contraction without requiring a PSD test on the
+  cross block.
 - Finite-difference operations use deterministic formulas and callback order;
   invalid steps or callback results fail without publishing partial output.
 - Descriptive statistics and chi-square tail functions follow explicit domain,

@@ -52,6 +52,8 @@ add_library(vss_math STATIC
   src/TensorElementwise.cpp
   src/covariance/Covariance.cpp
   src/covariance/Conditioning.cpp
+  src/covariance/Diagnostics.cpp
+  src/covariance/UncertaintySummary.cpp
   src/differentiation/FiniteDifference.cpp
   src/probability/ChiSquare.cpp
   src/statistics/Descriptive.cpp

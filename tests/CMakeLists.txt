@@ -63,6 +63,11 @@ vss_math_add_algorithm_test(test_conditioning
                              math.conditioning)
 vss_math_add_algorithm_test(test_reduction algorithms/test_reduction.cpp
                              math.reduction)
+vss_math_add_algorithm_test(test_diagnostics algorithms/test_diagnostics.cpp
+                             math.diagnostics)
+vss_math_add_algorithm_test(test_uncertainty_summary
+                             algorithms/test_uncertainty_summary.cpp
+                             math.uncertainty_summary)
 vss_math_add_algorithm_test(test_finite_difference
                              algorithms/test_finite_difference.cpp
                              math.finite_difference)
