@@ -13,6 +13,10 @@
 namespace vss::math {
 
 /// @brief Truncated singular-value factors and their Frobenius residual.
+/// @details The represented matrix is left * diag(singular) * right_transpose.
+///          Repeated singular values can produce different, equally optimal
+///          retained subspaces; compare the represented result rather than a
+///          particular basis when no spectral gap identifies that basis.
 struct LowRank final {
   /// @brief Retained left singular vectors, one mode per column.
   Matrix left;
@@ -25,6 +29,9 @@ struct LowRank final {
 };
 
 /// @brief Centered principal-component factors and projected observations.
+/// @details Each input column is centered by its empirical mean. Explained
+///          variances use the sample denominator N-1. Whitening scales each
+///          retained score to unit sample variance.
 struct PCA final {
   /// @brief Empirical column means removed from the observation rows.
   Vector center;
@@ -42,7 +49,10 @@ struct PCA final {
 
 namespace vss::math::linear {
 
-/// @brief Computes the rank-r truncated singular-value approximation.
+/// @brief Computes an uncentered rank-r truncated singular-value approximation.
+/// @details The factors represent the leading terms of the input matrix's
+///          thin SVD; no m×n reconstruction matrix is allocated. Rank zero
+///          returns empty factors and the Frobenius norm of the full input.
 /// @param input Finite m×n matrix, borrowed and unchanged.
 /// @param rank Number of leading singular modes, in [0,min(m,n)].
 /// @param policy SVD rank, conditioning and convergence policy.
@@ -56,6 +66,9 @@ namespace vss::math::linear {
                                                    Limits limits);
 
 /// @brief Computes centered PCA for observations stored one per row.
+/// @details Rank zero is a valid mean-only result when whitening is disabled.
+///          Whitening rejects zero or policy-discarded singular directions;
+///          no jitter or variance floor is added.
 /// @param samples Complete finite population with at least two rows and one
 ///        variable, with a conforming flattened shape and no missing cells.
 /// @param rank Requested number of leading principal components; must not

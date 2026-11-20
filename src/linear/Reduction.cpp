@@ -162,7 +162,7 @@ Result<LowRank> lowRankApproximation(ConstMatrixView input, Index rank,
   Limits factorLimits{};
   if (!reserveLimits(outputElements, limits, factorLimits)) {
     return failure<LowRank>(ErrorCode::ResourceLimit,
-                            "low-rank factors and approximation exceed limits");
+                            "low-rank factors exceed resource limits");
   }
   if (!finite(input)) {
     return failure<LowRank>(ErrorCode::NonFiniteInput,
