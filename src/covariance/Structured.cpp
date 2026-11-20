@@ -953,6 +953,20 @@ Wide productBasis(std::span<const Spectrum> factors, Index dimension,
 Result<LinearEstimate> factorizedSolve(const StructuredSpec& spec, Index n,
                                        ConstMatrixView rhs, SolvePolicy policy,
                                        Limits limits) {
+  if (n == 0) {
+    const auto count = rhs.columns();
+    if (!reserve<Scalar>(limits, count)) {
+      return fail<LinearEstimate>(
+          ErrorCode::ResourceLimit,
+          "empty covariance RHS residuals exceed limits");
+    }
+    return Result<LinearEstimate>::success({.parameters = Matrix(0, count),
+                                            .covariance = std::nullopt,
+                                            .identified_basis = std::nullopt,
+                                            .residual_norms = Vector(count),
+                                            .rank = 0,
+                                            .rank_cutoff = policy.rank_abs});
+  }
   const bool is_product = spec.kind == StructureKind::kronecker;
   const bool is_block = spec.kind == StructureKind::block;
   std::vector<Spectrum> factors;
@@ -1070,9 +1084,6 @@ Result<LinearEstimate> factorizedSolve(const StructuredSpec& spec, Index n,
                         .residual_norms = Vector(p),
                         .rank = rank,
                         .rank_cutoff = static_cast<Scalar>(tau)};
-  if (n == 0) {
-    return Result<LinearEstimate>::success(std::move(result));
-  }
   if (auto& basis_output = result.identified_basis; basis_output) {
     Index basis_column = 0;
     if (is_product) {

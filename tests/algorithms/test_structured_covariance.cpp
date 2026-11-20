@@ -230,6 +230,25 @@ void projectedToeplitzAndKernelSolveWithoutDenseCovariance() {
             inactive.status().code() == ErrorCode::InvalidDomain);
 }
 
+void emptyCovarianceSolvesWithoutScratch() {
+  const Vector empty;
+  const Limits no_storage{.elements = 0, .bytes = 0, .evaluations = 0};
+  const auto covariance = structuredCovariance(
+      {StructureKind::diagonal_low_rank, empty.view(), {}, {}, {}, {}}, {},
+      no_storage);
+  VSS_CHECK(covariance.hasValue());
+  const auto applied =
+      applyStructuredCovariance(covariance.value(), empty.view(), no_storage);
+  VSS_CHECK(applied.hasValue() && applied.value().empty());
+  for (const auto mode :
+       {StructuredSolveKind::factorized, StructuredSolveKind::iterative}) {
+    const auto solved = solveStructuredCovariance(
+        covariance.value(), Matrix{}.view(), mode, {}, no_storage);
+    VSS_CHECK(solved.hasValue() && solved.value().rank == 0 &&
+              solved.value().parameters.empty());
+  }
+}
+
 } // namespace
 
 int main() {
@@ -238,5 +257,6 @@ int main() {
   kroneckerAndGaussianActions();
   factorizedKroneckerUsesGlobalCutoffAndOriginalResidual();
   projectedToeplitzAndKernelSolveWithoutDenseCovariance();
+  emptyCovarianceSolvesWithoutScratch();
   return 0;
 }
