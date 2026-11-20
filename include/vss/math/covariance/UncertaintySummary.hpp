@@ -4,9 +4,53 @@
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MatrixView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+
+namespace vss::math {
+
+/// @brief Componentwise standard and expanded uncertainty for a propagated
+///        estimate, optionally retaining caller-supplied interval bounds.
+/// @details Bounds are copied unchanged and do not imply a probability or
+///          coverage level. `coverage_factor` applies only to `expanded`.
+struct UncertaintySummary final {
+  Vector nominal;
+  Vector standard;
+  Vector expanded;
+  std::optional<Vector> lower;
+  std::optional<Vector> upper;
+  Scalar coverage_factor;
+};
+
+} // namespace vss::math
 
 namespace vss::math::covariance {
+
+/// @brief Summarizes a propagated estimate's componentwise uncertainty.
+/// @details Revalidates the mean and actual covariance instead of trusting
+///          producer diagnostics. The covariance must be finite, symmetric
+///          within the scaled arithmetic allowance, and have no materially
+///          negative eigenvalue. It is never projected or otherwise repaired.
+///          Standard uncertainty is the square root of each covariance
+///          diagonal; expanded uncertainty is that value times the supplied
+///          finite, nonnegative factor. Optional bounds must be supplied as a
+///          pair, be finite and ordered componentwise; they are not assigned
+///          an inferred coverage probability.
+/// @param value Propagated estimate; borrowed and unchanged.
+/// @param coverageFactor Finite nonnegative multiplier for expanded values.
+/// @param lowerQuantile Optional lower bounds, paired with upperQuantile.
+/// @param upperQuantile Optional upper bounds, paired with lowerQuantile.
+/// @param limits Peak scalar-element and byte limits for spectral workspace
+///        and owned result vectors.
+/// @return An owned summary or a validation, resource or representability
+///         failure without a partial result.
+[[nodiscard]] Result<UncertaintySummary>
+summarizeUncertainty(const PropagationResult& value, Scalar coverageFactor,
+                     std::optional<ConstVectorView> lowerQuantile,
+                     std::optional<ConstVectorView> upperQuantile,
+                     Limits limits);
 
 /// @brief Transforms an ordered cross-covariance block through two linear maps.
 /// @details For left map L (m×a), cross-covariance C (a×b), and right map R

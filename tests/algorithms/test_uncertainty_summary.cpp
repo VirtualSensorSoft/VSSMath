@@ -4,6 +4,7 @@
 #include <limits>
 #include <vss/math/Error.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/covariance/UncertaintySummary.hpp>
 
 namespace {
@@ -84,6 +85,107 @@ void emptyScaledAndInvalidInputs() {
   VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
 }
 
+PropagationResult propagation(Vector mean, Matrix covariance) {
+  return {std::move(mean), std::move(covariance), Approximation::exact, {},
+          PropagationCovarianceCheck::positive_semidefinite};
+}
+
+void uncertaintySummaries() {
+  auto value = propagation(Vector{std::array<Scalar, 2>{2.0, -3.0}},
+                           matrix({{4.0, 0.0}, {0.0, 9.0}}));
+  const auto summary = covariance::summarizeUncertainty(
+      value, 2.0, std::nullopt, std::nullopt, limits());
+  VSS_CHECK(summary.hasValue());
+  VSS_CHECK(summary.value().nominal.at(0U) == 2.0);
+  VSS_CHECK(summary.value().standard.at(0U) == 2.0);
+  VSS_CHECK(summary.value().standard.at(1U) == 3.0);
+  VSS_CHECK(summary.value().expanded.at(0U) == 4.0);
+  VSS_CHECK(summary.value().expanded.at(1U) == 6.0);
+  VSS_CHECK(summary.value().coverage_factor == 2.0);
+  VSS_CHECK(!summary.value().lower && !summary.value().upper);
+
+  const Vector lower{std::array<Scalar, 2>{-1.0, -8.0}};
+  const Vector upper{std::array<Scalar, 2>{9.0, 1.0}};
+  const auto bounded = covariance::summarizeUncertainty(
+      value, 0.0, lower.view(), upper.view(), limits());
+  VSS_CHECK(bounded.hasValue());
+  VSS_CHECK(bounded.value().lower->at(0U) == -1.0);
+  VSS_CHECK(bounded.value().upper->at(1U) == 1.0);
+  VSS_CHECK(bounded.value().expanded.at(0U) == 0.0);
+
+  auto rejected = [&](const PropagationResult& candidate, Scalar factor,
+                      std::optional<ConstVectorView> low,
+                      std::optional<ConstVectorView> high, Limits cap,
+                      ErrorCode expected) {
+    const auto result = covariance::summarizeUncertainty(
+        candidate, factor, low, high, cap);
+    VSS_CHECK(!result.hasValue());
+    VSS_CHECK(result.status().code() == expected);
+  };
+  rejected(value, -1.0, std::nullopt, std::nullopt, limits(),
+           ErrorCode::InvalidDomain);
+  rejected(value, 1.0, lower.view(), std::nullopt, limits(),
+           ErrorCode::InvalidDomain);
+  const Vector wrongSize(1U);
+  rejected(value, 1.0, wrongSize.view(), upper.view(), limits(),
+           ErrorCode::DimensionMismatch);
+  rejected(value, 1.0, lower.view(), wrongSize.view(), limits(),
+           ErrorCode::DimensionMismatch);
+  rejected(value, 1.0, Vector{std::array<Scalar, 2>{0.0,
+             std::numeric_limits<Scalar>::quiet_NaN()}}.view(), upper.view(),
+           limits(), ErrorCode::NonFiniteInput);
+  rejected(value, std::numeric_limits<Scalar>::infinity(), std::nullopt,
+           std::nullopt, limits(), ErrorCode::NonFiniteInput);
+  rejected(value, 1.0, lower.view(), upper.view(), {0U, 0U, 0U},
+           ErrorCode::ResourceLimit);
+
+  auto mismatch = value;
+  mismatch.covariance = Matrix(1U, 1U, 1.0);
+  rejected(mismatch, 1.0, std::nullopt, std::nullopt, limits(),
+           ErrorCode::DimensionMismatch);
+  auto nonFinite = value;
+  nonFinite.covariance.at(0U, 0U) = std::numeric_limits<Scalar>::infinity();
+  rejected(nonFinite, 1.0, std::nullopt, std::nullopt, limits(),
+           ErrorCode::NonFiniteInput);
+
+  auto indefinite = propagation(Vector(2U), matrix({{1.0, 1.25}, {1.25, 1.0}}));
+  // The producer's positive tag is not trusted in place of the matrix check.
+  rejected(indefinite, 1.0, std::nullopt, std::nullopt, limits(),
+           ErrorCode::NotPositiveSemidefinite);
+  auto asymmetric = propagation(Vector(2U), matrix({{1.0, 0.0}, {0.25, 1.0}}));
+  rejected(asymmetric, 1.0, std::nullopt, std::nullopt, limits(),
+           ErrorCode::NotSymmetric);
+  auto asymmetricIndefinite = propagation(Vector(2U), matrix({{-1.0, 0.0},
+                                                               {0.25, 1.0}}));
+  rejected(asymmetricIndefinite, 1.0, std::nullopt, std::nullopt, limits(),
+           ErrorCode::NotSymmetric);
+  auto negativeDiagonal = propagation(Vector(1U), Matrix(1U, 1U, -1.0));
+  rejected(negativeDiagonal, 1.0, std::nullopt, std::nullopt, limits(),
+           ErrorCode::NotPositiveSemidefinite);
+
+  auto empty = propagation(Vector{}, Matrix(0U, 0U));
+  rejected(empty, 1.0, std::nullopt, std::nullopt, limits(),
+           ErrorCode::InsufficientSamples);
+  auto roundoffSpectrum =
+      propagation(Vector(2U), matrix({{1.0, std::nextafter(1.0, 2.0)},
+                                      {std::nextafter(1.0, 2.0), 1.0}}));
+  const auto roundoff = covariance::summarizeUncertainty(
+      roundoffSpectrum, 1.0, std::nullopt, std::nullopt, limits());
+  VSS_CHECK(roundoff.hasValue());
+  VSS_CHECK(roundoff.value().standard.at(0U) == 1.0);
+  VSS_CHECK(roundoff.value().standard.at(1U) == 1.0);
+  auto overflow = propagation(Vector(1U), Matrix(1U, 1U, 8.0));
+  rejected(overflow, std::numeric_limits<Scalar>::max(), std::nullopt,
+           std::nullopt, limits(), ErrorCode::NonFiniteResult);
+
+  auto signedZero = propagation(Vector(1U), Matrix(1U, 1U, -0.0));
+  const auto zero = covariance::summarizeUncertainty(
+      signedZero, 1.0, std::nullopt, std::nullopt, limits());
+  VSS_CHECK(zero.hasValue());
+  VSS_CHECK(zero.value().standard.at(0U) == 0.0);
+  VSS_CHECK(!std::signbit(zero.value().standard.at(0U)));
+}
+
 Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
   const Index rowCount = rows.size();
   const Index columnCount = rowCount == 0U ? 0U : rows.begin()->size();
@@ -105,5 +207,6 @@ Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
 int main() {
   scalarAndRectangularTransforms();
   emptyScaledAndInvalidInputs();
+  uncertaintySummaries();
   return 0;
 }
