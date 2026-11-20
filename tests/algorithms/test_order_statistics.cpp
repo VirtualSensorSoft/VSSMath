@@ -1,6 +1,7 @@
 #include "Test.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -28,8 +29,8 @@ Vector vector(std::initializer_list<Scalar> values) {
   return Vector(std::vector<Scalar>(values));
 }
 
-QuantileRule ruleFromUnderlyingForTest(std::uint8_t value) {
-  return static_cast<QuantileRule>(value);
+QuantileRule unsupportedRuleForTest() {
+  return std::bit_cast<QuantileRule>(std::uint8_t{255U});
 }
 
 constexpr Limits unlimited{std::numeric_limits<std::size_t>::max(),
@@ -122,7 +123,7 @@ void robustOrderSummaryCases() {
           values.view(), std::numeric_limits<Scalar>::infinity(), unlimited),
       ErrorCode::InvalidDomain);
   checkFailure(vss::math::statistics::interquartileRange(
-                   values.view(), ruleFromUnderlyingForTest(255U), unlimited),
+                   values.view(), unsupportedRuleForTest(), unlimited),
                ErrorCode::InvalidDomain);
   const Vector nonfinite =
       vector({1.0, std::numeric_limits<Scalar>::infinity()});
@@ -180,9 +181,8 @@ void quantileCases() {
   checkFailure(vss::math::statistics::quantile(values.view(), 1.01,
                                                QuantileRule::linear, unlimited),
                ErrorCode::InvalidDomain);
-  checkFailure(vss::math::statistics::quantile(values.view(), 0.5,
-                                               ruleFromUnderlyingForTest(255U),
-                                               unlimited),
+  checkFailure(vss::math::statistics::quantile(
+                   values.view(), 0.5, unsupportedRuleForTest(), unlimited),
                ErrorCode::InvalidDomain);
   const Vector nonfinite =
       vector({1.0, std::numeric_limits<Scalar>::infinity()});
