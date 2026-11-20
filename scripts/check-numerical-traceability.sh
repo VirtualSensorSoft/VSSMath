@@ -57,5 +57,5 @@ while IFS=$'\t' read -r id contract fixtures ctests extra || [[ -n "${id:-}" ]];
     fi
   done
 done < <(tail -n +2 "$requirements")
-[[ "$rows" -eq 98 ]] || { echo "expected 98 numerical requirements, found $rows" >&2; exit 1; }
+[[ "$rows" -eq 99 ]] || { echo "expected 99 numerical requirements, found $rows" >&2; exit 1; }
 printf 'Numerical traceability 1.0.0 checks passed: %s requirements.\n' "$rows"
