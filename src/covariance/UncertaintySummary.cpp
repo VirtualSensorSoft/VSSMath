@@ -2,9 +2,18 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/covariance/UncertaintySummary.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 
@@ -84,10 +93,10 @@ Result<bool> covarianceIsAdmissible(ConstMatrixView covariance) {
   const long double allowance =
       64.0L * static_cast<long double>(std::max<Index>(1U, dimension)) *
       std::numeric_limits<Scalar>::epsilon();
-  for (Index row = 0U; row < dimension; ++row) {
-    for (Index column = row + 1U; column < dimension; ++column) {
-      const Scalar upper = covariance.at(row, column);
-      const Scalar lower = covariance.at(column, row);
+  for (Index first = 0U; first < dimension; ++first) {
+    for (Index second = first + 1U; second < dimension; ++second) {
+      const Scalar upper = covariance.at(first, second);
+      const Scalar lower = covariance.at(second, first);
       const Scalar difference =
           scale == 0.0 ? 0.0 : std::abs((upper / scale) - (lower / scale));
       if (static_cast<long double>(difference) > allowance) {
@@ -106,14 +115,14 @@ Result<bool> covarianceIsAdmissible(ConstMatrixView covariance) {
   }
 
   Matrix normalized(dimension, dimension, 0.0);
-  for (Index row = 0U; row < dimension; ++row) {
-    normalized.at(row, row) = covariance.at(row, row) / scale;
-    for (Index column = row + 1U; column < dimension; ++column) {
-      const Scalar symmetric =
-          std::midpoint(covariance.at(row, column), covariance.at(column, row));
+  for (Index first = 0U; first < dimension; ++first) {
+    normalized.at(first, first) = covariance.at(first, first) / scale;
+    for (Index second = first + 1U; second < dimension; ++second) {
+      const Scalar symmetric = std::midpoint(covariance.at(first, second),
+                                             covariance.at(second, first));
       const Scalar value = symmetric / scale;
-      normalized.at(row, column) = value;
-      normalized.at(column, row) = value;
+      normalized.at(first, second) = value;
+      normalized.at(second, first) = value;
     }
   }
   linear::SymmetricEigenOptions options{};
@@ -264,16 +273,22 @@ summarizeUncertainty(const PropagationResult& value, Scalar coverageFactor,
   std::optional<Vector> lower;
   std::optional<Vector> upper;
   if (hasBounds) {
-    lower.emplace(dimension);
-    upper.emplace(dimension);
+    Vector lowerValues(dimension);
+    Vector upperValues(dimension);
     for (Index index = 0U; index < dimension; ++index) {
-      lower->at(index) = lowerQuantile->at(index);
-      upper->at(index) = upperQuantile->at(index);
+      lowerValues.at(index) = lowerQuantile->at(index);
+      upperValues.at(index) = upperQuantile->at(index);
     }
+    lower.emplace(std::move(lowerValues));
+    upper.emplace(std::move(upperValues));
   }
   return Result<UncertaintySummary>::success(
-      UncertaintySummary{value.mean, std::move(standard), std::move(expanded),
-                         std::move(lower), std::move(upper), coverageFactor});
+      UncertaintySummary{.nominal = value.mean,
+                         .standard = std::move(standard),
+                         .expanded = std::move(expanded),
+                         .lower = std::move(lower),
+                         .upper = std::move(upper),
+                         .coverage_factor = coverageFactor});
 }
 
 Result<Matrix> crossCovarianceFromMaps(ConstMatrixView left,
@@ -312,16 +327,17 @@ Result<Matrix> crossCovarianceFromMaps(ConstMatrixView left,
   }
 
   Matrix result(outputRows, outputColumns, 0.0);
-  for (Index row = 0U; row < outputRows; ++row) {
-    for (Index column = 0U; column < outputColumns; ++column) {
+  for (Index outputRow = 0U; outputRow < outputRows; ++outputRow) {
+    for (Index outputComponent = 0U; outputComponent < outputColumns;
+         ++outputComponent) {
       ScaledAccumulator sum;
       for (Index leftCoordinate = 0U; leftCoordinate < left.columns();
            ++leftCoordinate) {
         for (Index rightCoordinate = 0U; rightCoordinate < right.columns();
              ++rightCoordinate) {
-          sum.add(left.at(row, leftCoordinate),
+          sum.add(left.at(outputRow, leftCoordinate),
                   crossCovariance.at(leftCoordinate, rightCoordinate),
-                  right.at(column, rightCoordinate));
+                  right.at(outputComponent, rightCoordinate));
         }
       }
       const long double value = sum.value();
@@ -329,7 +345,7 @@ Result<Matrix> crossCovarianceFromMaps(ConstMatrixView left,
         return failure<Matrix>(ErrorCode::NonFiniteResult,
                                "cross-covariance result is not representable");
       }
-      result.at(row, column) = static_cast<Scalar>(value);
+      result.at(outputRow, outputComponent) = static_cast<Scalar>(value);
     }
   }
   return Result<Matrix>::success(std::move(result));
