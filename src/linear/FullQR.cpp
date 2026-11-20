@@ -2,15 +2,18 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
-#include <limits>
 #include <numeric>
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/linear/Decomposition.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::linear {
 namespace {

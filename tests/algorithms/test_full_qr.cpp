@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <limits>
 #include <vss/math/Core.hpp>
@@ -15,6 +16,13 @@
 namespace {
 
 using namespace vss::math;
+
+template <class Enum> Enum invalidEnumValue() {
+  volatile const std::uint8_t rawValue = 255U;
+  // Deliberately construct an out-of-range value for invalid-enumerator tests.
+  // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
+  return static_cast<Enum>(rawValue);
+}
 
 Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
   const Index rowCount = rows.size();
@@ -196,12 +204,12 @@ void allZeroInputKeepsFullFactorsAndIdentityPermutation() {
 void invalidInputsAndResourceOrCertificationExhaustionReturnStatuses() {
   const Matrix valid = matrix({{1.0, 0.0}, {0.0, 2.0}});
   checkFailure(linear::factorFullQR(valid.view(),
-                                    static_cast<linear::QRColumnOrder>(255U),
+                                    invalidEnumValue<linear::QRColumnOrder>(),
                                     policy(), generousLimits()),
                ErrorCode::InvalidDomain);
 
   auto invalidRankPolicy = policy();
-  invalidRankPolicy.rank = static_cast<RankPolicy>(255U);
+  invalidRankPolicy.rank = invalidEnumValue<RankPolicy>();
   checkFailure(linear::factorFullQR(valid.view(),
                                     linear::QRColumnOrder::original,
                                     invalidRankPolicy, generousLimits()),
