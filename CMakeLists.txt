@@ -63,6 +63,8 @@ add_library(vss_math STATIC
   src/probability/ChiSquare.cpp
   src/statistics/Descriptive.cpp
   src/statistics/Order.cpp
+  src/statistics/Population.cpp
+  include/vss/math/statistics/Population.hpp
   src/linear/Cholesky.cpp
   src/linear/LDLT.cpp
   src/linear/GeneralizedEigen.cpp
