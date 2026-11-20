@@ -41,9 +41,9 @@ struct PcgWorkspace final {
 };
 
 struct PcgProgress final {
-  Wide residual_norm;
-  Index iterations;
-  bool converged;
+  Wide residual_norm{};
+  Index iterations{};
+  bool converged{};
 };
 
 inline Wide scaledNorm(std::span<const Wide> values) {

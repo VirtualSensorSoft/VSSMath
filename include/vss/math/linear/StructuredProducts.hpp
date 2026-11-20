@@ -18,11 +18,11 @@ namespace vss::math {
 ///          are required to be finite zero. Order zero uses 0 by 0 storage.
 struct BandMatrix final {
   /// @brief Number of represented rows and columns.
-  Index order;
+  Index order{};
   /// @brief Number of stored diagonals below the main diagonal.
-  Index lower;
+  Index lower{};
   /// @brief Number of stored diagonals above the main diagonal.
-  Index upper;
+  Index upper{};
   /// @brief Compact row-major band payload.
   Matrix bands;
 };
@@ -44,9 +44,9 @@ struct DiagonalMatrix final {
 /// @brief Dense tile at one zero-based block-grid coordinate.
 struct MatrixBlock final {
   /// @brief Zero-based block row.
-  Index block_row;
+  Index block_row{};
   /// @brief Zero-based block column.
-  Index block_column;
+  Index block_column{};
   /// @brief Owned tile values.
   Matrix value;
 };

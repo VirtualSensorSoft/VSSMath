@@ -59,8 +59,8 @@ private:
 
 struct BoundedSVD final {
   SVD factors;
-  Wide error;
-  Index rank_upper;
+  Wide error{};
+  Index rank_upper{};
 };
 
 // Factor and return an absolute singular-value error for a caller applying a

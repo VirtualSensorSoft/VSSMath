@@ -22,9 +22,9 @@ namespace vss::math::linear {
 ///          The callbacks are never retained by a numerical operation.
 struct LinearMap final {
   /// @brief Number of output coordinates.
-  Extent rows;
+  Extent rows{};
   /// @brief Number of input coordinates.
-  Extent columns;
+  Extent columns{};
   /// @brief Applies the map to a vector of length `columns`.
   std::function<Result<Vector>(ConstVectorView)> apply;
   /// @brief Optional Euclidean adjoint action, from rows to columns.

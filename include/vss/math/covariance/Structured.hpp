@@ -40,7 +40,7 @@ enum class StructuredSolveKind : std::uint8_t {
 /// @brief Borrowed inputs selecting exactly one structured PSD representation.
 struct StructuredSpec final {
   /// @brief Selected representation.
-  StructureKind kind;
+  StructureKind kind{StructureKind::diagonal_low_rank};
   /// @brief Borrowed diagonal entries or Toeplitz lags.
   ConstVectorView diagonal_or_lags;
   /// @brief Borrowed update factor or Gaussian coordinates, where applicable.
@@ -57,9 +57,9 @@ struct StructuredSpec final {
 /// kept.
 struct StructuredCovariance final {
   /// @brief Selected representation.
-  StructureKind kind;
+  StructureKind kind{StructureKind::diagonal_low_rank};
   /// @brief Order of the represented square operator.
-  Index dimension;
+  Index dimension{};
   /// @brief Owned diagonal entries or Toeplitz lags.
   Vector diagonal_or_lags;
   /// @brief Owned update factor or Gaussian point coordinates.
