@@ -53,6 +53,7 @@ add_library(vss_math STATIC
   src/covariance/Covariance.cpp
   src/covariance/Conditioning.cpp
   src/covariance/Diagnostics.cpp
+  src/covariance/Determinant.cpp
   src/covariance/UncertaintySummary.cpp
   src/differentiation/FiniteDifference.cpp
   src/probability/ChiSquare.cpp

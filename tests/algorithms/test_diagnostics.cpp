@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 #include <vss/math/Error.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/covariance/Diagnostics.hpp>
@@ -137,10 +138,132 @@ void inverseSquareRoot() {
   VSS_CHECK(invalid.status().code() == ErrorCode::NotPositiveSemidefinite);
 }
 
+void determinantAndLogMagnitude() {
+  using covariance::determinant;
+  using covariance::logAbsoluteDeterminant;
+  const SolvePolicy solve = policy();
+  const Matrix exchange = matrix({{0.0, 2.0}, {3.0, 0.0}});
+  VSS_CHECK(determinant(exchange.view(), solve, limits()).value() == -6.0);
+  VSS_CHECK(
+      std::abs(
+          logAbsoluteDeterminant(exchange.view(), solve, limits()).value() -
+          std::log(6.0)) < 1.0e-12);
+  const Matrix empty;
+  VSS_CHECK(determinant(empty.view(), solve, {}).value() == 1.0);
+  VSS_CHECK(logAbsoluteDeterminant(empty.view(), solve, {}).value() == 0.0);
+
+  const Matrix singular(2U, 2U, 1.0);
+  const auto zero = determinant(singular.view(), solve, limits()).value();
+  VSS_CHECK(zero == 0.0 && !std::signbit(zero));
+  const auto logZero =
+      logAbsoluteDeterminant(singular.view(), solve, limits()).value();
+  VSS_CHECK(std::isinf(logZero) && logZero < 0.0);
+
+  // The rounded elimination pivot can vanish even though the integer
+  // determinant is exactly one.
+  const Scalar adjacent = std::ldexp(1.0, 52);
+  const Matrix cancellation =
+      matrix({{adjacent, adjacent - 1.0}, {adjacent + 1.0, adjacent}});
+  VSS_CHECK(determinant(cancellation.view(), solve, limits()).value() == 1.0);
+  VSS_CHECK(
+      logAbsoluteDeterminant(cancellation.view(), solve, limits()).value() ==
+      0.0);
+  VSS_CHECK(
+      determinant(cancellation.view(), solve, {4U, 128U, 0U}).status().code() ==
+      ErrorCode::ResourceLimit);
+  const Matrix permuted = matrix({{0.0, adjacent, adjacent - 1.0},
+                                  {1.0, 0.0, 0.0},
+                                  {0.0, adjacent + 1.0, adjacent}});
+  VSS_CHECK(determinant(permuted.view(), solve, limits()).value() == -1.0);
+
+  const Matrix division = matrix({{adjacent, adjacent - 1.0, 0.0},
+                                  {adjacent + 1.0, adjacent, 0.0},
+                                  {0.0, 0.0, 7.0}});
+  VSS_CHECK(determinant(division.view(), solve, limits()).value() == 7.0);
+
+  const Scalar subnormal = std::numeric_limits<Scalar>::denorm_min();
+  const Matrix tieToZero = matrix({{-subnormal, 0.0}, {0.0, 0.5}});
+  const auto tie = determinant(tieToZero.view(), solve, limits()).value();
+  VSS_CHECK(tie == 0.0 && std::signbit(tie));
+  const Matrix tieToEven = matrix({{subnormal, 0.0}, {0.0, 1.5}});
+  VSS_CHECK(determinant(tieToEven.view(), solve, limits()).value() ==
+            2.0 * subnormal);
+  Matrix near = singular;
+  near.at(1U, 1U) = std::nextafter(1.0, 2.0);
+  VSS_CHECK(determinant(near.view(), solve, limits()).value() ==
+            std::numeric_limits<Scalar>::epsilon());
+
+  const Scalar large = std::ldexp(1.0, 800);
+  const Scalar small = std::ldexp(1.0, -800);
+  Matrix balanced(4U, 4U);
+  balanced.at(0U, 0U) = balanced.at(1U, 1U) = large;
+  balanced.at(2U, 2U) = balanced.at(3U, 3U) = small;
+  VSS_CHECK(determinant(balanced.view(), solve, limits()).value() == 1.0);
+  VSS_CHECK(logAbsoluteDeterminant(balanced.view(), solve, limits()).value() ==
+            0.0);
+  const Matrix overflow = matrix({{large, 0.0}, {0.0, large}});
+  VSS_CHECK(determinant(overflow.view(), solve, limits()).status().code() ==
+            ErrorCode::NonFiniteResult);
+  VSS_CHECK(
+      std::abs(
+          logAbsoluteDeterminant(overflow.view(), solve, limits()).value() -
+          1600.0 * std::log(2.0)) < 1.0e-12);
+  const Matrix underflow = matrix({{-small, 0.0}, {0.0, small}});
+  const auto rounded = determinant(underflow.view(), solve, limits()).value();
+  VSS_CHECK(rounded == 0.0 && std::signbit(rounded));
+  VSS_CHECK(
+      std::abs(
+          logAbsoluteDeterminant(underflow.view(), solve, limits()).value() +
+          1600.0 * std::log(2.0)) < 1.0e-12);
+
+  const Matrix nonfinite(1U, 1U, std::numeric_limits<Scalar>::infinity());
+  VSS_CHECK(logAbsoluteDeterminant(nonfinite.view(), solve, limits())
+                .status()
+                .code() == ErrorCode::NonFiniteInput);
+  auto exhausted = solve;
+  exhausted.iteration.max_iterations = 0;
+  exhausted.reciprocal_condition_floor = 0.1;
+  const Matrix general = matrix({{1.0, 1.0}, {0.0, 1.0}});
+  VSS_CHECK(determinant(general.view(), exhausted, limits()).status().code() ==
+            ErrorCode::NoConvergence);
+  exhausted.iteration.max_iterations = 128U;
+  VSS_CHECK(determinant(general.view(), exhausted, limits()).value() == 1.0);
+  exhausted.reciprocal_condition_floor = 0.5;
+  VSS_CHECK(determinant(general.view(), exhausted, limits()).status().code() ==
+            ErrorCode::IllConditioned);
+  auto widePolicy = solve;
+  widePolicy.rank = RankPolicy::reject;
+  widePolicy.rank_rel = 0.25;
+  widePolicy.reciprocal_condition_floor = 0.9;
+  const Scalar wide = 0.75 * std::numeric_limits<Scalar>::max();
+  const Matrix rotation = matrix({{wide, wide}, {-wide, wide}});
+  const auto logWide =
+      logAbsoluteDeterminant(rotation.view(), widePolicy, limits());
+  VSS_CHECK(logWide.hasValue());
+  VSS_CHECK(std::abs(logWide.value() - (2.0 * std::log(wide) + std::log(2.0))) <
+            1.0e-12);
+  const Matrix unequal = matrix({{1.0, 0.0}, {0.0, 0.25}});
+  auto strict = solve;
+  strict.rank = RankPolicy::reject;
+  strict.rank_rel = 0.25;
+  VSS_CHECK(determinant(unequal.view(), strict, limits()).status().code() ==
+            ErrorCode::RankDeficient);
+  strict.rank = RankPolicy::minimum_norm;
+  VSS_CHECK(determinant(unequal.view(), strict, limits()).value() == 0.25);
+  strict.reciprocal_condition_floor = 0.5;
+  VSS_CHECK(logAbsoluteDeterminant(unequal.view(), strict, limits())
+                .status()
+                .code() == ErrorCode::IllConditioned);
+  strict.rank_abs = -1.0;
+  VSS_CHECK(determinant(exchange.view(), strict, limits()).status().code() ==
+            ErrorCode::InvalidTolerance);
+}
+
 } // namespace
 
 int main() {
   marginalCovariance();
   inverseSquareRoot();
+  determinantAndLogMagnitude();
   return 0;
 }

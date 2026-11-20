@@ -88,6 +88,10 @@ Fixture provenance and expected bounds are documented alongside the test map.
   root. Cross-covariance transforms preserve their rectangular source ordering
   and evaluate the full two-map contraction without requiring a PSD test on the
   cross block.
+- Determinants use scaled pivoted LU with numerical bounds and exact dyadic
+  elimination when those bounds cannot establish the sign, singularity, or
+  output range. Log magnitudes are evaluated from the scaled result, including
+  for nonzero determinants that overflow or underflow as scalars.
 - Finite-difference operations use deterministic formulas and callback order;
   invalid steps or callback results fail without publishing partial output.
 - Descriptive statistics and chi-square tail functions follow explicit domain,

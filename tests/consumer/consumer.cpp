@@ -472,6 +472,18 @@ int main() {
     return 1;
   }
 
+  const auto jointDeterminant = covariance::determinant(
+      jointCovariance.view(), glsPolicy, reductionLimits);
+  const auto jointLogDeterminant = covariance::logAbsoluteDeterminant(
+      jointCovariance.view(), glsPolicy, reductionLimits);
+  if (!require(jointDeterminant.hasValue() && jointLogDeterminant.hasValue() &&
+                   std::abs(jointDeterminant.value() - 27.0) < 1.0e-12 &&
+                   std::abs(jointLogDeterminant.value() - std::log(27.0)) <
+                       1.0e-12,
+               "installed determinant diagnostic APIs failed")) {
+    return 1;
+  }
+
   Matrix leftMap(1U, 1U, 2.0);
   Matrix sourceCross(1U, 1U, 0.5);
   Matrix rightMap(1U, 1U, 3.0);

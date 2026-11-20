@@ -40,6 +40,32 @@ namespace vss::math::covariance {
 inverseSquareRoot(ConstMatrixView covariance, SolvePolicy policy,
                   Limits limits);
 
+/// @brief Computes the signed determinant of a finite square real matrix.
+/// @details The empty determinant is one. Exact singularity returns positive
+///          zero. A nonzero determinant rounded to zero retains its sign.
+///          Overflow returns NonFiniteResult. Permissive rank policies use
+///          the full determinant. Strict rank and condition checks apply to
+///          nonsingular inputs.
+/// @param matrix Borrowed square input, unchanged during the operation.
+/// @param policy Numerical rank, reciprocal condition, and iteration limits.
+/// @param limits Peak element and byte budgets, including exact fallback.
+/// @return Signed determinant or an error without a partial result.
+[[nodiscard]] Result<Scalar> determinant(ConstMatrixView matrix,
+                                         SolvePolicy policy, Limits limits);
+
+/// @brief Computes the natural logarithm of the absolute determinant.
+/// @details Returns zero for the empty matrix and negative infinity for
+///          exact singularity. Computes the log directly from a scaled
+///          magnitude, including when the determinant is outside Scalar range.
+/// @param matrix Borrowed square input, unchanged during the operation.
+/// @param policy Same rank, reciprocal condition, and iteration rules as
+///        determinant.
+/// @param limits Peak element and byte budgets, including exact fallback.
+/// @return Log magnitude or an error without a partial result.
+[[nodiscard]] Result<Scalar> logAbsoluteDeterminant(ConstMatrixView matrix,
+                                                    SolvePolicy policy,
+                                                    Limits limits);
+
 } // namespace vss::math::covariance
 
 #endif // VSS_MATH_COVARIANCE_DIAGNOSTICS_HPP

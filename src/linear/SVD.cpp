@@ -456,28 +456,19 @@ Result<SVD> makeResult(ConstMatrixView input, const WorkMatrix& left,
   return Result<SVD>::success(std::move(result));
 }
 
-} // namespace
-
-Result<SVD> factorSVD(ConstMatrixView input, SolvePolicy policy,
-                      Limits limits) {
-  if (!detail::validNumericalPolicy(policy)) {
-    return Result<SVD>::failure(ErrorCode::InvalidTolerance,
-                                "Invalid SVD policy");
-  }
+template <class Finish>
+auto decomposeSpectrum(ConstMatrixView input, SolvePolicy policy, Limits limits,
+                       Finish finish) {
+  using Output = decltype(finish(std::declval<const WorkMatrix&>(),
+                                 std::declval<const WorkMatrix&>(),
+                                 std::declval<const Bidiagonal&>(), true, 0));
   const bool transpose = input.rows() < input.columns();
   const auto thin = std::min(input.rows(), input.columns());
   const auto tall = std::max(input.rows(), input.columns());
-  if (thin == 0) {
-    return Result<SVD>::success({.left = Matrix(input.rows(), 0),
-                                 .singular = Vector(),
-                                 .right_transpose = Matrix(0, input.columns()),
-                                 .rank = 0,
-                                 .cutoff = policy.rank_abs});
-  }
   detail::StorageBudget budget(limits);
   if (!claimStorage(budget, tall, thin)) {
-    return Result<SVD>::failure(ErrorCode::ResourceLimit,
-                                "SVD workspace exceeds limits");
+    return Output::failure(ErrorCode::ResourceLimit,
+                           "SVD workspace exceeds limits");
   }
 
   Scalar maximum = 0;
@@ -485,8 +476,8 @@ Result<SVD> factorSVD(ConstMatrixView input, SolvePolicy policy,
     for (Index col = 0; col < input.columns(); ++col) {
       const Scalar value = input.at(row, col);
       if (!std::isfinite(value)) {
-        return Result<SVD>::failure(ErrorCode::NonFiniteInput,
-                                    "Nonfinite SVD input");
+        return Output::failure(ErrorCode::NonFiniteInput,
+                               "Nonfinite SVD input");
       }
       maximum = std::max(maximum, std::abs(value));
     }
@@ -504,11 +495,10 @@ Result<SVD> factorSVD(ConstMatrixView input, SolvePolicy policy,
                   .super = std::vector<Wide>(thin - 1)};
   if (directFactors(work, left, right, band)) {
     absoluteSpectrum(band, right);
-    return makeResult(input, left, right, band, policy, true, 0);
+    return finish(left, right, band, true, 0);
   }
   if (policy.iteration.max_iterations == 0) {
-    return Result<SVD>::failure(ErrorCode::NoConvergence,
-                                "SVD needs iteration");
+    return Output::failure(ErrorCode::NoConvergence, "SVD needs iteration");
   }
   const int exponent = std::ilogb(maximum);
   for (Index row = 0; row < tall; ++row) {
@@ -516,8 +506,8 @@ Result<SVD> factorSVD(ConstMatrixView input, SolvePolicy policy,
       auto& entry = work.at(row, col);
       const Wide scaled = std::scalbn(entry, -exponent);
       if (entry != 0 && scaled == 0) {
-        return Result<SVD>::failure(ErrorCode::NoConvergence,
-                                    "SVD scaling lost a nonzero entry");
+        return Output::failure(ErrorCode::NoConvergence,
+                               "SVD scaling lost a nonzero entry");
       }
       entry = scaled;
     }
@@ -526,11 +516,93 @@ Result<SVD> factorSVD(ConstMatrixView input, SolvePolicy policy,
   right.identity();
   reduceToBidiagonal(work, left, right, band);
   if (!diagonalize(band, left, right, policy.iteration.max_iterations)) {
-    return Result<SVD>::failure(ErrorCode::NoConvergence,
-                                "SVD iteration cap reached");
+    return Output::failure(ErrorCode::NoConvergence,
+                           "SVD iteration cap reached");
   }
   absoluteSpectrum(band, right);
-  return makeResult(input, left, right, band, policy, false, exponent);
+  return finish(left, right, band, false, exponent);
+}
+
+} // namespace
+
+Result<SVD> factorSVD(ConstMatrixView input, SolvePolicy policy,
+                      Limits limits) {
+  if (!detail::validNumericalPolicy(policy)) {
+    return Result<SVD>::failure(ErrorCode::InvalidTolerance,
+                                "Invalid SVD policy");
+  }
+  if (std::min(input.rows(), input.columns()) == 0) {
+    return Result<SVD>::success({.left = Matrix(input.rows(), 0),
+                                 .singular = Vector(),
+                                 .right_transpose = Matrix(0, input.columns()),
+                                 .rank = 0,
+                                 .cutoff = policy.rank_abs});
+  }
+  return decomposeSpectrum(
+      input, policy, limits,
+      [&](const WorkMatrix& left, const WorkMatrix& right,
+          const Bidiagonal& band, bool exact, int exponent) {
+        return makeResult(input, left, right, band, policy, exact, exponent);
+      });
+}
+
+Status detail::certifyNonsingularSpectrum(ConstMatrixView input,
+                                          SolvePolicy policy, Limits limits) {
+  const bool checkRank = policy.rank == RankPolicy::reject &&
+                         (policy.rank_abs != 0 || policy.rank_rel != 0);
+  if (!checkRank && policy.reciprocal_condition_floor == 0) {
+    return Status::success();
+  }
+  return decomposeSpectrum(
+      input, policy, limits,
+      [&](const WorkMatrix& left, const WorkMatrix& right,
+          const Bidiagonal& band, bool exact, int exponent) {
+        const auto [minimum, maximum] =
+            std::ranges::minmax_element(band.diagonal);
+        const Wide smallest = *minimum;
+        const Wide largest = *maximum;
+        const Wide error =
+            exact ? 0
+                  : reconstructionError(input, false, exponent, left, right,
+                                        band, largest);
+        const auto comparisonError = [&](Wide ratio) {
+          return (1 + ratio) *
+                 (error +
+                  (exact ? 0
+                         : 4 * std::numeric_limits<Wide>::epsilon() * largest));
+        };
+        if (checkRank) {
+          const Wide absolute =
+              std::scalbn(static_cast<Wide>(policy.rank_abs), -exponent);
+          const Wide relative = policy.rank_rel;
+          const Wide gap = std::min(smallest - absolute,
+                                    std::fma(-relative, largest, smallest));
+          const Wide allowance = comparisonError(relative);
+          if (gap <= -allowance) {
+            return Status::failure(ErrorCode::RankDeficient,
+                                   "determinant spectrum fails strict rank");
+          }
+          if (!(gap > allowance)) {
+            return Status::failure(ErrorCode::NoConvergence,
+                                   "determinant rank is unresolved");
+          }
+        }
+        const Wide floor = policy.reciprocal_condition_floor;
+        if (floor != 0) {
+          const Wide gap = std::fma(-floor, largest, smallest);
+          const Wide allowance = comparisonError(floor);
+          if (gap < -allowance) {
+            return Status::failure(
+                ErrorCode::IllConditioned,
+                "determinant spectrum fails condition floor");
+          }
+          if (!(gap >= allowance)) {
+            return Status::failure(ErrorCode::NoConvergence,
+                                   "determinant condition is unresolved");
+          }
+        }
+        return Status::success();
+      });
 }
 
 } // namespace vss::math::linear

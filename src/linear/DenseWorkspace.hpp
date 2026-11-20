@@ -6,7 +6,9 @@
 #include <cstddef>
 #include <limits>
 #include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
+#include <vss/math/MatrixView.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::linear::detail {
@@ -54,6 +56,12 @@ private:
          std::abs(value) <=
              static_cast<Wide>(std::numeric_limits<Scalar>::max());
 }
+
+// The caller has independently established exact nonsingularity. Check
+// selected spectral policies without converting singular values to Scalar.
+[[nodiscard]] Status certifyNonsingularSpectrum(ConstMatrixView input,
+                                                SolvePolicy policy,
+                                                Limits limits);
 
 } // namespace vss::math::linear::detail
 #endif
