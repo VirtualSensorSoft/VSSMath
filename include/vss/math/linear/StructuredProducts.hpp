@@ -1,10 +1,77 @@
 #ifndef VSS_MATH_LINEAR_STRUCTURED_PRODUCTS_HPP
 #define VSS_MATH_LINEAR_STRUCTURED_PRODUCTS_HPP
 
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MatrixView.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+
+namespace vss::math {
+
+/// @brief Square matrix in compact row-major band storage.
+/// @details `bands` has `order` rows and `lower + 1 + upper` columns;
+///          A(i,j) is stored at bands(i, lower + j - i). Unused edge cells
+///          are required to be finite zero. Order zero uses 0 by 0 storage.
+struct BandMatrix final {
+  /// @brief Number of represented rows and columns.
+  Index order{};
+  /// @brief Number of stored diagonals below the main diagonal.
+  Index lower{};
+  /// @brief Number of stored diagonals above the main diagonal.
+  Index upper{};
+  /// @brief Compact row-major band payload.
+  Matrix bands;
+};
+
+/// @brief Direct sum of finite square matrices in caller-specified order.
+struct BlockDiagonal final {
+  /// @brief Owned square blocks in direct-sum order.
+  Array<Matrix> blocks;
+};
+
+namespace linear {
+
+/// @brief Diagonal operator represented by its owned diagonal vector.
+struct DiagonalMatrix final {
+  /// @brief Owned main diagonal entries.
+  Vector diagonal;
+};
+
+/// @brief Dense tile at one zero-based block-grid coordinate.
+struct MatrixBlock final {
+  /// @brief Zero-based block row.
+  Index block_row{};
+  /// @brief Zero-based block column.
+  Index block_column{};
+  /// @brief Owned tile values.
+  Matrix value;
+};
+
+/// @brief Rectangular sparse grid of dense matrix blocks.
+struct BlockMatrix final {
+  /// @brief Heights of the logical block rows.
+  Array<Index> row_extents;
+  /// @brief Widths of the logical block columns.
+  Array<Index> column_extents;
+  /// @brief Nonempty tiles in strictly increasing grid order.
+  Array<MatrixBlock> blocks;
+};
+
+/// @brief Applies a diagonal operator without dense expansion.
+[[nodiscard]] Result<Vector> apply(const DiagonalMatrix& matrix,
+                                   ConstVectorView vector, Limits limits);
+
+/// @brief Applies a validated general block-grid matrix without dense
+/// expansion.
+[[nodiscard]] Result<Vector> apply(const BlockMatrix& matrix,
+                                   ConstVectorView vector, Limits limits);
+
+} // namespace linear
+} // namespace vss::math
 
 namespace vss::math {
 

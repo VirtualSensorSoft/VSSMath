@@ -99,7 +99,25 @@ Fixture provenance and expected bounds are documented alongside the test map.
   invalid steps or callback results fail without publishing partial output.
 - Descriptive statistics and chi-square tail functions follow explicit domain,
   finite-value, and accuracy checks.
+- Sparse CSR conversion sorts triplets by row and column, coalesces duplicate
+  coordinates with scaled compensated summation, and omits exact-zero entries.
+  Sparse matrix-vector products validate canonical offsets and strictly ordered
+  columns, accept empty rows, and use scaled compensated row accumulation so
+  intermediate products may cancel before final representability is checked.
+  Both conversion and application enforce caller-provided storage limits.
+- Structured linear operations apply diagonal or tiled matrices without a full
+  matrix copy. Banded solves use compact pivoting when rank and accuracy can
+  be certified, with a separately bounded dense fallback. Block diagonal
+  solves use a single cutoff across the constituent spectra. Regularized
+  least squares factors the square-root augmented system and reports residuals
+  against the original observations.
+- Structured covariance supports diagonal updates, Toeplitz, direct sum,
+  Kronecker, and Gaussian kernel representations. Factorized solves report
+  rank and the original residual. Iterative solves require certified
+  full-rank support and check a freshly computed residual against the
+  specified tolerance before accepting a solution.
 
-Exact APIs and error codes are defined by the public headers. Sparse matrices,
-other scalar types, implicit units, application workflows, automatic repair,
-and unsupported platforms are not part of the current contract.
+Exact APIs and error codes are defined by the public headers. Sparse direct
+factorizations and solves, other scalar types, implicit units, application
+workflows, automatic repair, and unsupported platforms are not part of the
+current contract.

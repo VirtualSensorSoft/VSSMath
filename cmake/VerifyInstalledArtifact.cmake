@@ -142,6 +142,7 @@ set(vss_expected_files
   include/vss/math/covariance/Conditioning.hpp
   include/vss/math/covariance/Diagnostics.hpp
   include/vss/math/covariance/PropagationResult.hpp
+  include/vss/math/covariance/Structured.hpp
   include/vss/math/covariance/UncertaintySummary.hpp
   include/vss/math/covariance/Covariance.hpp
   include/vss/math/differentiation/FiniteDifference.hpp
@@ -156,6 +157,8 @@ set(vss_expected_files
   include/vss/math/linear/QR.hpp
   include/vss/math/linear/RankAware.hpp
   include/vss/math/linear/Reduction.hpp
+  include/vss/math/linear/Sparse.hpp
+  include/vss/math/linear/Structured.hpp
   include/vss/math/linear/StructuredProducts.hpp
   include/vss/math/linear/SymmetricEigen.hpp
   include/vss/math/linear/TriangularSolve.hpp

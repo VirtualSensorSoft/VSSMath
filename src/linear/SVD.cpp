@@ -395,9 +395,56 @@ Wide reconstructionError(ConstMatrixView input, bool transpose, int exponent,
   return (residual + polarError) + (roundoff * norm);
 }
 
+Index exactRankUpper(ConstMatrixView input) {
+  Index nonzero_rows = 0;
+  Index nonzero_cols = 0;
+  Index pivot_row = 0;
+  Index pivot_col = 0;
+  for (Index i = 0; i < input.rows(); ++i) {
+    for (Index j = 0; j < input.columns(); ++j) {
+      if (input.at(i, j) != 0) {
+        ++nonzero_rows;
+        pivot_row = i;
+        pivot_col = j;
+        break;
+      }
+    }
+  }
+  for (Index j = 0; j < input.columns(); ++j) {
+    for (Index i = 0; i < input.rows(); ++i) {
+      if (input.at(i, j) != 0) {
+        ++nonzero_cols;
+        break;
+      }
+    }
+  }
+  Index rank_upper = std::min(nonzero_rows, nonzero_cols);
+  // A product and its FMA residual uniquely represent the exact
+  // product of two binary64 values in the supported wide format.
+  const auto product = [](Wide a, Wide b) {
+    const Wide p = a * b;
+    return std::pair{p, std::fma(a, b, -p)};
+  };
+  bool rank_one = rank_upper > 1;
+  for (Index i = 0; rank_one && i < input.rows(); ++i) {
+    for (Index j = 0; j < input.columns(); ++j) {
+      if (product(input.at(i, j), input.at(pivot_row, pivot_col)) !=
+          product(input.at(i, pivot_col), input.at(pivot_row, j))) {
+        rank_one = false;
+        break;
+      }
+    }
+  }
+  if (rank_one) {
+    rank_upper = 1;
+  }
+  return rank_upper;
+}
+
 Result<SVD> makeResult(ConstMatrixView input, const WorkMatrix& left,
                        const WorkMatrix& right, const Bidiagonal& band,
-                       const SolvePolicy& policy, bool exact, int exponent) {
+                       const SolvePolicy& policy, bool exact, int exponent,
+                       Wide* spectral_error = nullptr) {
   const auto count = band.diagonal.size();
   std::vector<Index> order(count);
   std::iota(order.begin(), order.end(), Index{0});
@@ -416,10 +463,18 @@ Result<SVD> makeResult(ConstMatrixView input, const WorkMatrix& left,
   const Wide error = exact ? 0
                            : reconstructionError(input, transpose, exponent,
                                                  left, right, band, largest);
+  if (spectral_error != nullptr) {
+    *spectral_error = std::scalbn(error, exponent);
+    if (!std::isfinite(*spectral_error)) {
+      return Result<SVD>::failure(ErrorCode::NoConvergence,
+                                  "SVD error bound is not finite");
+    }
+  }
   if (!detail::representable(cutoff)) {
     return Result<SVD>::failure(ErrorCode::NonFiniteResult,
                                 "SVD cutoff overflow");
   }
+  const Index rank_upper = exact ? count : exactRankUpper(input);
   SVD result{.left = Matrix(input.rows(), count),
              .singular = Vector(count),
              .right_transpose = Matrix(count, input.columns()),
@@ -427,7 +482,7 @@ Result<SVD> makeResult(ConstMatrixView input, const WorkMatrix& left,
              .cutoff = static_cast<Scalar>(cutoff)};
   for (Index i = 0; i < count; ++i) {
     const auto axis = order.at(i);
-    const Wide value = band.diagonal.at(axis);
+    const Wide value = i < rank_upper ? band.diagonal.at(axis) : 0;
     const Wide originalValue = std::scalbn(value, exponent);
     if (!detail::representable(originalValue)) {
       return Result<SVD>::failure(ErrorCode::NonFiniteResult,
@@ -435,8 +490,9 @@ Result<SVD> makeResult(ConstMatrixView input, const WorkMatrix& left,
     }
     const Wide absoluteGap = value - absolute;
     const Wide relativeGap = std::fma(-relative, largest, value);
-    if (!exact && std::abs(std::min(absoluteGap, relativeGap)) <=
-                      (1 + relative) * error) {
+    if (spectral_error == nullptr && !exact && i < rank_upper &&
+        std::abs(std::min(absoluteGap, relativeGap)) <=
+            (1 + relative) * error) {
       return Result<SVD>::failure(ErrorCode::NoConvergence,
                                   "SVD cutoff could not be certified");
     }
@@ -543,6 +599,49 @@ Result<SVD> factorSVD(ConstMatrixView input, SolvePolicy policy,
       [&](const WorkMatrix& left, const WorkMatrix& right,
           const Bidiagonal& band, bool exact, int exponent) {
         return makeResult(input, left, right, band, policy, exact, exponent);
+      });
+}
+
+Result<detail::BoundedSVD>
+detail::boundedSVD(ConstMatrixView input, SolvePolicy policy, Limits limits) {
+  using Output = Result<BoundedSVD>;
+  if (input.empty()) {
+    auto factors = factorSVD(input, policy, limits);
+    if (!factors.hasValue()) {
+      return Output::failure(factors.status().code(),
+                             std::string(factors.status().message()));
+    }
+    return Output::success(
+        {.factors = std::move(factors).value(), .error = 0, .rank_upper = 0});
+  }
+  policy.rank_abs = 0;
+  policy.rank_rel = 0;
+  return decomposeSpectrum(
+      input, policy, limits,
+      [&](const WorkMatrix& left, const WorkMatrix& right,
+          const Bidiagonal& band, bool exact, int exponent) -> Output {
+        Wide error = 0;
+        auto factors = makeResult(input, left, right, band, policy, exact,
+                                  exponent, &error);
+        if (!factors.hasValue()) {
+          return Output::failure(factors.status().code(),
+                                 std::string(factors.status().message()));
+        }
+        if (exact) {
+          const Index rank = factors.value().rank;
+          return Output::success({.factors = std::move(factors).value(),
+                                  .error = 0,
+                                  .rank_upper = rank});
+        }
+        const Index rank_upper = exactRankUpper(input);
+        // Enclose the conversion of the wide singular values to the public
+        // type.
+        error += std::numeric_limits<Scalar>::epsilon() *
+                     static_cast<Wide>(factors.value().singular.at(0)) +
+                 std::numeric_limits<Scalar>::denorm_min();
+        return Output::success({.factors = std::move(factors).value(),
+                                .error = error,
+                                .rank_upper = rank_upper});
       });
 }
 
