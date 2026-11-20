@@ -25,7 +25,7 @@ public:
       : negative_(negative && magnitude != 0) {
     if (magnitude != 0) {
       const Index size = static_cast<Index>(std::bit_width(magnitude)) + shift;
-      limbs_.resize((size - 1) / limbBits + 1);
+      limbs_.resize(((size - 1) / limbBits) + 1);
       for (Index bit = 0; magnitude != 0; ++bit, magnitude >>= 1) {
         if ((magnitude & 1U) != 0) {
           set(bit + shift);
@@ -38,7 +38,7 @@ public:
   [[nodiscard]] bool negative() const noexcept { return negative_; }
   [[nodiscard]] Index bits() const noexcept {
     return zero() ? 0
-                  : (limbs_.size() - 1) * limbBits +
+                  : ((limbs_.size() - 1) * limbBits) +
                         static_cast<Index>(std::bit_width(limbs_.back()));
   }
   [[nodiscard]] bool bit(Index position) const noexcept {
@@ -74,7 +74,7 @@ public:
       std::uint64_t carry = 0;
       for (Index j = 0; j < right.limbs_.size(); ++j) {
         const auto product =
-            static_cast<std::uint64_t>(left.limbs_[i]) * right.limbs_[j] +
+            (static_cast<std::uint64_t>(left.limbs_[i]) * right.limbs_[j]) +
             result.limbs_[i + j] + carry;
         result.limbs_[i + j] = static_cast<Limb>(product);
         carry = product >> limbBits;
@@ -131,7 +131,7 @@ public:
     }
     DeterminantInteger quotient;
     const Index maximumShift = bits() - divisor.bits();
-    quotient.limbs_.resize(maximumShift / limbBits + 1);
+    quotient.limbs_.resize((maximumShift / limbBits) + 1);
     quotient.negative_ = negative_ != divisor.negative_;
     for (Index position = maximumShift + 1; position > 0; --position) {
       const Index shift = position - 1;

@@ -2,10 +2,16 @@
 
 #include <array>
 #include <cmath>
+#include <exception>
 #include <initializer_list>
+#include <iostream>
 #include <limits>
+#include <span>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/covariance/Diagnostics.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 
@@ -36,7 +42,9 @@ SolvePolicy policy() {
   return result;
 }
 
-Limits limits() { return {4096U, 262144U, 0U}; }
+Limits limits() {
+  return {.elements = 4096U, .bytes = 262144U, .evaluations = 0U};
+}
 
 void marginalCovariance() {
   const Matrix joint = matrix({{4.0, 3.0}, {3.0, 9.0}});
@@ -83,8 +91,8 @@ void marginalCovariance() {
       indefinite.view(), second, policy(), limits());
   VSS_CHECK(!invalidJoint.hasValue());
   VSS_CHECK(invalidJoint.status().code() == ErrorCode::NotPositiveSemidefinite);
-  const auto denied = covariance::marginalCovariance(joint.view(), second,
-                                                     policy(), {0U, 0U, 0U});
+  const auto denied =
+      covariance::marginalCovariance(joint.view(), second, policy(), Limits{});
   VSS_CHECK(!denied.hasValue());
   VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
 }
@@ -99,8 +107,10 @@ void inverseSquareRoot() {
   VSS_CHECK(root.value().rank == 2U);
   VSS_CHECK(root.value().reciprocal_condition.has_value());
   VSS_CHECK(std::abs(root.value().covariance.at(0U, 0U) - 0.5) < 1.0e-12);
-  VSS_CHECK(std::abs(root.value().covariance.at(1U, 1U) - 1.0 / 3.0) < 1.0e-12);
-  VSS_CHECK(std::abs(*root.value().reciprocal_condition - 4.0 / 9.0) < 1.0e-12);
+  VSS_CHECK(std::abs(root.value().covariance.at(1U, 1U) - (1.0 / 3.0)) <
+            1.0e-12);
+  const Scalar reciprocal = root.value().reciprocal_condition.value_or(-1);
+  VSS_CHECK(std::abs(reciprocal - (4.0 / 9.0)) < 1.0e-12);
 
   const Matrix rankOne = matrix({{2.0, 2.0}, {2.0, 2.0}});
   const auto supportedRoot =
@@ -169,8 +179,10 @@ void determinantAndLogMagnitude() {
       logAbsoluteDeterminant(cancellation.view(), solve, limits()).value() ==
       0.0);
   VSS_CHECK(
-      determinant(cancellation.view(), solve, {4U, 128U, 0U}).status().code() ==
-      ErrorCode::ResourceLimit);
+      determinant(cancellation.view(), solve,
+                  Limits{.elements = 4U, .bytes = 128U, .evaluations = 0U})
+          .status()
+          .code() == ErrorCode::ResourceLimit);
   const Matrix permuted = matrix({{0.0, adjacent, adjacent - 1.0},
                                   {1.0, 0.0, 0.0},
                                   {0.0, adjacent + 1.0, adjacent}});
@@ -207,14 +219,14 @@ void determinantAndLogMagnitude() {
   VSS_CHECK(
       std::abs(
           logAbsoluteDeterminant(overflow.view(), solve, limits()).value() -
-          1600.0 * std::log(2.0)) < 1.0e-12);
+          (1600.0 * std::log(2.0))) < 1.0e-12);
   const Matrix underflow = matrix({{-small, 0.0}, {0.0, small}});
   const auto rounded = determinant(underflow.view(), solve, limits()).value();
   VSS_CHECK(rounded == 0.0 && std::signbit(rounded));
   VSS_CHECK(
       std::abs(
           logAbsoluteDeterminant(underflow.view(), solve, limits()).value() +
-          1600.0 * std::log(2.0)) < 1.0e-12);
+          (1600.0 * std::log(2.0))) < 1.0e-12);
 
   const Matrix nonfinite(1U, 1U, std::numeric_limits<Scalar>::infinity());
   VSS_CHECK(logAbsoluteDeterminant(nonfinite.view(), solve, limits())
@@ -240,8 +252,8 @@ void determinantAndLogMagnitude() {
   const auto logWide =
       logAbsoluteDeterminant(rotation.view(), widePolicy, limits());
   VSS_CHECK(logWide.hasValue());
-  VSS_CHECK(std::abs(logWide.value() - (2.0 * std::log(wide) + std::log(2.0))) <
-            1.0e-12);
+  VSS_CHECK(std::abs(logWide.value() -
+                     ((2.0 * std::log(wide)) + std::log(2.0))) < 1.0e-12);
   const Matrix unequal = matrix({{1.0, 0.0}, {0.0, 0.25}});
   auto strict = solve;
   strict.rank = RankPolicy::reject;
@@ -261,9 +273,12 @@ void determinantAndLogMagnitude() {
 
 } // namespace
 
-int main() {
+int main() try {
   marginalCovariance();
   inverseSquareRoot();
   determinantAndLogMagnitude();
   return 0;
+} catch (const std::exception& error) {
+  std::cerr << error.what() << '\n';
+  return 1;
 }

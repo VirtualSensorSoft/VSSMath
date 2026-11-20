@@ -12,8 +12,13 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/covariance/Diagnostics.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::covariance {
 namespace {
@@ -35,21 +40,23 @@ enum class Output : std::uint8_t { determinant, logMagnitude };
 struct Bounds final {
   Wide lower{};
   Wide upper{};
-
-  [[nodiscard]] bool excludesZero() const { return lower > 0 || upper < 0; }
-  [[nodiscard]] bool finite() const {
-    return std::isfinite(lower) && std::isfinite(upper);
-  }
-  [[nodiscard]] Wide center() const { return std::midpoint(lower, upper); }
-  [[nodiscard]] bool zero() const { return lower == 0 && upper == 0; }
 };
 
+bool finite(Bounds bounds) {
+  return std::isfinite(bounds.lower) && std::isfinite(bounds.upper);
+}
+
+Wide center(Bounds bounds) { return std::midpoint(bounds.lower, bounds.upper); }
+
+bool zero(Bounds bounds) { return bounds.lower == 0 && bounds.upper == 0; }
+
 Bounds outward(Wide lower, Wide upper) {
-  return {std::nextafter(lower, -infinity), std::nextafter(upper, infinity)};
+  return {.lower = std::nextafter(lower, -infinity),
+          .upper = std::nextafter(upper, infinity)};
 }
 
 Bounds product(Bounds left, Bounds right) {
-  if (left.zero() || right.zero()) {
+  if (zero(left) || zero(right)) {
     return {};
   }
   if (left.lower == 1 && left.upper == 1) {
@@ -65,7 +72,7 @@ Bounds product(Bounds left, Bounds right) {
 }
 
 Bounds quotient(Bounds left, Bounds right) {
-  if (left.zero()) {
+  if (zero(left)) {
     return {};
   }
   const std::array ratios{left.lower / right.lower, left.lower / right.upper,
@@ -75,50 +82,64 @@ Bounds quotient(Bounds left, Bounds right) {
 }
 
 Bounds difference(Bounds left, Bounds right) {
-  if (right.zero()) {
+  if (zero(right)) {
     return left;
   }
   return outward(left.lower - right.upper, left.upper - right.lower);
 }
 
 struct ScaledDeterminant final {
-  Bounds magnitude{1, 1};
+  Bounds magnitude{.lower = 1, .upper = 1};
   Exponent exponent{};
+  Exponent logExponent{};
+  Wide logSum{};
+  Wide logCorrection{};
   bool negative{};
-
-  [[nodiscard]] bool consume(Bounds pivot) {
-    if (!pivot.excludesZero()) {
-      return false;
-    }
-    if (pivot.upper < 0) {
-      negative = !negative;
-      pivot = {-pivot.upper, -pivot.lower};
-    }
-    const int pivotExponent = std::ilogb(pivot.upper);
-    const auto normalized = Bounds{std::scalbn(pivot.lower, -pivotExponent),
-                                   std::scalbn(pivot.upper, -pivotExponent)};
-    if (std::scalbn(normalized.lower, pivotExponent) != pivot.lower) {
-      return false;
-    }
-    const auto combined = product(magnitude, normalized);
-    if (!combined.finite() || combined.lower <= 0) {
-      return false;
-    }
-    const int shift = std::ilogb(combined.upper);
-    magnitude = {std::scalbn(combined.lower, -shift),
-                 std::scalbn(combined.upper, -shift)};
-    exponent += static_cast<Exponent>(pivotExponent) + shift;
-    return true;
-  }
 };
+
+bool consumePivot(ScaledDeterminant& result, Bounds pivot) {
+  if (pivot.lower <= 0 && pivot.upper >= 0) {
+    return false;
+  }
+  if (pivot.upper < 0) {
+    result.negative = !result.negative;
+    pivot = {.lower = -pivot.upper, .upper = -pivot.lower};
+  }
+  const int pivotExponent = std::ilogb(pivot.upper);
+  const auto normalized =
+      Bounds{.lower = std::scalbn(pivot.lower, -pivotExponent),
+             .upper = std::scalbn(pivot.upper, -pivotExponent)};
+  if (std::scalbn(normalized.lower, pivotExponent) != pivot.lower) {
+    return false;
+  }
+  result.logExponent += pivotExponent;
+  const Wide adjusted = std::log(center(normalized)) - result.logCorrection;
+  const Wide next = result.logSum + adjusted;
+  result.logCorrection = (next - result.logSum) - adjusted;
+  result.logSum = next;
+  const auto combined = product(result.magnitude, normalized);
+  if (!finite(combined) || combined.lower <= 0) {
+    return false;
+  }
+  const int shift = std::ilogb(combined.upper);
+  const Wide lower = std::scalbn(combined.lower, -shift);
+  if (std::scalbn(lower, shift) != combined.lower) {
+    return false;
+  }
+  result.magnitude = {.lower = lower,
+                      .upper = std::scalbn(combined.upper, -shift)};
+  result.exponent += static_cast<Exponent>(pivotExponent) + shift;
+  return true;
+}
 
 // Power-of-two row scaling keeps the input exact. Outward-rounded interval
 // operations enclose each pivot, including when elimination loses digits.
 std::optional<ScaledDeterminant> boundedLU(ConstMatrixView input) {
   const Index size = input.rows();
   std::vector<Bounds> work(size * size);
-  const auto entry = [&work, size](Index row, Index column) -> Bounds& {
-    return work.at(row * size + column);
+  const auto entry = [&work, size](Index rowIndex,
+                                   Index columnIndex) -> Bounds& {
+    return work.at((rowIndex * size) + columnIndex);
   };
   ScaledDeterminant result;
   for (Index row = 0; row < size; ++row) {
@@ -131,45 +152,50 @@ std::optional<ScaledDeterminant> boundedLU(ConstMatrixView input) {
     }
     const int shift = std::ilogb(maximum);
     result.exponent += shift;
+    result.logExponent += shift;
     for (Index column = 0; column < size; ++column) {
       const auto original = static_cast<Wide>(input.at(row, column));
       const Wide scaled = std::scalbn(original, -shift);
       if (std::scalbn(scaled, shift) != original) {
         return std::nullopt;
       }
-      entry(row, column) = {scaled, scaled};
+      entry(row, column) = {.lower = scaled, .upper = scaled};
     }
   }
-  for (Index column = 0; column < size; ++column) {
-    Index pivotRow = column;
-    for (Index row = column + 1; row < size; ++row) {
-      if (std::abs(entry(row, column).center()) >
-          std::abs(entry(pivotRow, column).center())) {
+  for (Index pivotIndex = 0; pivotIndex < size; ++pivotIndex) {
+    Index pivotRow = pivotIndex;
+    for (Index row = pivotIndex + 1; row < size; ++row) {
+      if (std::abs(center(entry(row, pivotIndex))) >
+          std::abs(center(entry(pivotRow, pivotIndex)))) {
         pivotRow = row;
       }
     }
-    if (pivotRow != column) {
-      for (Index next = column; next < size; ++next) {
-        std::swap(entry(column, next), entry(pivotRow, next));
+    if (pivotRow != pivotIndex) {
+      for (Index trailingColumn = pivotIndex; trailingColumn < size;
+           ++trailingColumn) {
+        std::swap(entry(pivotIndex, trailingColumn),
+                  entry(pivotRow, trailingColumn));
       }
       result.negative = !result.negative;
     }
-    const auto pivot = entry(column, column);
-    if (!result.consume(pivot)) {
+    const auto pivot = entry(pivotIndex, pivotIndex);
+    if (!consumePivot(result, pivot)) {
       return std::nullopt;
     }
-    for (Index row = column + 1; row < size; ++row) {
-      if (entry(row, column).zero()) {
+    for (Index row = pivotIndex + 1; row < size; ++row) {
+      if (zero(entry(row, pivotIndex))) {
         continue;
       }
-      const auto factor = quotient(entry(row, column), pivot);
-      if (!factor.finite()) {
+      const auto factor = quotient(entry(row, pivotIndex), pivot);
+      if (!finite(factor)) {
         return std::nullopt;
       }
-      for (Index next = column + 1; next < size; ++next) {
-        auto& cell = entry(row, next);
-        cell = difference(cell, product(factor, entry(column, next)));
-        if (!cell.finite()) {
+      for (Index trailingColumn = pivotIndex + 1; trailingColumn < size;
+           ++trailingColumn) {
+        auto& cell = entry(row, trailingColumn);
+        cell = difference(cell,
+                          product(factor, entry(pivotIndex, trailingColumn)));
+        if (!finite(cell)) {
           return std::nullopt;
         }
       }
@@ -196,7 +222,8 @@ Dyadic decompose(Scalar value) {
   const auto fraction = std::frexp(std::abs(value), &exponent);
   const auto bits = static_cast<std::uint64_t>(std::ldexp(fraction, precision));
   const int zeros = std::countr_zero(bits);
-  return {bits >> zeros, exponent - precision + zeros};
+  return {.significand = bits >> zeros,
+          .exponent = exponent - precision + zeros};
 }
 
 struct ExactDeterminant final {
@@ -225,10 +252,8 @@ Result<ExactDeterminant> exactDyadic(ConstMatrixView input, Limits limits) {
       const auto value = decompose(input.at(row, column));
       if (value.significand != 0) {
         leastExponent = std::min(leastExponent, value.exponent);
-        greatestBit =
-            std::max(greatestBit,
-                     value.exponent +
-                         static_cast<int>(std::bit_width(value.significand)));
+        greatestBit = std::max(
+            greatestBit, value.exponent + std::bit_width(value.significand));
       }
     }
   }
@@ -239,19 +264,23 @@ Result<ExactDeterminant> exactDyadic(ConstMatrixView input, Limits limits) {
       minorBitBound(size, static_cast<Index>(greatestBit - leastExponent));
   StorageBudget budget(limits);
   constexpr Index bits = DeterminantInteger::limbBits;
-  if (!minorBits || !budget.claim<DeterminantInteger>(size, size) ||
+  if (!minorBits) {
+    return Result<ExactDeterminant>::failure(
+        ErrorCode::ResourceLimit, "exact determinant bit bound overflows");
+  }
+  const Index temporaryBits = (2 * *minorBits) + 2;
+  if (!budget.claim<DeterminantInteger>(size, size) ||
       !budget.claim<DeterminantInteger::Limb>(size * size,
-                                              *minorBits / bits + 3) ||
-      !budget.claim<DeterminantInteger::Limb>(8, (2 * *minorBits + 2) / bits +
-                                                     2)) {
+                                              (*minorBits / bits) + 3) ||
+      !budget.claim<DeterminantInteger::Limb>(8, (temporaryBits / bits) + 2)) {
     return Result<ExactDeterminant>::failure(
         ErrorCode::ResourceLimit, "exact determinant workspace exceeds limits");
   }
 
   std::vector<DeterminantInteger> work(size * size);
-  const auto entry = [&work, size](Index row,
-                                   Index column) -> DeterminantInteger& {
-    return work.at(row * size + column);
+  const auto entry = [&work, size](Index rowIndex,
+                                   Index columnIndex) -> DeterminantInteger& {
+    return work.at((rowIndex * size) + columnIndex);
   };
   for (Index row = 0; row < size; ++row) {
     for (Index column = 0; column < size; ++column) {
@@ -269,35 +298,38 @@ Result<ExactDeterminant> exactDyadic(ConstMatrixView input, Limits limits) {
   bool negative = false;
   // Bareiss update: the numerator is a difference of products of minors
   // and divides exactly by the preceding pivot. Keep that pivot in work.
-  for (Index column = 0; column + 1 < size; ++column) {
-    Index pivotRow = column;
-    while (pivotRow < size && entry(pivotRow, column).zero()) {
+  for (Index pivotIndex = 0; pivotIndex + 1 < size; ++pivotIndex) {
+    Index pivotRow = pivotIndex;
+    while (pivotRow < size && entry(pivotRow, pivotIndex).zero()) {
       ++pivotRow;
     }
     if (pivotRow == size) {
       return Result<ExactDeterminant>::success({});
     }
-    if (pivotRow != column) {
-      for (Index next = column; next < size; ++next) {
-        std::swap(entry(column, next), entry(pivotRow, next));
+    if (pivotRow != pivotIndex) {
+      for (Index trailingColumn = pivotIndex; trailingColumn < size;
+           ++trailingColumn) {
+        std::swap(entry(pivotIndex, trailingColumn),
+                  entry(pivotRow, trailingColumn));
       }
       negative = !negative;
     }
-    const auto& pivot = entry(column, column);
-    for (Index row = column + 1; row < size; ++row) {
-      for (Index next = column + 1; next < size; ++next) {
+    const auto& pivot = entry(pivotIndex, pivotIndex);
+    for (Index row = pivotIndex + 1; row < size; ++row) {
+      for (Index trailingColumn = pivotIndex + 1; trailingColumn < size;
+           ++trailingColumn) {
         auto numerator = DeterminantInteger::subtract(
-            DeterminantInteger::multiply(pivot, entry(row, next)),
-            DeterminantInteger::multiply(entry(row, column),
-                                         entry(column, next)));
-        if (column != 0 &&
-            !numerator.divideExactly(entry(column - 1, column - 1))) {
+            DeterminantInteger::multiply(pivot, entry(row, trailingColumn)),
+            DeterminantInteger::multiply(entry(row, pivotIndex),
+                                         entry(pivotIndex, trailingColumn)));
+        if (pivotIndex != 0 &&
+            !numerator.divideExactly(entry(pivotIndex - 1, pivotIndex - 1))) {
           return Result<ExactDeterminant>::failure(
               ErrorCode::NoConvergence, "exact determinant division failed");
         }
-        entry(row, next) = std::move(numerator);
+        entry(row, trailingColumn) = std::move(numerator);
       }
-      entry(row, column) = {};
+      entry(row, pivotIndex) = {};
     }
   }
   auto result = std::move(entry(size - 1, size - 1));
@@ -305,7 +337,8 @@ Result<ExactDeterminant> exactDyadic(ConstMatrixView input, Limits limits) {
     result.negate();
   }
   return Result<ExactDeterminant>::success(
-      {std::move(result), static_cast<Exponent>(size) * leastExponent});
+      {.magnitude = std::move(result),
+       .exponent = static_cast<Exponent>(size) * leastExponent});
 }
 
 Result<Scalar> outOfRange() {
@@ -315,7 +348,7 @@ Result<Scalar> outOfRange() {
 
 Wide logScaled(Wide significand, Exponent exponent) {
   return std::log(significand) +
-         static_cast<Wide>(exponent) * std::log(Wide{2});
+         (static_cast<Wide>(exponent) * std::log(Wide{2}));
 }
 
 Scalar singularOutput(Output output) {
@@ -365,8 +398,9 @@ Result<Scalar> convertExact(const ExactDeterminant& exact, Output output) {
 std::optional<Result<Scalar>> convertBounded(const ScaledDeterminant& value,
                                              Output output) {
   if (output == Output::logMagnitude) {
-    return Result<Scalar>::success(static_cast<Scalar>(
-        logScaled(value.magnitude.center(), value.exponent)));
+    return Result<Scalar>::success(
+        static_cast<Scalar>(std::fma(static_cast<Wide>(value.logExponent),
+                                     std::log(Wide{2}), value.logSum)));
   }
   if (value.exponent > maximumExponent) {
     return outOfRange();
@@ -381,7 +415,7 @@ std::optional<Result<Scalar>> convertBounded(const ScaledDeterminant& value,
     return std::nullopt;
   }
   const auto rounded = static_cast<Scalar>(
-      std::scalbn(value.magnitude.center(), static_cast<int>(value.exponent)));
+      std::scalbn(center(value.magnitude), static_cast<int>(value.exponent)));
   return Result<Scalar>::success(value.negative ? -rounded : rounded);
 }
 
@@ -420,7 +454,7 @@ Result<Scalar> compute(ConstMatrixView input, SolvePolicy policy, Limits limits,
     }
   }
   const auto bounded = boundedLU(input);
-  if (bounded && bounded->magnitude.zero()) {
+  if (bounded && zero(bounded->magnitude)) {
     return ResultType::success(singularOutput(output));
   }
   const auto rounded =
