@@ -1,3 +1,4 @@
+#include "DenseWorkspace.hpp"
 #include "ScaledContraction.hpp"
 
 #include <algorithm>
