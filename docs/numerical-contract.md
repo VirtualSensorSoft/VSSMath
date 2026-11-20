@@ -54,6 +54,10 @@ Fixture provenance and expected bounds are documented alongside the test map.
   condition diagnostics.
 - QR uses deterministic column-pivoted Householder factorization and provides
   least-squares solutions only when the documented rank conditions hold.
+- Full QR also supports original-column order or deterministic optional
+  pivoting for tall, square, and wide matrices. It returns an owning square
+  orthogonal factor and upper-trapezoidal factor; numerical rank is certified
+  from the shared SVD cutoff rather than inferred from the triangular diagonal.
 - Cholesky validates symmetry and positive definiteness; it does not repair an
   input by adding jitter.
 - Symmetric eigendecomposition orders eigenvalues and applies documented

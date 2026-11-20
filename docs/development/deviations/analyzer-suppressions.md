@@ -151,6 +151,8 @@ annotations.
 
 | tests/algorithms/test_generalized_symmetric_eigen.cpp:261 | bugprone-exception-escape | Generalized eigen test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
 | tests/algorithms/test_null_space.cpp:211 | bugprone-exception-escape | Null-space test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
+| tests/algorithms/test_full_qr.cpp:23 | clang-analyzer-optin.core.EnumCastOutOfRange | Invalid-enumerator test helper | Constructs an unknown closed-enum value to exercise public validation | Full-QR tests require unknown QR and rank policies to return InvalidDomain | Reviewed |
+| tests/algorithms/test_full_qr.cpp:259 | bugprone-exception-escape | Full-QR test main | Acceptance assertions terminate the test process on failure | The shared test harness reports a failed assertion as a nonzero process result | Reviewed |
 
 
 | src/linear/GeneralizedEigen.cpp:102 | readability-suspicious-call-argument | Symmetry allowance | The second matrix access reads the mirrored coordinate | The comparison validates independently symmetric pencil inputs before canonical midpoint construction | Reviewed |

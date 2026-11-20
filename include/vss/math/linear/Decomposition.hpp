@@ -29,6 +29,62 @@ struct SVD final {
 
 namespace linear {
 
+/// @brief Selects whether QR keeps input columns or pivots by residual norm.
+enum class QRColumnOrder : std::uint8_t {
+  original, ///< Keep the identity column permutation.
+  pivoted   ///< Pivot by descending active trailing-column norm.
+};
+
+/// @brief Owning full orthogonal QR factors and their rank diagnostics.
+/// @details For input `A`, the represented relation is
+///          `A[:, permutation] = orthogonal * upper`. `orthogonal` is square
+///          with order equal to the input row count. `upper` has the input
+///          shape and is exactly zero below its diagonal. The immutable
+///          `permutation[j]` identifies the original input column represented
+///          by factor column `j`. `rank` counts singular values strictly
+///          greater than `cutoff`; both are certified from the input singular
+///          spectrum, never inferred from the diagonal of `upper`.
+struct FullQR final {
+  /// @brief Owning m by m factor whose columns are orthonormal.
+  Matrix orthogonal;
+  /// @brief Owning m by n upper-trapezoidal factor.
+  Matrix upper;
+  /// @brief Original-column index for each factor column.
+  Array<Index> permutation;
+  /// @brief Singular-spectrum rank at the requested strict cutoff.
+  Index rank;
+  /// @brief Rank cutoff in the original input units.
+  Scalar cutoff;
+};
+
+/// @brief Computes full Householder QR factors for any finite matrix shape.
+/// @param input Borrowed input matrix; it is not modified.
+/// @param order Original input order or deterministic residual-norm pivoting.
+/// @param policy Singular-spectrum rank cutoff and certification policy.
+///        Solve rejection and reciprocal-condition rules do not reject this
+///        decomposition. Bracket, restart and callback fields do not apply.
+/// @param limits Peak owned and workspace element/byte ceilings.
+/// @details The input is not modified. Original order returns the identity
+///          permutation. Pivoted order chooses the largest remaining scaled
+///          trailing column norm at every step and breaks exact ties by the
+///          smallest original column index. Rank loss does not shorten either
+///          output factor. Empty dimensions retain their full stated extents:
+///          Q is the row-sized identity, and the permutation is identity.
+///          Rank rejection and reciprocal-condition solve policies do not
+///          reject this decomposition; the iteration limit applies to SVD rank
+///          certification. There are no callbacks or condition estimate.
+/// @return Full factors, permutation and SVD-certified numerical rank, or
+///         `InvalidDomain`, `InvalidTolerance`, `NonFiniteInput`,
+///         `NonFiniteResult`, `NoConvergence` or `ResourceLimit` without
+///         partial output.
+/// @throws std::bad_alloc if storage within the configured limits cannot be
+///         allocated.
+/// @note For `k=min(m,n)`, complexity is O(m^2 k + m n k), plus writing full
+///       outputs when k is zero. Storage is O(m^2 + m n + n).
+[[nodiscard]] Result<FullQR> factorFullQR(ConstMatrixView input,
+                                          QRColumnOrder order,
+                                          SolvePolicy policy, Limits limits);
+
 /// @brief Complete generalized eigensystem for a symmetric definite pencil.
 /// @details Eigenvalues are ascending. Each column of `vectors` is normalized
 ///          in the metric of the original second matrix, so

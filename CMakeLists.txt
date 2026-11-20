@@ -57,6 +57,7 @@ add_library(vss_math STATIC
   src/linear/Cholesky.cpp
   src/linear/LDLT.cpp
   src/linear/GeneralizedEigen.cpp
+  src/linear/FullQR.cpp
   src/linear/RankAware.cpp
   src/linear/SVD.cpp
   src/linear/LU.cpp

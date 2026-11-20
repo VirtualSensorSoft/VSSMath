@@ -37,6 +37,7 @@ NUM-QR-006	full-column-rank QRFactorization::leastSquares returns vector/matrix 
 NUM-QR-007	square full-rank QRFactorization::leastSquares is the KKT-like stable alternative; verification: recovered square-system solution	QR-05	math.qr
 NUM-QR-008	QR fixtures cover success, permutation, rank, KKT, shape, and finite checks; verification: required failure-code assertions	QR-01,QR-06	math.qr
 NUM-QR-009	square QR has condition report; rectangular QR reports rank without condition; verification: square boundary classification and empty rectangular report	QR-02,QR-05	math.qr
+NUM-QR-010	factorFullQR returns full orthogonal Q, upper-trapezoidal R, deterministic optional pivoting and SVD-certified rank for all shapes; verification: reconstruction, orthogonality, cutoff, empty, zero, invalid and resource fixtures	QR-10,QR-11	math.full_qr
 NUM-CHO-001	factorizeCholesky validates input and factors canonical positive-definite S = L L^T; verification: NotSymmetric/NotPositiveDefinite separation	CHO-01,CHO-05	math.cholesky
 NUM-CHO-002	diagonal scale and pre-root pivot threshold define positive definiteness; no jitter; verification: NotPositiveDefinite with no factor value	CHO-03,CHO-04	math.cholesky
 NUM-CHO-003	symmetry rejection precedes definiteness classification; verification: exact NotSymmetric then NotPositiveDefinite cases	CHO-03,CHO-05	math.cholesky

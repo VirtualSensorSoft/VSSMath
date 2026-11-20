@@ -52,6 +52,9 @@ vss_math_add_algorithm_test(test_rank_aware_least_squares
 vss_math_add_algorithm_test(test_null_space
                              algorithms/test_null_space.cpp
                              math.null_space)
+vss_math_add_algorithm_test(test_full_qr
+                             algorithms/test_full_qr.cpp
+                             math.full_qr)
 vss_math_add_algorithm_test(test_covariance
                              algorithms/test_covariance.cpp
                              math.covariance)

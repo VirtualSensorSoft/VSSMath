@@ -360,6 +360,25 @@ int main() {
     return 1;
   }
 
+  Matrix fullQrInput(3U, 2U);
+  fullQrInput.at(0U, 0U) = 1.0;
+  fullQrInput.at(1U, 1U) = 2.0;
+  fullQrInput.at(2U, 0U) = 1.0;
+  fullQrInput.at(2U, 1U) = 1.0;
+  SolvePolicy fullQrPolicy{};
+  fullQrPolicy.iteration.max_iterations = 128U;
+  const auto fullQr = linear::factorFullQR(
+      fullQrInput.view(), linear::QRColumnOrder::pivoted, fullQrPolicy, limits);
+  if (!require(fullQr.hasValue() && fullQr.value().orthogonal.rows() == 3U &&
+                   fullQr.value().orthogonal.columns() == 3U &&
+                   fullQr.value().upper.rows() == 3U &&
+                   fullQr.value().upper.columns() == 2U &&
+                   fullQr.value().permutation.view()[0U] == 1U &&
+                   fullQr.value().rank == 2U,
+               "installed full QR API failed")) {
+    return 1;
+  }
+
   std::cout << "VirtualSensorMath " << version::string << " consumer passed\n";
   return 0;
 }
