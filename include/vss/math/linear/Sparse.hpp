@@ -37,9 +37,9 @@ struct CSR final {
   /// @brief Row offsets, of length `rows + 1`, with first zero and last nnz.
   Array<Index> row_offsets;
   /// @brief Strictly increasing column index within each row.
-  Array<Index> column_indices;
+  Array<Index> columns_by_entry;
   /// @brief Finite, nonzero values corresponding to column indices.
-  Array<Scalar> values;
+  Vector values;
 };
 
 /// @brief Builds canonical CSR by sorting and coalescing coordinate triplets.

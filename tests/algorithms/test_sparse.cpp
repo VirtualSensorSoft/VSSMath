@@ -27,12 +27,12 @@ void coalescesDuplicatesAndDropsExactCancellation() {
   const auto result = linear::sparseCSRFromTriplets(2U, 3U, entries, limits());
   VSS_CHECK(result.hasValue());
   const auto offsets = result.value().row_offsets.view();
-  const auto columns = result.value().column_indices.view();
+  const auto columns = result.value().columns_by_entry.view();
   const auto values = result.value().values.view();
   VSS_CHECK(offsets.size() == 3U && offsets[0U] == 0U && offsets[1U] == 0U &&
             offsets[2U] == 2U);
   VSS_CHECK(columns[0U] == 0U && columns[1U] == 2U);
-  VSS_CHECK(values[0U] == 3.0 && values[1U] == 4.0);
+  VSS_CHECK(values.at(0U) == 3.0 && values.at(1U) == 4.0);
 }
 
 void acceptsEmptyRowsAndZeroRowMatrices() {
@@ -62,11 +62,10 @@ void validatesCanonicalCSRBeforeApplying() {
   const std::array<Scalar, 1U> stored_zero{{0.0}};
   const auto row_offsets = Array<Index>::copy(offsets, limits());
   const auto column_indices = Array<Index>::copy(columns, limits());
-  const auto values = Array<Scalar>::copy(stored_zero, limits());
-  VSS_CHECK(row_offsets.hasValue() && column_indices.hasValue() &&
-            values.hasValue());
+  const Vector values(stored_zero);
+  VSS_CHECK(row_offsets.hasValue() && column_indices.hasValue());
   const linear::CSR malformed{1U, 1U, row_offsets.value(),
-                              column_indices.value(), values.value()};
+                              column_indices.value(), values};
   const Vector input(std::array<Scalar, 1U>{1.0});
   const auto result = linear::apply(malformed, input.view(), limits());
   VSS_CHECK(!result.hasValue());
@@ -113,6 +112,23 @@ void rejectsMalformedInputsAndEnforcesLimits() {
   VSS_CHECK(resource.status().code() == ErrorCode::ResourceLimit);
 }
 
+void accountsForOverlappingConstructionPeak() {
+  const std::array<linear::Triplet, 1U> entry{{{0U, 0U, 2.0}}};
+  const auto exact = linear::sparseCSRFromTriplets(
+      1U, 1U, entry, Limits{.elements = 8U, .bytes = 64U, .evaluations = 0U});
+  VSS_CHECK(exact.hasValue());
+
+  const auto one_element_short = linear::sparseCSRFromTriplets(
+      1U, 1U, entry, Limits{.elements = 7U, .bytes = 64U, .evaluations = 0U});
+  VSS_CHECK(!one_element_short.hasValue());
+  VSS_CHECK(one_element_short.status().code() == ErrorCode::ResourceLimit);
+
+  const auto one_byte_short = linear::sparseCSRFromTriplets(
+      1U, 1U, entry, Limits{.elements = 8U, .bytes = 63U, .evaluations = 0U});
+  VSS_CHECK(!one_byte_short.hasValue());
+  VSS_CHECK(one_byte_short.status().code() == ErrorCode::ResourceLimit);
+}
+
 void scaledRowActionDefersOverflowUntilFinalResult() {
   // VSS-MATH-TRACEABILITY: SP-04
   const Scalar maximum = std::numeric_limits<Scalar>::max();
@@ -143,5 +159,6 @@ int main() {
   rejectsMalformedInputsAndEnforcesLimits();
   validatesCanonicalCSRBeforeApplying();
   scaledRowActionDefersOverflowUntilFinalResult();
+  accountsForOverlappingConstructionPeak();
   return 0;
 }
