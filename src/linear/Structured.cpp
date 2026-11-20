@@ -1,16 +1,30 @@
+#include "BandSolve.hpp"
 #include "DenseWorkspace.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
-#include <numeric>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
 #include <vss/math/Operations.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/linear/Decomposition.hpp>
+#include <vss/math/linear/RankAware.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/Structured.hpp>
+#include <vss/math/linear/StructuredProducts.hpp>
 
 namespace vss::math::linear {
 namespace {
@@ -176,6 +190,9 @@ bool leastSquaresPeakFits(Extent rows, Extent columns, Extent rhs_columns,
   output_bytes =
       (parameters + basis + rhs_columns) * sizeof(Scalar) + thin * sizeof(Wide);
 
+  if (thin == 0U) {
+    return output_elements <= limits.elements && output_bytes <= limits.bytes;
+  }
   const Extent tall = std::max(rows, columns);
   Extent tall_thin = 0U;
   Extent thin_squared = 0U;
@@ -186,7 +203,7 @@ bool leastSquaresPeakFits(Extent rows, Extent columns, Extent rhs_columns,
   tall_thin = tall * thin;
   thin_squared = thin * thin;
   Extent factor_elements = 0U;
-  const Extent factor_parts[] = {
+  const std::array factor_parts = {
       tall_thin, tall_thin, thin_squared, tall,         2U * thin,
       tall,      2U * thin, tall_thin,    thin_squared, thin};
   for (const Extent part : factor_parts) {
@@ -198,15 +215,15 @@ bool leastSquaresPeakFits(Extent rows, Extent columns, Extent rhs_columns,
   Extent factor_bytes = 0U;
   Extent wide_elements = 0U;
   Extent scalar_elements = 0U;
-  const Extent wide_parts[] = {tall_thin, tall_thin, thin_squared, tall,
-                               2U * thin};
+  const std::array wide_parts = {tall_thin, tall_thin, thin_squared, tall,
+                                 2U * thin};
   for (const Extent part : wide_parts) {
     if (!addFits(wide_elements, part)) {
       return false;
     }
     wide_elements += part;
   }
-  const Extent scalar_parts[] = {tall_thin, thin_squared, thin};
+  const std::array scalar_parts = {tall_thin, thin_squared, thin};
   for (const Extent part : scalar_parts) {
     if (!addFits(scalar_elements, part)) {
       return false;
@@ -327,7 +344,7 @@ Result<AugmentedSystem> denseAugmented(ConstMatrixView design,
                           column < design.columns();
        ++column) {
     std::fill_n(basis.data(), basis.size(), 0.0);
-    basis.data()[column] = 1.0;
+    basis.at(column) = 1.0;
     Result<Vector> action = [&]() {
       try {
         return penalty.apply(basis.view());
@@ -386,28 +403,47 @@ Result<AugmentedSystem> denseAugmented(ConstMatrixView design,
       common_exponent = std::max(common_exponent, product.exponent);
     }
   }
-  if (common_exponent == std::numeric_limits<int>::min()) {
+  if (common_exponent == std::numeric_limits<int>::min() ||
+      (common_exponent >= -500 && common_exponent <= 500)) {
     common_exponent = 0;
   }
   Matrix augmented(rows, design.columns(), 0.0);
   Matrix augmented_rhs(rows, observations.columns(), 0.0);
-  for (Index row = 0U; row < design.rows(); ++row) {
-    for (Index column = 0U; column < design.columns(); ++column) {
-      augmented.at(row, column) =
-          std::scalbn(design.at(row, column), -common_exponent);
+  const auto scaleData = [&](Scalar value, Scalar& destination) {
+    destination = std::scalbn(value, -common_exponent);
+    return std::isfinite(destination) &&
+           std::scalbn(destination, common_exponent) == value;
+  };
+  for (Index row = 0; row < design.rows(); ++row) {
+    for (Index column = 0; column < design.columns(); ++column) {
+      if (!scaleData(design.at(row, column), augmented.at(row, column))) {
+        return failure<AugmentedSystem>(
+            ErrorCode::NoConvergence, "augmented scaling loses design entries");
+      }
     }
   }
-  for (Index row = 0U; row < observations.rows(); ++row) {
-    for (Index column = 0U; column < observations.columns(); ++column) {
-      augmented_rhs.at(row, column) =
-          std::scalbn(observations.at(row, column), -common_exponent);
+  for (Index row = 0; row < observations.rows(); ++row) {
+    for (Index column = 0; column < observations.columns(); ++column) {
+      if (!scaleData(observations.at(row, column),
+                     augmented_rhs.at(row, column))) {
+        return failure<AugmentedSystem>(
+            ErrorCode::NoConvergence,
+            "augmented scaling loses observation entries");
+      }
     }
   }
-  for (Index row = 0U; row < penalty_rows; ++row) {
-    for (Index column = 0U; column < design.columns(); ++column) {
-      const auto& product = products[row * design.columns() + column];
-      augmented.at(design.rows() + row, column) =
-          std::scalbn(product.fraction, product.exponent - common_exponent);
+  for (Index row = 0; row < penalty_rows; ++row) {
+    for (Index column = 0; column < design.columns(); ++column) {
+      const auto& product = products.at(row * design.columns() + column);
+      const int shift = product.exponent - common_exponent;
+      const Scalar entry = std::scalbn(product.fraction, shift);
+      if (!std::isfinite(entry) ||
+          std::scalbn(entry, -shift) != product.fraction) {
+        return failure<AugmentedSystem>(
+            ErrorCode::NoConvergence,
+            "augmented scaling loses penalty entries");
+      }
+      augmented.at(design.rows() + row, column) = entry;
     }
   }
   return Result<AugmentedSystem>::success(
@@ -442,7 +478,7 @@ Result<Vector> apply(const DiagonalMatrix& matrix, ConstVectorView vector,
       return failure<Vector>(ErrorCode::NonFiniteResult,
                              "diagonal product is not representable");
     }
-    output.data()[i] = product;
+    output.at(i) = product;
   }
   return Result<Vector>::success(std::move(output));
 }
@@ -543,7 +579,8 @@ Result<Vector> apply(const BlockMatrix& matrix, ConstVectorView vector,
   const Extent row_prefix_size = row_blocks + 1U;
   const Extent column_prefix_size = column_blocks + 1U;
   Extent metadata_elements = row_prefix_size;
-  const Extent metadata_parts[] = {column_prefix_size, row_blocks, row_blocks};
+  const std::array metadata_parts = {column_prefix_size, row_blocks,
+                                     row_blocks};
   for (const Extent part : metadata_parts) {
     if (!addFits(metadata_elements, part)) {
       return failure<Vector>(ErrorCode::SizeOverflow,
@@ -635,7 +672,7 @@ Result<Vector> apply(const BlockMatrix& matrix, ConstVectorView vector,
       return failure<Vector>(value.status().code(),
                              "block matrix product failed");
     }
-    output.data()[row] = value.value();
+    output.at(row) = value.value();
   }
   return Result<Vector>::success(std::move(output));
 }
@@ -685,7 +722,7 @@ Result<Vector> orthogonalProjection(ConstMatrixView basis,
   if (svd.rank == basis.rows()) {
     Vector copy(vector.size(), 0.0);
     for (Index i = 0U; i < vector.size(); ++i) {
-      copy.data()[i] = vector.at(i);
+      copy.at(i) = vector.at(i);
     }
     return Result<Vector>::success(std::move(copy));
   }
@@ -725,7 +762,7 @@ Result<Vector> orthogonalProjection(ConstMatrixView basis,
       return failure<Vector>(ErrorCode::NonFiniteResult,
                              "projected coordinate is not representable");
     }
-    output.data()[row] = static_cast<Scalar>(value);
+    output.at(row) = static_cast<Scalar>(value);
   }
   return Result<Vector>::success(std::move(output));
 }
@@ -768,7 +805,9 @@ regularizedLeastSquares(ConstMatrixView design, ConstMatrixView observations,
     return failure<LinearEstimate>(ErrorCode::CallbackFailure,
                                    "active penalty map has no apply callback");
   }
-  if (design.columns() > limits.evaluations) {
+  if (design.columns() >
+      std::min(limits.evaluations,
+               static_cast<std::uint64_t>(policy.iteration.max_evaluations))) {
     return failure<LinearEstimate>(
         ErrorCode::ResourceLimit,
         "penalty callback evaluation cap is too small");
@@ -776,8 +815,8 @@ regularizedLeastSquares(ConstMatrixView design, ConstMatrixView observations,
   auto augmented =
       denseAugmented(design, observations, penalty, lambda, limits);
   if (!augmented.hasValue()) {
-    return failure<LinearEstimate>(augmented.status().code(),
-                                   "regularized design construction failed");
+    return Result<LinearEstimate>::failure(
+        augmented.status().code(), std::string(augmented.status().message()));
   }
   const Extent augmented_elements =
       augmented.value().design.rows() * augmented.value().design.columns();
@@ -798,9 +837,9 @@ regularizedLeastSquares(ConstMatrixView design, ConstMatrixView observations,
       .bytes =
           limits.bytes - (augmented_elements + rhs_elements) * sizeof(Scalar),
       .evaluations = limits.evaluations - design.columns()};
-  const auto estimate = leastSquaresMinNorm(
-      augmented.value().design.view(), augmented.value().observations.view(),
-      scaled_policy, solve_limits);
+  auto estimate = leastSquaresMinNorm(augmented.value().design.view(),
+                                      augmented.value().observations.view(),
+                                      scaled_policy, solve_limits);
   if (!estimate.hasValue()) {
     return failure<LinearEstimate>(estimate.status().code(),
                                    "augmented least-squares solve failed");
@@ -817,32 +856,29 @@ regularizedLeastSquares(ConstMatrixView design, ConstMatrixView observations,
   }
   result.rank_cutoff = static_cast<Scalar>(restored_cutoff);
   for (Index column = 0U; column < observations.columns(); ++column) {
-    Vector residual_column(observations.rows(), 0.0);
+    Wide norm = 0;
     for (Index row = 0U; row < observations.rows(); ++row) {
-      if (design.columns() == std::numeric_limits<Index>::max()) {
-        return failure<LinearEstimate>(ErrorCode::SizeOverflow,
-                                       "residual term count overflows");
-      }
-      const auto value = scaledProducts(design.columns() + 1U, [&](Index term) {
-        if (term == design.columns()) {
-          return std::pair{1.0, -observations.at(row, column)};
-        }
-        return std::pair{design.at(row, term),
-                         result.parameters.at(term, column)};
-      });
-      if (!value.hasValue()) {
+      const auto residual =
+          scaledProductsWide(design.columns() + 1U, [&](Index term) {
+            if (term == design.columns()) {
+              return std::pair{1.0, -observations.at(row, column)};
+            }
+            return std::pair{design.at(row, term),
+                             result.parameters.at(term, column)};
+          });
+      if (!residual.hasValue()) {
         return failure<LinearEstimate>(
-            value.status().code(),
-            "original-data residual is not representable");
+            residual.status().code(),
+            "original-data residual accumulation failed");
       }
-      residual_column.data()[row] = value.value();
+      norm = std::hypot(norm, residual.value());
     }
-    const auto norm = norm2(residual_column.view(), OperationOptions{});
-    if (!norm.hasValue()) {
+    if (!detail::representable(norm)) {
       return failure<LinearEstimate>(
-          norm.status().code(), "original-data residual is not representable");
+          ErrorCode::NonFiniteResult,
+          "original-data residual norm is not representable");
     }
-    result.residual_norms.data()[column] = norm.value();
+    result.residual_norms.at(column) = static_cast<Scalar>(norm);
   }
   return Result<LinearEstimate>::success(std::move(result));
 }
@@ -859,16 +895,18 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
     return failure<LinearEstimate>(ErrorCode::InvalidDomain,
                                    "band rank policy is invalid");
   }
-  if (band.lower > band.order || band.upper > band.order ||
-      !addFits(band.lower, 1U) || !addFits(band.lower + 1U, band.upper)) {
+  if ((band.order == 0U && (band.lower != 0U || band.upper != 0U)) ||
+      (band.order != 0U &&
+       (band.lower >= band.order || band.upper >= band.order))) {
+    return failure<LinearEstimate>(ErrorCode::InvalidDomain,
+                                   "bandwidth must be smaller than order");
+  }
+  if (!addFits(band.lower, 1U) || !addFits(band.lower + 1U, band.upper)) {
     return failure<LinearEstimate>(ErrorCode::SizeOverflow,
                                    "band storage width overflows");
   }
-  const Extent width = band.lower + 1U + band.upper;
-  if ((band.order == 0U && (band.lower != 0U || band.upper != 0U)) ||
-      (band.order != 0U &&
-       (band.lower >= band.order || band.upper >= band.order)) ||
-      band.bands.rows() != band.order || band.bands.columns() != width) {
+  const Extent width = band.order == 0U ? 0U : band.lower + 1U + band.upper;
+  if (band.bands.rows() != band.order || band.bands.columns() != width) {
     return failure<LinearEstimate>(ErrorCode::DimensionMismatch,
                                    "compact band shape is inconsistent");
   }
@@ -909,7 +947,7 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
       return failure<LinearEstimate>(ErrorCode::NonFiniteResult,
                                      "band cutoff is not representable");
     }
-    const Scalar cutoff = static_cast<Scalar>(cutoff_wide);
+    const auto cutoff = static_cast<Scalar>(cutoff_wide);
     Index rank = 0U;
     Scalar smallest = largest;
     for (Index i = 0U; i < n; ++i) {
@@ -931,12 +969,12 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
     }
     Extent params = 0U;
     Extent basis = 0U;
-    if (!multiplyFits(n, p) || !multiplyFits(n, rank)) {
+    if (!multiplyFits(n, p) || (rank < n && !multiplyFits(n, rank))) {
       return failure<LinearEstimate>(ErrorCode::SizeOverflow,
                                      "diagonal-band result shape overflows");
     }
     params = n * p;
-    basis = n * rank;
+    basis = rank < n ? n * rank : 0U;
     if (!addFits(params, basis) || !addFits(params + basis, p) ||
         !addFits(params + basis + p, n)) {
       return failure<LinearEstimate>(ErrorCode::SizeOverflow,
@@ -950,7 +988,9 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
     }
     LinearEstimate result{.parameters = Matrix(n, p, 0.0),
                           .covariance = std::nullopt,
-                          .identified_basis = Matrix(n, rank, 0.0),
+                          .identified_basis =
+                              rank < n ? std::optional{Matrix(n, rank, 0.0)}
+                                       : std::nullopt,
                           .residual_norms = Vector(p, 0.0),
                           .rank = rank,
                           .rank_cutoff = cutoff};
@@ -960,7 +1000,9 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
       if (!(std::abs(diagonal) > cutoff)) {
         continue;
       }
-      result.identified_basis->at(i, basis_column++) = 1.0;
+      if (result.identified_basis) {
+        result.identified_basis->at(i, basis_column++) = 1.0;
+      }
       for (Index column = 0U; column < p; ++column) {
         const Wide value =
             static_cast<Wide>(rhs.at(i, column)) / static_cast<Wide>(diagonal);
@@ -986,16 +1028,20 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
           return failure<LinearEstimate>(ErrorCode::NonFiniteResult,
                                          "diagonal-band residual overflows");
         }
-        residual.data()[row] = static_cast<Scalar>(value);
+        residual.at(row) = static_cast<Scalar>(value);
       }
       const auto norm = norm2(residual.view(), OperationOptions{});
       if (!norm.hasValue()) {
         return failure<LinearEstimate>(norm.status().code(),
                                        "diagonal-band residual norm failed");
       }
-      result.residual_norms.data()[column] = norm.value();
+      result.residual_norms.at(column) = norm.value();
     }
     return Result<LinearEstimate>::success(std::move(result));
+  }
+
+  if (auto compact = detail::tryCompactBand(band, rhs, policy, limits)) {
+    return Result<LinearEstimate>::success(std::move(*compact));
   }
 
   Extent dense_elements = 0U;
@@ -1010,6 +1056,14 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
     return failure<LinearEstimate>(
         ErrorCode::ResourceLimit,
         "certified dense band fallback exceeds limits");
+  }
+  const Limits remaining{.elements = limits.elements - dense_elements,
+                         .bytes =
+                             limits.bytes - dense_elements * sizeof(Scalar),
+                         .evaluations = limits.evaluations};
+  if (!leastSquaresPeakFits(band.order, band.order, rhs.columns(), remaining)) {
+    return failure<LinearEstimate>(ErrorCode::ResourceLimit,
+                                   "dense band solve workspace exceeds limits");
   }
   Matrix dense(band.order, band.order, 0.0);
   for (Index row = 0U; row < band.order; ++row) {
@@ -1027,10 +1081,6 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
       }
     }
   }
-  const Limits remaining{.elements = limits.elements - dense_elements,
-                         .bytes =
-                             limits.bytes - dense_elements * sizeof(Scalar),
-                         .evaluations = limits.evaluations};
   return leastSquaresMinNorm(dense.view(), rhs, policy, remaining);
 }
 
@@ -1074,55 +1124,78 @@ Result<LinearEstimate> solveBlockDiagonal(const BlockDiagonal& matrix,
                                    "block solve right-hand side is non-finite");
   }
 
-  SolvePolicy spectrum_policy = policy;
-  spectrum_policy.rank = RankPolicy::minimum_norm;
-  spectrum_policy.rank_abs = 0.0;
-  spectrum_policy.rank_rel = 0.0;
-  spectrum_policy.reciprocal_condition_floor = 0.0;
-  std::vector<Vector> spectra;
-  spectra.reserve(blocks.size());
-  Extent stored_spectrum = 0U;
-  Scalar maximum = 0.0;
-  for (const auto& block : blocks) {
-    if (stored_spectrum > limits.elements ||
-        stored_spectrum > limits.bytes / sizeof(Scalar)) {
-      return failure<LinearEstimate>(ErrorCode::ResourceLimit,
-                                     "block spectra exceed configured limits");
+  Limits remaining = limits;
+  const auto reserve = [&](Index count, Index size) {
+    if (count > remaining.elements || count > remaining.bytes / size) {
+      return false;
     }
-    const Limits remaining{.elements = limits.elements - stored_spectrum,
-                           .bytes =
-                               limits.bytes - stored_spectrum * sizeof(Scalar),
-                           .evaluations = limits.evaluations};
-    auto spectrum = factorSVD(block.view(), spectrum_policy, remaining);
-    if (!spectrum.hasValue()) {
-      return failure<LinearEstimate>(
-          spectrum.status().code(),
-          "block singular spectrum could not be certified");
-    }
-    if (!addFits(stored_spectrum, spectrum.value().singular.size())) {
-      return failure<LinearEstimate>(ErrorCode::SizeOverflow,
-                                     "stored block spectrum size overflows");
-    }
-    maximum = std::max(maximum, spectrum.value().singular.size() == 0U
-                                    ? 0.0
-                                    : spectrum.value().singular.at(0U));
-    stored_spectrum += spectrum.value().singular.size();
-    spectra.push_back(std::move(spectrum.value().singular));
+    remaining.elements -= count;
+    remaining.bytes -= count * size;
+    return true;
+  };
+  if (!reserve(blocks.size(), sizeof(detail::BoundedSVD))) {
+    return failure<LinearEstimate>(ErrorCode::ResourceLimit,
+                                   "block factor metadata exceeds limits");
   }
-  const Wide cutoff_wide =
-      std::max(static_cast<Wide>(policy.rank_abs),
-               static_cast<Wide>(policy.rank_rel) * static_cast<Wide>(maximum));
-  if (!std::isfinite(cutoff_wide) ||
-      cutoff_wide > static_cast<Wide>(std::numeric_limits<Scalar>::max())) {
+  std::vector<detail::BoundedSVD> factors;
+  factors.reserve(blocks.size());
+  Wide maximum = 0;
+  Wide maximum_lower = 0;
+  Wide maximum_upper = 0;
+  for (const auto& block : blocks) {
+    auto bounded = detail::boundedSVD(block.view(), policy, remaining);
+    if (!bounded.hasValue()) {
+      return Result<LinearEstimate>::failure(
+          bounded.status().code(), std::string(bounded.status().message()));
+    }
+    const auto& factor = bounded.value();
+    const auto& svd = factor.factors;
+    if (!reserve(svd.singular.size(), sizeof(Scalar)) ||
+        !reserve(svd.left.size(), sizeof(Scalar)) ||
+        !reserve(svd.right_transpose.size(), sizeof(Scalar))) {
+      return failure<LinearEstimate>(ErrorCode::ResourceLimit,
+                                     "block factors exceed limits");
+    }
+    if (factor.rank_upper > 0) {
+      const Wide value = svd.singular.at(0);
+      maximum = std::max(maximum, value);
+      maximum_lower = std::max(maximum_lower, value - factor.error);
+      maximum_upper = std::max(maximum_upper, value + factor.error);
+    }
+    factors.push_back(std::move(bounded).value());
+  }
+  const auto cutoff_at = [&](Wide largest) {
+    return std::max(static_cast<Wide>(policy.rank_abs),
+                    policy.rank_rel * largest);
+  };
+  const Wide cutoff = cutoff_at(maximum);
+  const Wide low_cutoff = cutoff_at(maximum_lower);
+  const Wide high_cutoff = cutoff_at(maximum_upper);
+  if (!detail::representable(cutoff)) {
     return failure<LinearEstimate>(ErrorCode::NonFiniteResult,
                                    "global block cutoff is not representable");
   }
-  const Scalar cutoff = static_cast<Scalar>(cutoff_wide);
-  Extent rank = 0U;
-  for (const auto& values : spectra) {
-    for (Index mode = 0U; mode < values.size(); ++mode) {
-      if (values.at(mode) > cutoff) {
+  Index rank = 0;
+  Index largest_block = 0;
+  Wide smallest_lower = maximum_upper;
+  Wide smallest_upper = maximum_upper;
+  for (auto& factor : factors) {
+    auto& svd = factor.factors;
+    largest_block = std::max(largest_block, svd.singular.size());
+    svd.rank = 0;
+    for (Index mode = 0; mode < factor.rank_upper; ++mode) {
+      const Wide value = svd.singular.at(mode);
+      const Wide lower = value - factor.error;
+      const Wide upper = value + factor.error;
+      if (lower > high_cutoff) {
+        ++svd.rank;
         ++rank;
+        smallest_lower = std::min(smallest_lower, lower);
+        smallest_upper = std::min(smallest_upper, upper);
+      } else if (upper > low_cutoff) {
+        return failure<LinearEstimate>(
+            ErrorCode::NoConvergence,
+            "global cutoff intersects a singular value bound");
       }
     }
   }
@@ -1130,145 +1203,106 @@ Result<LinearEstimate> solveBlockDiagonal(const BlockDiagonal& matrix,
     return failure<LinearEstimate>(ErrorCode::RankDeficient,
                                    "direct-sum spectrum is rank deficient");
   }
-  if (rank != 0U && policy.reciprocal_condition_floor != 0.0) {
-    Scalar smallest_retained = maximum;
-    for (const auto& values : spectra) {
-      for (Index mode = 0U; mode < values.size(); ++mode) {
-        if (values.at(mode) > cutoff) {
-          smallest_retained = std::min(smallest_retained, values.at(mode));
-        }
-      }
-    }
-    if (static_cast<Wide>(smallest_retained) / maximum <
-        static_cast<Wide>(policy.reciprocal_condition_floor)) {
+  if (rank != 0U && policy.reciprocal_condition_floor > 0) {
+    if (smallest_upper < policy.reciprocal_condition_floor * maximum_lower) {
       return failure<LinearEstimate>(ErrorCode::IllConditioned,
                                      "block solve fails condition floor");
     }
+    if (smallest_lower < policy.reciprocal_condition_floor * maximum_upper) {
+      return failure<LinearEstimate>(
+          ErrorCode::NoConvergence,
+          "block solve cannot certify condition floor");
+    }
   }
-  Extent parameter_elements = 0U;
-  Extent basis_elements = 0U;
-  Extent output_elements = 0U;
   const bool deficient = rank < order;
   if (!multiplyFits(order, rhs.columns()) ||
       (deficient && !multiplyFits(order, rank))) {
     return failure<LinearEstimate>(ErrorCode::SizeOverflow,
                                    "block solve output shape overflows");
   }
-  parameter_elements = order * rhs.columns();
-  basis_elements = deficient ? order * rank : 0U;
-  if (!addFits(parameter_elements, basis_elements) ||
-      !addFits(parameter_elements + basis_elements, rhs.columns()) ||
-      !addFits(parameter_elements + basis_elements + rhs.columns(), order)) {
-    return failure<LinearEstimate>(ErrorCode::SizeOverflow,
-                                   "block solve output size overflows");
-  }
-  output_elements = parameter_elements + basis_elements + rhs.columns() + order;
-  if (!addFits(output_elements, stored_spectrum) ||
-      output_elements + stored_spectrum > limits.elements ||
-      !multiplyFits(output_elements + stored_spectrum, sizeof(Scalar)) ||
-      (output_elements + stored_spectrum) * sizeof(Scalar) > limits.bytes) {
+  if (!reserve(order * rhs.columns(), sizeof(Scalar)) ||
+      (deficient && !reserve(order * rank, sizeof(Scalar))) ||
+      !reserve(rhs.columns(), sizeof(Scalar)) ||
+      !reserve(rhs.columns() == 0 ? 0 : largest_block, sizeof(Wide))) {
     return failure<LinearEstimate>(
         ErrorCode::ResourceLimit,
         "block solve outputs exceed configured limits");
   }
-
-  LinearEstimate result{
-      .parameters = Matrix(order, rhs.columns(), 0.0),
-      .covariance = std::nullopt,
-      .identified_basis = deficient
-                              ? std::optional<Matrix>(Matrix(order, rank, 0.0))
-                              : std::nullopt,
-      .residual_norms = Vector(rhs.columns(), 0.0),
-      .rank = rank,
-      .rank_cutoff = cutoff};
-  Index offset = 0U;
-  Index basis_offset = 0U;
-  Extent output_reserved = output_elements + stored_spectrum;
-  for (Index block_index = 0U; block_index < blocks.size(); ++block_index) {
-    const Matrix& block = blocks[block_index];
-    const auto decomposition = factorSVD(
-        block.view(), spectrum_policy,
-        Limits{.elements = limits.elements - output_reserved,
-               .bytes = limits.bytes - output_reserved * sizeof(Scalar),
-               .evaluations = limits.evaluations});
-    if (!decomposition.hasValue()) {
-      return failure<LinearEstimate>(decomposition.status().code(),
-                                     "block factors could not be recomputed");
+  LinearEstimate result{.parameters = Matrix(order, rhs.columns()),
+                        .covariance = std::nullopt,
+                        .identified_basis =
+                            deficient ? std::optional{Matrix(order, rank)}
+                                      : std::nullopt,
+                        .residual_norms = Vector(rhs.columns()),
+                        .rank = rank,
+                        .rank_cutoff = static_cast<Scalar>(cutoff)};
+  std::vector<Wide> coefficients(rhs.columns() == 0 ? 0 : largest_block);
+  Index offset = 0;
+  Index basis_offset = 0;
+  for (const auto& factor : factors) {
+    const auto& svd = factor.factors;
+    const auto n = svd.singular.size();
+    if (auto& basis_output = result.identified_basis; basis_output) {
+      for (Index mode = 0; mode < svd.rank; ++mode) {
+        for (Index i = 0; i < n; ++i) {
+          basis_output->at(offset + i, basis_offset + mode) =
+              svd.right_transpose.at(mode, i);
+        }
+      }
+      basis_offset += svd.rank;
     }
-    const auto& svd = decomposition.value();
-    const Index thin = svd.singular.size();
-    for (Index mode = 0U; mode < thin; ++mode) {
-      const Scalar singular = svd.singular.at(mode);
-      if (!(singular > cutoff)) {
-        continue;
+    for (Index column = 0; column < rhs.columns(); ++column) {
+      for (Index mode = 0; mode < svd.rank; ++mode) {
+        const auto projection = scaledProductsWide(n, [&](Index i) {
+          return std::pair{svd.left.at(i, mode), rhs.at(offset + i, column)};
+        });
+        if (!projection.hasValue()) {
+          return failure<LinearEstimate>(projection.status().code(),
+                                         "block solve projection failed");
+        }
+        coefficients[mode] = projection.value() / svd.singular.at(mode);
       }
-      if (deficient) {
-        const Index basis_column = basis_offset++;
-        for (Index coordinate = 0U; coordinate < block.rows(); ++coordinate) {
-          result.identified_basis->at(offset + coordinate, basis_column) =
-              svd.right_transpose.at(mode, coordinate);
+      for (Index i = 0; i < n; ++i) {
+        Wide value = 0;
+        for (Index mode = 0; mode < svd.rank; ++mode) {
+          value = std::fma(svd.right_transpose.at(mode, i), coefficients[mode],
+                           value);
         }
-      }
-      for (Index column = 0U; column < rhs.columns(); ++column) {
-        Wide projection = 0.0L;
-        for (Index row = 0U; row < block.rows(); ++row) {
-          projection += static_cast<Wide>(svd.left.at(row, mode)) *
-                        static_cast<Wide>(rhs.at(offset + row, column));
-        }
-        const Wide coefficient = projection / static_cast<Wide>(singular);
-        if (!std::isfinite(coefficient)) {
-          return failure<LinearEstimate>(
-              ErrorCode::NonFiniteResult,
-              "block solve coefficient is not finite");
-        }
-        for (Index coordinate = 0U; coordinate < block.columns();
-             ++coordinate) {
-          const Wide value =
-              static_cast<Wide>(
-                  result.parameters.at(offset + coordinate, column)) +
-              static_cast<Wide>(svd.right_transpose.at(mode, coordinate)) *
-                  coefficient;
-          if (!std::isfinite(value) ||
-              std::abs(value) >
-                  static_cast<Wide>(std::numeric_limits<Scalar>::max())) {
-            return failure<LinearEstimate>(
-                ErrorCode::NonFiniteResult,
-                "block solution is not representable");
-          }
-          result.parameters.at(offset + coordinate, column) =
-              static_cast<Scalar>(value);
-        }
-      }
-    }
-    offset += block.rows();
-  }
-  for (Index column = 0U; column < rhs.columns(); ++column) {
-    Vector residual(order, 0.0);
-    Index row_offset = 0U;
-    for (const auto& block : blocks) {
-      for (Index row = 0U; row < block.rows(); ++row) {
-        Wide value = -static_cast<Wide>(rhs.at(row_offset + row, column));
-        for (Index inner = 0U; inner < block.columns(); ++inner) {
-          value += static_cast<Wide>(block.at(row, inner)) *
-                   static_cast<Wide>(
-                       result.parameters.at(row_offset + inner, column));
-        }
-        if (!std::isfinite(value) ||
-            std::abs(value) >
-                static_cast<Wide>(std::numeric_limits<Scalar>::max())) {
+        if (!detail::representable(value)) {
           return failure<LinearEstimate>(ErrorCode::NonFiniteResult,
-                                         "block residual is not representable");
+                                         "block solution is not representable");
         }
-        residual.data()[row_offset + row] = static_cast<Scalar>(value);
+        result.parameters.at(offset + i, column) = static_cast<Scalar>(value);
       }
-      row_offset += block.rows();
     }
-    const auto norm = norm2(residual.view(), OperationOptions{});
-    if (!norm.hasValue()) {
-      return failure<LinearEstimate>(norm.status().code(),
-                                     "block residual norm failed");
+    offset += n;
+  }
+  for (Index column = 0; column < rhs.columns(); ++column) {
+    Wide norm = 0;
+    offset = 0;
+    for (const auto& block : blocks) {
+      for (Index row = 0; row < block.rows(); ++row) {
+        const auto residual =
+            scaledProductsWide(block.columns() + 1, [&](Index i) {
+              if (i == block.columns()) {
+                return std::pair{1.0, -rhs.at(offset + row, column)};
+              }
+              return std::pair{block.at(row, i),
+                               result.parameters.at(offset + i, column)};
+            });
+        if (!residual.hasValue()) {
+          return failure<LinearEstimate>(residual.status().code(),
+                                         "block residual accumulation failed");
+        }
+        norm = std::hypot(norm, residual.value());
+      }
+      offset += block.rows();
     }
-    result.residual_norms.data()[column] = norm.value();
+    if (!detail::representable(norm)) {
+      return failure<LinearEstimate>(ErrorCode::NonFiniteResult,
+                                     "block residual is not representable");
+    }
+    result.residual_norms.at(column) = static_cast<Scalar>(norm);
   }
   return Result<LinearEstimate>::success(std::move(result));
 }

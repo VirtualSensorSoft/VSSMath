@@ -240,8 +240,7 @@ Result<CSR> sparseCSRFromTriplets(Extent rows, Extent columns,
   // During coalescing, sorted triplets, row offsets, and worst-case entry
   // staging are live. During Array/Vector ownership transfer the final arrays
   // overlap their source staging, but the sorted scratch has been released.
-  if (!multiplyFits(offset_count, 2U) ||
-      !multiplyFits(entry_count, 4U) ||
+  if (!multiplyFits(offset_count, 2U) || !multiplyFits(entry_count, 4U) ||
       !addFits(offset_count, 3U * entry_count) ||
       !addFits(2U * offset_count, 4U * entry_count) ||
       !multiplyFits(entry_count, sizeof(Triplet)) ||
@@ -343,7 +342,7 @@ Result<Vector> apply(const CSR& matrix, ConstVectorView vector, Limits limits) {
       return failure<Vector>(value.status().code(),
                              "sparse matrix-vector product failed");
     }
-    result.data()[row] = value.value();
+    result.at(row) = value.value();
   }
   return Result<Vector>::success(std::move(result));
 }

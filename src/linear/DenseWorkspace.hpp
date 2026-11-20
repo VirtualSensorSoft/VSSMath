@@ -9,7 +9,7 @@
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/MatrixView.hpp>
-#include <vss/math/linear/SolvePolicy.hpp>
+#include <vss/math/linear/Decomposition.hpp>
 
 namespace vss::math::linear::detail {
 
@@ -56,6 +56,17 @@ private:
          std::abs(value) <=
              static_cast<Wide>(std::numeric_limits<Scalar>::max());
 }
+
+struct BoundedSVD final {
+  SVD factors;
+  Wide error;
+  Index rank_upper;
+};
+
+// Factor and return an absolute singular-value error for a caller applying a
+// cutoff shared by several independent spectra.
+[[nodiscard]] Result<BoundedSVD> boundedSVD(ConstMatrixView input,
+                                            SolvePolicy policy, Limits limits);
 
 // The caller has independently established exact nonsingularity. Check
 // selected spectral policies without converting singular values to Scalar.

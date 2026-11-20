@@ -130,6 +130,7 @@ void regularizedLeastSquaresUsesSquareRootAugmentation() {
   SolvePolicy policy{};
   policy.rank = RankPolicy::minimum_norm;
   policy.iteration.max_iterations = 128U;
+  policy.iteration.max_evaluations = 64U;
   const auto result = linear::regularizedLeastSquares(
       design.view(), observations.view(), penalty, 2.0, policy, limits());
   VSS_CHECK(result.hasValue());
@@ -220,6 +221,125 @@ void diagonalAndBlockSolvesUseOneGlobalCutoff() {
   VSS_CHECK(band_solution.value().residual_norms.at(0U) < 1.0e-12);
 }
 
+void compactBandUsesLinearStorageAndKeepsSingularResidual() {
+  constexpr Index n = 64;
+  Matrix band(n, 3);
+  Matrix rhs(n, 1);
+  for (Index i = 0; i < n; ++i) {
+    band.at(i, 0) = i == 0 ? 0 : 1;
+    band.at(i, 1) = 4;
+    band.at(i, 2) = i + 1 == n ? 0 : 1;
+    rhs.at(i, 0) = band.at(i, 0) + band.at(i, 1) + band.at(i, 2);
+  }
+  const auto compact =
+      linear::solveBanded({n, 1, 1, std::move(band)}, rhs.view(), SolvePolicy{},
+                          {.elements = 513, .bytes = 8192, .evaluations = 0});
+  VSS_CHECK(compact.hasValue());
+  VSS_CHECK(compact.value().rank == n && !compact.value().identified_basis);
+  VSS_CHECK(compact.value().residual_norms.at(0) < 1e-12);
+  for (Index i = 0; i < n; ++i) {
+    VSS_CHECK(std::abs(compact.value().parameters.at(i, 0) - 1) < 1e-12);
+  }
+
+  const BandMatrix singular{2, 0, 0, matrix({{2}, {0}})};
+  const Matrix observations = matrix({{4}, {8}});
+  auto strict =
+      linear::solveBanded(singular, observations.view(), {}, limits());
+  VSS_CHECK(!strict.hasValue() &&
+            strict.status().code() == ErrorCode::RankDeficient);
+  SolvePolicy policy{};
+  policy.rank = RankPolicy::minimum_norm;
+  const auto permissive =
+      linear::solveBanded(singular, observations.view(), policy, limits());
+  VSS_CHECK(permissive.hasValue());
+  VSS_CHECK(permissive.value().rank == 1);
+  VSS_CHECK(permissive.value().parameters.at(0, 0) == 2);
+  VSS_CHECK(permissive.value().parameters.at(1, 0) == 0);
+  VSS_CHECK(permissive.value().residual_norms.at(0) == 8);
+  const auto empty = linear::solveBanded({0, 0, 0, Matrix{}},
+                                         Matrix(0, 2).view(), policy, limits());
+  VSS_CHECK(empty.hasValue() && empty.value().parameters.columns() == 2);
+}
+
+void singularBlockSolveKeepsOriginalResidual() {
+  const BlockDiagonal blocks{
+      array(std::array{matrix({{2}}), matrix({{1, 1}, {1, 1}})})};
+  const Matrix rhs = matrix({{2}, {3}, {1}});
+  SolvePolicy policy{};
+  policy.rank = RankPolicy::minimum_norm;
+  policy.iteration.max_iterations = 128;
+  const auto result =
+      linear::solveBlockDiagonal(blocks, rhs.view(), policy, limits());
+  VSS_CHECK(result.hasValue());
+  VSS_CHECK(result.value().rank == 2 && result.value().identified_basis);
+  for (Index i = 0; i < 3; ++i) {
+    VSS_CHECK(std::abs(result.value().parameters.at(i, 0) - 1) < 1e-12);
+  }
+  VSS_CHECK(std::abs(result.value().residual_norms.at(0) - std::sqrt(2.0)) <
+            1e-12);
+}
+
+void redundantProjectionAndCallbackFailures() {
+  const Matrix basis = matrix({{1, 1}, {1, 1}, {0, 0}});
+  const Vector input(std::array{3.0, 1.0, 4.0});
+  SolvePolicy policy{};
+  policy.rank = RankPolicy::minimum_norm;
+  policy.iteration.max_iterations = 64;
+  policy.iteration.max_evaluations = 4;
+  auto projected = linear::orthogonalProjection(basis.view(), input.view(),
+                                                policy, limits());
+  VSS_CHECK(projected.hasValue());
+  VSS_CHECK(std::abs(projected.value().at(0) - 2) < 1e-12);
+  VSS_CHECK(std::abs(projected.value().at(1) - 2) < 1e-12);
+  VSS_CHECK(projected.value().at(2) == 0);
+  policy.rank = RankPolicy::reject;
+  auto strict = linear::orthogonalProjection(basis.view(), input.view(), policy,
+                                             limits());
+  VSS_CHECK(!strict.hasValue() &&
+            strict.status().code() == ErrorCode::RankDeficient);
+  const auto huge = Vector(2, std::numeric_limits<Scalar>::max());
+  auto overflow = linear::orthogonalProjection(matrix({{2}, {1}}).view(),
+                                               huge.view(), policy, limits());
+  VSS_CHECK(!overflow.hasValue() &&
+            overflow.status().code() == ErrorCode::NonFiniteResult);
+
+  const Matrix design = matrix({{1, 1}});
+  const Matrix observations = matrix({{4}});
+  Index calls = 0;
+  linear::LinearMap penalty{.rows = 1,
+                            .columns = 2,
+                            .apply =
+                                [&](ConstVectorView) {
+                                  ++calls;
+                                  return Result<Vector>::success(Vector(1, 1));
+                                },
+                            .transpose = {}};
+  policy.rank = RankPolicy::minimum_norm;
+  auto ridge = linear::regularizedLeastSquares(
+      design.view(), observations.view(), penalty, 1, policy, limits());
+  VSS_CHECK(ridge.hasValue() && calls == 2 && ridge.value().rank == 1);
+  VSS_CHECK(std::abs(ridge.value().parameters.at(0, 0) - 1) < 1e-12);
+  VSS_CHECK(std::abs(ridge.value().parameters.at(1, 0) - 1) < 1e-12);
+  VSS_CHECK(std::abs(ridge.value().residual_norms.at(0) - 2) < 1e-12);
+  calls = 0;
+  policy.iteration.max_evaluations = 1;
+  const auto denied = linear::regularizedLeastSquares(
+      design.view(), observations.view(), penalty, 1, policy, limits());
+  VSS_CHECK(!denied.hasValue() &&
+            denied.status().code() == ErrorCode::ResourceLimit && calls == 0);
+  policy.iteration.max_evaluations = 2;
+  penalty.apply = [](ConstVectorView) {
+    return Result<Vector>::failure(ErrorCode::InvalidDomain,
+                                   "user penalty rejected basis vector");
+  };
+  const auto callback = linear::regularizedLeastSquares(
+      design.view(), observations.view(), penalty, 1, policy, limits());
+  VSS_CHECK(!callback.hasValue() &&
+            callback.status().code() == ErrorCode::InvalidDomain);
+  VSS_CHECK(callback.status().message() ==
+            "user penalty rejected basis vector");
+}
+
 } // namespace
 
 int main() {
@@ -228,5 +348,8 @@ int main() {
   projectionUsesRetainedColumnSpan();
   regularizedLeastSquaresUsesSquareRootAugmentation();
   diagonalAndBlockSolvesUseOneGlobalCutoff();
+  compactBandUsesLinearStorageAndKeepsSingularResidual();
+  singularBlockSolveKeepsOriginalResidual();
+  redundantProjectionAndCallbackFailures();
   return 0;
 }
