@@ -16,7 +16,6 @@
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MatrixView.hpp>
-#include <vss/math/Operations.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
@@ -974,12 +973,11 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
     }
     params = n * p;
     basis = rank < n ? n * rank : 0U;
-    if (!addFits(params, basis) || !addFits(params + basis, p) ||
-        !addFits(params + basis + p, n)) {
+    if (!addFits(params, basis) || !addFits(params + basis, p)) {
       return failure<LinearEstimate>(ErrorCode::SizeOverflow,
                                      "diagonal-band workspace overflows");
     }
-    const Extent elements = params + basis + p + n;
+    const Extent elements = params + basis + p;
     if (elements > limits.elements || !multiplyFits(elements, sizeof(Scalar)) ||
         elements * sizeof(Scalar) > limits.bytes) {
       return failure<LinearEstimate>(ErrorCode::ResourceLimit,
@@ -1015,26 +1013,20 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
       }
     }
     for (Index column = 0U; column < p; ++column) {
-      Vector residual(n, 0.0);
+      Wide norm = 0;
       for (Index row = 0U; row < n; ++row) {
         const Wide value =
-            static_cast<Wide>(band.bands.at(row, 0U)) *
-                static_cast<Wide>(result.parameters.at(row, column)) -
-            static_cast<Wide>(rhs.at(row, column));
-        if (!std::isfinite(value) ||
-            std::abs(value) >
-                static_cast<Wide>(std::numeric_limits<Scalar>::max())) {
-          return failure<LinearEstimate>(ErrorCode::NonFiniteResult,
-                                         "diagonal-band residual overflows");
-        }
-        residual.at(row) = static_cast<Scalar>(value);
+            std::fma(static_cast<Wide>(band.bands.at(row, 0U)),
+                     static_cast<Wide>(result.parameters.at(row, column)),
+                     -static_cast<Wide>(rhs.at(row, column)));
+        norm = std::hypot(norm, value);
       }
-      const auto norm = norm2(residual.view(), OperationOptions{});
-      if (!norm.hasValue()) {
-        return failure<LinearEstimate>(norm.status().code(),
-                                       "diagonal-band residual norm failed");
+      if (!detail::representable(norm)) {
+        return failure<LinearEstimate>(
+            ErrorCode::NonFiniteResult,
+            "diagonal-band residual norm is not representable");
       }
-      result.residual_norms.at(column) = norm.value();
+      result.residual_norms.at(column) = static_cast<Scalar>(norm);
     }
     return Result<LinearEstimate>::success(std::move(result));
   }

@@ -172,8 +172,8 @@ void factorizedKroneckerUsesGlobalCutoffAndOriginalResidual() {
   VSS_CHECK(cutoff.hasValue() && cutoff.value().rank == 1);
   VSS_CHECK(cutoff.value().rank_cutoff == 10);
   VSS_CHECK(cutoff.value().parameters.at(1, 0) == 1);
-  VSS_CHECK(cutoff.value().identified_basis.has_value() &&
-            cutoff.value().identified_basis.value().at(1, 0) == 1);
+  const auto& basis = cutoff.value().identified_basis;
+  VSS_CHECK(basis.has_value() && basis->at(1, 0) == 1);
   VSS_CHECK(std::abs(cutoff.value().residual_norms.at(0) - std::sqrt(9106.0)) <
             1e-12);
   const auto iterative =

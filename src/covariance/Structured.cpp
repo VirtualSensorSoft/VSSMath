@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <limits>
 #include <linear/DenseWorkspace.hpp>
+#include <linear/PCG.hpp>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -28,6 +29,7 @@ namespace vss::math::covariance {
 namespace {
 
 using linear::LinearEstimate;
+using linear::detail::EvaluationBudget;
 using linear::detail::representable;
 using linear::detail::Wide;
 using WideVector = std::vector<Wide>;
@@ -1299,22 +1301,6 @@ Result<Bounds> jacobiBounds(const StructuredSpec& spec,
   return Result<Bounds>::success(bounds);
 }
 
-class EvaluationBudget final {
-public:
-  explicit EvaluationBudget(Index count) : remaining_(count) {}
-  [[nodiscard]] bool charge(Index count = 1) {
-    if (count > remaining_) {
-      return false;
-    }
-    remaining_ -= count;
-    return true;
-  }
-  [[nodiscard]] Index remaining() const { return remaining_; }
-
-private:
-  Index remaining_;
-};
-
 Result<Wide> refineMaximum(const Action& action, Index n, Wide upper,
                            Wide lower, Wide arithmetic_scale, Index rounds,
                            Limits limits, EvaluationBudget& evaluations) {
@@ -1478,75 +1464,41 @@ Result<LinearEstimate> iterativeSolve(const StructuredSpec& spec, Index n,
   WideVector z(n);
   WideVector direction(n);
   WideVector image(n);
+  const auto operator_action = [&](std::span<const Wide> input,
+                                   std::span<Wide> output) {
+    apply(input, output);
+    return Status::success();
+  };
+  const auto precondition = [&](std::span<const Wide> input,
+                                std::span<Wide> output) {
+    for (Index i = 0; i < input.size(); ++i) {
+      output[i] = input[i] / diagonal[i];
+    }
+    return Status::success();
+  };
   for (Index col = 0; col < p; ++col) {
     std::ranges::fill(x, 0);
-    if (!evaluations.charge()) {
-      return fail<LinearEstimate>(
-          ErrorCode::ResourceLimit,
-          "initial PCG residual exceeds evaluation limit");
+    const auto report = linear::detail::runPcg(
+        [&](Index i) { return rhs.at(i, col); }, operator_action, precondition,
+        policy.iteration, evaluations,
+        {.solution = x,
+         .residual = r,
+         .preconditioned = z,
+         .direction = direction,
+         .image = image});
+    if (!report.hasValue()) {
+      return forward<LinearEstimate>(report.status());
     }
-    apply(x, image);
-    for (Index i = 0; i < n; ++i) {
-      r[i] = static_cast<Wide>(rhs.at(i, col)) - image[i];
-    }
-    Wide true_residual = norm(r);
-    const Wide tolerance =
-        policy.iteration.abs + policy.iteration.rel * true_residual;
-    Wide previous_energy = 0;
-    for (Index step = 0;
-         true_residual > tolerance && step < policy.iteration.max_iterations;
-         ++step) {
-      if (!evaluations.charge(3)) {
-        return fail<LinearEstimate>(ErrorCode::ResourceLimit,
-                                    "PCG step exceeds evaluation limit");
-      }
-      for (Index i = 0; i < n; ++i) {
-        z[i] = r[i] / diagonal[i];
-      }
-      const Wide energy = sum(n, [&](Index i) { return r[i] * z[i]; });
-      if (!(energy > 0) || !std::isfinite(energy)) {
-        return fail<LinearEstimate>(ErrorCode::NoConvergence,
-                                    "PCG preconditioned residual broke down");
-      }
-      const Wide beta = step == 0 ? 0 : energy / previous_energy;
-      for (Index i = 0; i < n; ++i) {
-        direction[i] = std::fma(beta, direction[i], z[i]);
-      }
-      apply(direction, image);
-      const Wide curvature =
-          sum(n, [&](Index i) { return direction[i] * image[i]; });
-      if (!(curvature > 0) || !std::isfinite(curvature)) {
-        return fail<LinearEstimate>(ErrorCode::NoConvergence,
-                                    "PCG curvature broke down");
-      }
-      const Wide alpha = energy / curvature;
-      for (Index i = 0; i < n; ++i) {
-        x[i] = std::fma(alpha, direction[i], x[i]);
-        r[i] = std::fma(-alpha, image[i], r[i]);
-        if (!representable(x[i])) {
-          return fail<LinearEstimate>(ErrorCode::NonFiniteResult,
-                                      "PCG solution is not representable");
-        }
-        z[i] = static_cast<Scalar>(x[i]);
-        result.parameters.at(i, col) = static_cast<Scalar>(x[i]);
-      }
-      apply(z, image);
-      for (Index i = 0; i < n; ++i) {
-        image[i] -= rhs.at(i, col);
-      }
-      true_residual = norm(image);
-      previous_energy = energy;
-    }
-    if (!std::isfinite(true_residual) || true_residual > tolerance) {
+    if (!report.value().converged) {
       return fail<LinearEstimate>(
           ErrorCode::NoConvergence,
           "PCG did not meet its true-residual tolerance");
     }
-    if (!representable(true_residual)) {
-      return fail<LinearEstimate>(ErrorCode::NonFiniteResult,
-                                  "PCG residual is not representable");
+    for (Index i = 0; i < n; ++i) {
+      result.parameters.at(i, col) = static_cast<Scalar>(x[i]);
     }
-    result.residual_norms.at(col) = static_cast<Scalar>(true_residual);
+    result.residual_norms.at(col) =
+        static_cast<Scalar>(report.value().residual_norm);
   }
   return Result<LinearEstimate>::success(std::move(result));
 }
@@ -1658,10 +1610,10 @@ Result<StructuredCovariance> structuredCovariance(const StructuredSpec& spec,
   std::optional<Matrix> auxiliary;
   if (spec.low_rank_or_points) {
     const auto values = *spec.low_rank_or_points;
-    auxiliary.emplace(values.rows(), values.columns());
+    auto& payload = auxiliary.emplace(values.rows(), values.columns());
     for (Index i = 0; i < values.rows(); ++i) {
       for (Index j = 0; j < values.columns(); ++j) {
-        auxiliary->at(i, j) = values.at(i, j);
+        payload.at(i, j) = values.at(i, j);
       }
     }
   }

@@ -1,6 +1,7 @@
 #ifndef VSS_MATH_COVARIANCE_STRUCTURED_HPP
 #define VSS_MATH_COVARIANCE_STRUCTURED_HPP
 
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <vss/math/Array.hpp>
