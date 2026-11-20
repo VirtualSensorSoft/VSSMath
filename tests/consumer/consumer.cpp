@@ -37,6 +37,7 @@
 #include <vss/math/linear/Sparse.hpp>
 #include <vss/math/linear/Structured.hpp>
 #include <vss/math/statistics/Order.hpp>
+#include <vss/math/statistics/Population.hpp>
 #include <vss/math/version.hpp>
 
 namespace {
@@ -610,6 +611,27 @@ int main() {
               installedMad.hasValue() && installedMad.value() == 1.5 &&
               installedIqr.hasValue() && installedIqr.value() == 3.25,
           "installed order-statistics API failed")) {
+    return 1;
+  }
+
+  Matrix populationRows(3U, 1U);
+  populationRows.at(0U, 0U) = -1.0;
+  populationRows.at(1U, 0U) = 0.0;
+  populationRows.at(2U, 0U) = 1.0;
+  const Matrix& immutablePopulationRows = populationRows;
+  const SampleView populationSample{immutablePopulationRows.view(), {}, {}};
+  const statistics::CenterSpec estimatedCenter{CenterRule::estimated,
+                                               std::nullopt};
+  const statistics::PopulationPolicy populationPolicy{
+      statistics::VarianceMode::empirical, statistics::MissingMode::reject,
+      Estimand::observed};
+  const auto populationEstimate =
+      statistics::covarianceMatrix(populationSample, estimatedCenter,
+                                   populationPolicy, Limits{16U, 1024U, 0U});
+  if (!require(populationEstimate.hasValue() &&
+                   std::abs(populationEstimate.value().value.at(0U, 0U) -
+                            2.0 / 3.0) < 1.0e-12,
+               "installed population covariance API failed")) {
     return 1;
   }
 
