@@ -411,6 +411,28 @@ int main() {
     return 1;
   }
 
+  Matrix glsDesign(2U, 1U, 1.0);
+  Matrix glsObservations(2U, 1U);
+  glsObservations.at(0U, 0U) = 1.0;
+  glsObservations.at(1U, 0U) = 3.0;
+  Matrix glsCovariance(2U, 2U);
+  glsCovariance.at(0U, 0U) = 4.0;
+  glsCovariance.at(0U, 1U) = 1.0;
+  glsCovariance.at(1U, 0U) = 1.0;
+  glsCovariance.at(1U, 1U) = 1.0;
+  SolvePolicy glsPolicy = decompositionPolicy;
+  glsPolicy.rank = RankPolicy::supported_subspace;
+  const auto gls = linear::generalizedLinearEstimate(
+      glsDesign.view(), glsObservations.view(), glsCovariance.view(), glsPolicy,
+      limits);
+  if (!require(gls.hasValue() && gls.value().covariance.has_value() &&
+                   std::abs(gls.value().parameters.at(0U, 0U) - 3.0) <
+                       1.0e-12 &&
+                   std::abs(gls.value().covariance->at(0U, 0U) - 1.0) < 1.0e-12,
+               "installed known-covariance GLS API failed")) {
+    return 1;
+  }
+
   std::cout << "VirtualSensorMath " << version::string << " consumer passed\n";
   return 0;
 }

@@ -60,6 +60,7 @@ add_library(vss_math STATIC
   src/linear/GeneralizedEigen.cpp
   src/linear/FullQR.cpp
   src/linear/RankAware.cpp
+  src/linear/GeneralizedLinearEstimate.cpp
   src/linear/SVD.cpp
   src/linear/LU.cpp
   src/linear/QR.cpp

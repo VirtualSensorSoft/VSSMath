@@ -9,6 +9,7 @@
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/covariance/Conditioning.hpp>
+#include <vss/math/linear/RankAware.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 
 namespace {
@@ -327,6 +328,214 @@ void whiteningAndMahalanobis() {
   VSS_CHECK(overflowDistance.status().code() == ErrorCode::NonFiniteResult);
 }
 
+void generalizedLinearEstimation() {
+  const auto limits = vss::math::Limits{4096U, 262144U, 0U};
+  SolvePolicy supported = policy();
+  supported.rank = RankPolicy::supported_subspace;
+
+  const Matrix identity = matrix({{1.0, 0.0}, {0.0, 1.0}});
+  const Matrix observations = matrix({{2.0}, {-1.0}});
+  const Matrix correlated = matrix({{4.0, 1.0}, {1.0, 2.0}});
+  const auto identityEstimate = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), observations.view(), correlated.view(), supported,
+      limits);
+  VSS_CHECK(identityEstimate.hasValue());
+  VSS_CHECK(identityEstimate.value().covariance.has_value());
+  VSS_CHECK(std::abs(identityEstimate.value().parameters.at(0U, 0U) - 2.0) <
+            1.0e-11);
+  VSS_CHECK(std::abs(identityEstimate.value().parameters.at(1U, 0U) + 1.0) <
+            1.0e-11);
+  VSS_CHECK(std::abs(identityEstimate.value().covariance->at(0U, 0U) - 4.0) <
+            1.0e-11);
+  VSS_CHECK(std::abs(identityEstimate.value().covariance->at(0U, 1U) - 1.0) <
+            1.0e-11);
+  VSS_CHECK(std::abs(identityEstimate.value().covariance->at(1U, 1U) - 2.0) <
+            1.0e-11);
+
+  const Matrix intercept = matrix({{1.0}, {1.0}});
+  const Matrix pair = matrix({{1.0}, {3.0}});
+  const Matrix shared = matrix({{4.0, 1.0}, {1.0, 1.0}});
+  const auto sharedEstimate = vss::math::linear::generalizedLinearEstimate(
+      intercept.view(), pair.view(), shared.view(), supported, limits);
+  VSS_CHECK(sharedEstimate.hasValue());
+  VSS_CHECK(std::abs(sharedEstimate.value().parameters.at(0U, 0U) - 3.0) <
+            1.0e-11);
+  VSS_CHECK(std::abs(sharedEstimate.value().covariance->at(0U, 0U) - 1.0) <
+            1.0e-11);
+  SolvePolicy strictFull = policy();
+  const auto strictEstimate = vss::math::linear::generalizedLinearEstimate(
+      intercept.view(), pair.view(), shared.view(), strictFull, limits);
+  VSS_CHECK(strictEstimate.hasValue());
+
+  const Matrix diagonal = matrix({{1.0, 0.0}, {0.0, 3.0}});
+  const auto weighted = vss::math::linear::generalizedLinearEstimate(
+      intercept.view(), pair.view(), diagonal.view(), supported, limits);
+  VSS_CHECK(weighted.hasValue());
+  VSS_CHECK(std::abs(weighted.value().parameters.at(0U, 0U) - 1.5) < 1.0e-11);
+  VSS_CHECK(std::abs(weighted.value().covariance->at(0U, 0U) - 0.75) < 1.0e-11);
+
+  const Matrix exactCovariance = matrix({{1.0, 0.0}, {0.0, 0.0}});
+  const Matrix exactObservations = matrix({{1.0}, {3.0}});
+  const auto exact = vss::math::linear::generalizedLinearEstimate(
+      intercept.view(), exactObservations.view(), exactCovariance.view(),
+      supported, limits);
+  VSS_CHECK(exact.hasValue());
+  VSS_CHECK(exact.value().parameters.at(0U, 0U) == 3.0);
+  VSS_CHECK(exact.value().covariance->at(0U, 0U) == 0.0);
+  VSS_CHECK(std::abs(exact.value().residual_norms.at(0U) - 2.0) < 1.0e-11);
+
+  SolvePolicy thresholded = supported;
+  thresholded.rank_abs = 1.0e-12;
+  const Matrix smallPositive = matrix({{1.0, 0.0}, {0.0, 1.0e-14}});
+  const auto thresholdExact = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), observations.view(), smallPositive.view(), thresholded,
+      limits);
+  VSS_CHECK(thresholdExact.hasValue());
+  VSS_CHECK(thresholdExact.value().parameters.at(1U, 0U) == -1.0);
+  VSS_CHECK(thresholdExact.value().covariance->at(1U, 1U) == 0.0);
+
+  const Matrix mixedDesign = matrix({{1.0, 0.0}, {0.0, 1.0}, {0.0, 1.0}});
+  const Matrix mixedObservations = matrix({{7.0, 8.0}, {1.0, 2.0}, {2.0, 5.0}});
+  const Matrix mixedCovariance =
+      matrix({{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 4.0}});
+  const auto mixed = vss::math::linear::generalizedLinearEstimate(
+      mixedDesign.view(), mixedObservations.view(), mixedCovariance.view(),
+      supported, limits);
+  VSS_CHECK(mixed.hasValue());
+  VSS_CHECK(mixed.value().parameters.rows() == 2U);
+  VSS_CHECK(mixed.value().parameters.columns() == 2U);
+  VSS_CHECK(mixed.value().parameters.at(0U, 0U) == 7.0);
+  VSS_CHECK(mixed.value().parameters.at(0U, 1U) == 8.0);
+  VSS_CHECK(mixed.value().covariance->at(0U, 0U) == 0.0);
+  VSS_CHECK(std::abs(mixed.value().covariance->at(0U, 1U)) < 1.0e-11);
+  VSS_CHECK(std::abs(mixed.value().parameters.at(1U, 0U) - 1.2) < 1.0e-11);
+  VSS_CHECK(std::abs(mixed.value().parameters.at(1U, 1U) - 2.6) < 1.0e-11);
+  VSS_CHECK(std::abs(mixed.value().covariance->at(1U, 1U) - 0.8) < 1.0e-11);
+  VSS_CHECK(std::abs(mixed.value().residual_norms.at(0U) *
+                         mixed.value().residual_norms.at(0U) -
+                     0.2) < 1.0e-11);
+  VSS_CHECK(std::abs(mixed.value().residual_norms.at(1U) *
+                         mixed.value().residual_norms.at(1U) -
+                     1.8) < 1.0e-11);
+
+  const Matrix duplicate = matrix({{1.0, 1.0}});
+  const Matrix one = matrix({{2.0}});
+  const Matrix unit = matrix({{1.0}});
+  const auto unidentified = vss::math::linear::generalizedLinearEstimate(
+      duplicate.view(), one.view(), unit.view(), supported, limits);
+  VSS_CHECK(unidentified.hasValue());
+  VSS_CHECK(unidentified.value().rank == 1U);
+  VSS_CHECK(!unidentified.value().covariance.has_value());
+  VSS_CHECK(std::abs(unidentified.value().parameters.at(0U, 0U) - 1.0) <
+            1.0e-11);
+  VSS_CHECK(std::abs(unidentified.value().parameters.at(1U, 0U) - 1.0) <
+            1.0e-11);
+  VSS_CHECK(std::abs(unidentified.value().identified_basis->at(0U, 0U) -
+                     unidentified.value().identified_basis->at(1U, 0U)) <
+            1.0e-11);
+  VSS_CHECK(std::abs(unidentified.value().identified_basis->at(0U, 0U) *
+                         unidentified.value().identified_basis->at(0U, 0U) -
+                     0.5) < 1.0e-11);
+
+  const Matrix invalidCovariance = matrix({{1.0, 2.0}, {2.0, 1.0}});
+  const auto invalid = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), observations.view(), invalidCovariance.view(), supported,
+      limits);
+  VSS_CHECK(!invalid.hasValue());
+  VSS_CHECK(invalid.status().code() == ErrorCode::NotPositiveSemidefinite);
+  const Matrix nonFiniteObservations =
+      matrix({{std::numeric_limits<Scalar>::infinity()}, {1.0}});
+  const auto nonFinite = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), nonFiniteObservations.view(), correlated.view(),
+      supported, limits);
+  VSS_CHECK(!nonFinite.hasValue());
+  VSS_CHECK(nonFinite.status().code() == ErrorCode::NonFiniteInput);
+
+  const Matrix asymmetric = matrix({{1.0, 0.25}, {0.2, 1.0}});
+  const auto asymmetricResult = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), observations.view(), asymmetric.view(), supported,
+      limits);
+  VSS_CHECK(!asymmetricResult.hasValue());
+  VSS_CHECK(asymmetricResult.status().code() == ErrorCode::NotSymmetric);
+
+  const Matrix inconsistent = matrix({{1.0}, {2.0}});
+  const Matrix noNoise(2U, 2U, 0.0);
+  const auto inconsistentResult = vss::math::linear::generalizedLinearEstimate(
+      intercept.view(), inconsistent.view(), noNoise.view(), supported, limits);
+  VSS_CHECK(!inconsistentResult.hasValue());
+  VSS_CHECK(inconsistentResult.status().code() == ErrorCode::InvalidDomain);
+
+  SolvePolicy strict = policy();
+  const auto strictRank = vss::math::linear::generalizedLinearEstimate(
+      duplicate.view(), one.view(), unit.view(), strict, limits);
+  VSS_CHECK(!strictRank.hasValue());
+  VSS_CHECK(strictRank.status().code() == ErrorCode::RankDeficient);
+  const auto strictSupport = vss::math::linear::generalizedLinearEstimate(
+      intercept.view(), pair.view(), exactCovariance.view(), strict, limits);
+  VSS_CHECK(!strictSupport.hasValue());
+  VSS_CHECK(strictSupport.status().code() == ErrorCode::RankDeficient);
+
+  const Matrix noColumns(2U, 0U, 0.0);
+  const auto emptyRhs = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), noColumns.view(), correlated.view(), supported, limits);
+  VSS_CHECK(emptyRhs.hasValue());
+  VSS_CHECK(emptyRhs.value().parameters.rows() == 2U);
+  VSS_CHECK(emptyRhs.value().parameters.columns() == 0U);
+  VSS_CHECK(emptyRhs.value().residual_norms.size() == 0U);
+  VSS_CHECK(emptyRhs.value().covariance.has_value());
+
+  const Matrix noRows(0U, 2U, 0.0);
+  const Matrix noObservationCovariance(0U, 0U, 0.0);
+  const auto insufficient = vss::math::linear::generalizedLinearEstimate(
+      noRows.view(), Matrix(0U, 1U, 0.0).view(), noObservationCovariance.view(),
+      supported, limits);
+  VSS_CHECK(!insufficient.hasValue());
+  VSS_CHECK(insufficient.status().code() == ErrorCode::InsufficientSamples);
+
+  SolvePolicy exhausted = supported;
+  exhausted.iteration.max_iterations = 0U;
+  const auto noConvergence = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), observations.view(), correlated.view(), exhausted,
+      limits);
+  VSS_CHECK(!noConvergence.hasValue());
+  VSS_CHECK(noConvergence.status().code() == ErrorCode::NoConvergence);
+
+  const auto denied = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), observations.view(), correlated.view(), supported,
+      {0U, 0U, 0U});
+  VSS_CHECK(!denied.hasValue());
+  VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
+
+  SolvePolicy illConditioned = supported;
+  illConditioned.reciprocal_condition_floor = 1.0e-3;
+  const Matrix poorlyConditioned = matrix({{1.0, 0.0}, {0.0, 1.0e-6}});
+  const auto conditionFailure = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), observations.view(), poorlyConditioned.view(),
+      illConditioned, limits);
+  VSS_CHECK(!conditionFailure.hasValue());
+  VSS_CHECK(conditionFailure.status().code() == ErrorCode::IllConditioned);
+
+  SolvePolicy invalidPolicy = supported;
+  invalidPolicy.rank_rel = -1.0;
+  const auto invalidTolerance = vss::math::linear::generalizedLinearEstimate(
+      identity.view(), observations.view(), correlated.view(), invalidPolicy,
+      limits);
+  VSS_CHECK(!invalidTolerance.hasValue());
+  VSS_CHECK(invalidTolerance.status().code() == ErrorCode::InvalidTolerance);
+
+  SolvePolicy zeroCutoff = supported;
+  zeroCutoff.rank_abs = 0.0;
+  zeroCutoff.rank_rel = 0.0;
+  const Matrix tinyDesign = matrix({{1.0e-200}});
+  const Matrix tinyObservation = matrix({{0.0}});
+  const Matrix scalarUnit = matrix({{1.0}});
+  const auto nonrepresentable = vss::math::linear::generalizedLinearEstimate(
+      tinyDesign.view(), tinyObservation.view(), scalarUnit.view(), zeroCutoff,
+      limits);
+  VSS_CHECK(!nonrepresentable.hasValue());
+  VSS_CHECK(nonrepresentable.status().code() == ErrorCode::NonFiniteResult);
+}
+
 } // namespace
 
 int main() {
@@ -336,5 +545,6 @@ int main() {
   conditionalOrderAndValidation();
   failureAndScaleBoundaries();
   whiteningAndMahalanobis();
+  generalizedLinearEstimation();
   return 0;
 }

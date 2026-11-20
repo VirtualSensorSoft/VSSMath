@@ -74,6 +74,11 @@ Fixture provenance and expected bounds are documented alongside the test map.
   retained positive support. It reports the discarded-space residual and
   rejects vectors outside that support; Mahalanobis distance does not silently
   project an incompatible residual.
+- Known-covariance generalized least squares whitens admitted stochastic
+  observation directions and enforces excluded covariance directions as exact
+  constraints. It returns parameter covariance only when every parameter
+  direction is identified; otherwise the covariance is disengaged and the
+  identified subspace is explicit.
 - Finite-difference operations use deterministic formulas and callback order;
   invalid steps or callback results fail without publishing partial output.
 - Descriptive statistics and chi-square tail functions follow explicit domain,
