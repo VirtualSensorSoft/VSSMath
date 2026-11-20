@@ -4,10 +4,14 @@
 #include <cmath>
 #include <initializer_list>
 #include <limits>
-#include <vector>
+#include <optional>
+#include <stdexcept>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/linear/RankAware.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
@@ -22,6 +26,13 @@ using vss::math::RankPolicy;
 using vss::math::Scalar;
 using vss::math::SolvePolicy;
 using vss::math::covariance::CovarianceKind;
+
+template <class T> const T& required(const std::optional<T>& value) {
+  if (!value.has_value()) {
+    throw std::logic_error("expected an engaged optional test result");
+  }
+  return value.value();
+}
 
 Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
   const Extent rowCount = rows.size();
@@ -345,12 +356,12 @@ void generalizedLinearEstimation() {
             1.0e-11);
   VSS_CHECK(std::abs(identityEstimate.value().parameters.at(1U, 0U) + 1.0) <
             1.0e-11);
-  VSS_CHECK(std::abs(identityEstimate.value().covariance->at(0U, 0U) - 4.0) <
-            1.0e-11);
-  VSS_CHECK(std::abs(identityEstimate.value().covariance->at(0U, 1U) - 1.0) <
-            1.0e-11);
-  VSS_CHECK(std::abs(identityEstimate.value().covariance->at(1U, 1U) - 2.0) <
-            1.0e-11);
+  VSS_CHECK(std::abs(required(identityEstimate.value().covariance).at(0U, 0U) -
+                     4.0) < 1.0e-11);
+  VSS_CHECK(std::abs(required(identityEstimate.value().covariance).at(0U, 1U) -
+                     1.0) < 1.0e-11);
+  VSS_CHECK(std::abs(required(identityEstimate.value().covariance).at(1U, 1U) -
+                     2.0) < 1.0e-11);
 
   const Matrix intercept = matrix({{1.0}, {1.0}});
   const Matrix pair = matrix({{1.0}, {3.0}});
@@ -360,9 +371,9 @@ void generalizedLinearEstimation() {
   VSS_CHECK(sharedEstimate.hasValue());
   VSS_CHECK(std::abs(sharedEstimate.value().parameters.at(0U, 0U) - 3.0) <
             1.0e-11);
-  VSS_CHECK(std::abs(sharedEstimate.value().covariance->at(0U, 0U) - 1.0) <
-            1.0e-11);
-  SolvePolicy strictFull = policy();
+  VSS_CHECK(std::abs(required(sharedEstimate.value().covariance).at(0U, 0U) -
+                     1.0) < 1.0e-11);
+  const SolvePolicy strictFull = policy();
   const auto strictEstimate = vss::math::linear::generalizedLinearEstimate(
       intercept.view(), pair.view(), shared.view(), strictFull, limits);
   VSS_CHECK(strictEstimate.hasValue());
@@ -372,7 +383,8 @@ void generalizedLinearEstimation() {
       intercept.view(), pair.view(), diagonal.view(), supported, limits);
   VSS_CHECK(weighted.hasValue());
   VSS_CHECK(std::abs(weighted.value().parameters.at(0U, 0U) - 1.5) < 1.0e-11);
-  VSS_CHECK(std::abs(weighted.value().covariance->at(0U, 0U) - 0.75) < 1.0e-11);
+  VSS_CHECK(std::abs(required(weighted.value().covariance).at(0U, 0U) - 0.75) <
+            1.0e-11);
 
   const Matrix exactCovariance = matrix({{1.0, 0.0}, {0.0, 0.0}});
   const Matrix exactObservations = matrix({{1.0}, {3.0}});
@@ -381,7 +393,7 @@ void generalizedLinearEstimation() {
       supported, limits);
   VSS_CHECK(exact.hasValue());
   VSS_CHECK(exact.value().parameters.at(0U, 0U) == 3.0);
-  VSS_CHECK(exact.value().covariance->at(0U, 0U) == 0.0);
+  VSS_CHECK(required(exact.value().covariance).at(0U, 0U) == 0.0);
   VSS_CHECK(std::abs(exact.value().residual_norms.at(0U) - 2.0) < 1.0e-11);
 
   SolvePolicy thresholded = supported;
@@ -392,7 +404,7 @@ void generalizedLinearEstimation() {
       limits);
   VSS_CHECK(thresholdExact.hasValue());
   VSS_CHECK(thresholdExact.value().parameters.at(1U, 0U) == -1.0);
-  VSS_CHECK(thresholdExact.value().covariance->at(1U, 1U) == 0.0);
+  VSS_CHECK(required(thresholdExact.value().covariance).at(1U, 1U) == 0.0);
 
   const Matrix mixedDesign = matrix({{1.0, 0.0}, {0.0, 1.0}, {0.0, 1.0}});
   const Matrix mixedObservations = matrix({{7.0, 8.0}, {1.0, 2.0}, {2.0, 5.0}});
@@ -406,11 +418,12 @@ void generalizedLinearEstimation() {
   VSS_CHECK(mixed.value().parameters.columns() == 2U);
   VSS_CHECK(mixed.value().parameters.at(0U, 0U) == 7.0);
   VSS_CHECK(mixed.value().parameters.at(0U, 1U) == 8.0);
-  VSS_CHECK(mixed.value().covariance->at(0U, 0U) == 0.0);
-  VSS_CHECK(std::abs(mixed.value().covariance->at(0U, 1U)) < 1.0e-11);
+  VSS_CHECK(required(mixed.value().covariance).at(0U, 0U) == 0.0);
+  VSS_CHECK(std::abs(required(mixed.value().covariance).at(0U, 1U)) < 1.0e-11);
   VSS_CHECK(std::abs(mixed.value().parameters.at(1U, 0U) - 1.2) < 1.0e-11);
   VSS_CHECK(std::abs(mixed.value().parameters.at(1U, 1U) - 2.6) < 1.0e-11);
-  VSS_CHECK(std::abs(mixed.value().covariance->at(1U, 1U) - 0.8) < 1.0e-11);
+  VSS_CHECK(std::abs(required(mixed.value().covariance).at(1U, 1U) - 0.8) <
+            1.0e-11);
   VSS_CHECK(std::abs(mixed.value().residual_norms.at(0U) *
                          mixed.value().residual_norms.at(0U) -
                      0.2) < 1.0e-11);
@@ -430,12 +443,14 @@ void generalizedLinearEstimation() {
             1.0e-11);
   VSS_CHECK(std::abs(unidentified.value().parameters.at(1U, 0U) - 1.0) <
             1.0e-11);
-  VSS_CHECK(std::abs(unidentified.value().identified_basis->at(0U, 0U) -
-                     unidentified.value().identified_basis->at(1U, 0U)) <
-            1.0e-11);
-  VSS_CHECK(std::abs(unidentified.value().identified_basis->at(0U, 0U) *
-                         unidentified.value().identified_basis->at(0U, 0U) -
-                     0.5) < 1.0e-11);
+  VSS_CHECK(
+      std::abs(required(unidentified.value().identified_basis).at(0U, 0U) -
+               required(unidentified.value().identified_basis).at(1U, 0U)) <
+      1.0e-11);
+  VSS_CHECK(
+      std::abs(required(unidentified.value().identified_basis).at(0U, 0U) *
+                   required(unidentified.value().identified_basis).at(0U, 0U) -
+               0.5) < 1.0e-11);
 
   const Matrix invalidCovariance = matrix({{1.0, 2.0}, {2.0, 1.0}});
   const auto invalid = vss::math::linear::generalizedLinearEstimate(
@@ -465,7 +480,7 @@ void generalizedLinearEstimation() {
   VSS_CHECK(!inconsistentResult.hasValue());
   VSS_CHECK(inconsistentResult.status().code() == ErrorCode::InvalidDomain);
 
-  SolvePolicy strict = policy();
+  const SolvePolicy strict = policy();
   const auto strictRank = vss::math::linear::generalizedLinearEstimate(
       duplicate.view(), one.view(), unit.view(), strict, limits);
   VSS_CHECK(!strictRank.hasValue());
@@ -481,7 +496,7 @@ void generalizedLinearEstimation() {
   VSS_CHECK(emptyRhs.hasValue());
   VSS_CHECK(emptyRhs.value().parameters.rows() == 2U);
   VSS_CHECK(emptyRhs.value().parameters.columns() == 0U);
-  VSS_CHECK(emptyRhs.value().residual_norms.size() == 0U);
+  VSS_CHECK(emptyRhs.value().residual_norms.empty());
   VSS_CHECK(emptyRhs.value().covariance.has_value());
 
   const Matrix noRows(0U, 2U, 0.0);
