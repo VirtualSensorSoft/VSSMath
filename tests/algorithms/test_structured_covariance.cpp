@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cmath>
+#include <exception>
 #include <initializer_list>
+#include <iostream>
 #include <optional>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
@@ -251,7 +253,7 @@ void emptyCovarianceSolvesWithoutScratch() {
 
 } // namespace
 
-int main() {
+int main() try {
   diagonalLowRankAndRankAwareSolve();
   blockAndToeplitzValidation();
   kroneckerAndGaussianActions();
@@ -259,4 +261,7 @@ int main() {
   projectedToeplitzAndKernelSolveWithoutDenseCovariance();
   emptyCovarianceSolvesWithoutScratch();
   return 0;
+} catch (const std::exception& error) {
+  std::cerr << error.what() << '\n';
+  return 1;
 }
