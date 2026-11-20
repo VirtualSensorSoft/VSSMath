@@ -1,0 +1,232 @@
+#include "Test.hpp"
+
+#include <array>
+#include <cmath>
+#include <initializer_list>
+#include <limits>
+#include <span>
+#include <vss/math/Array.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/linear/Structured.hpp>
+
+namespace {
+
+using namespace vss::math;
+
+Limits limits() {
+  return {.elements = 16384U, .bytes = 1048576U, .evaluations = 64U};
+}
+
+template <class T, std::size_t Size>
+Array<T> array(const std::array<T, Size>& values) {
+  const auto result = Array<T>::copy(std::span<const T>{values}, limits());
+  VSS_CHECK(result.hasValue());
+  return result.value();
+}
+
+Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
+  const Index row_count = rows.size();
+  const Index column_count = row_count == 0U ? 0U : rows.begin()->size();
+  Matrix result(row_count, column_count, 0.0);
+  Index row = 0U;
+  for (const auto& values : rows) {
+    VSS_CHECK(values.size() == column_count);
+    Index column = 0U;
+    for (const Scalar value : values) {
+      result.at(row, column++) = value;
+    }
+    ++row;
+  }
+  return result;
+}
+
+void diagonalActionAndValidation() {
+  const linear::DiagonalMatrix diagonal{
+      Vector(std::array<Scalar, 3U>{2.0, -3.0, 0.0})};
+  const Vector input(std::array<Scalar, 3U>{4.0, 5.0, 6.0});
+  const auto output = linear::apply(diagonal, input.view(), limits());
+  VSS_CHECK(output.hasValue());
+  VSS_CHECK(output.value().at(0U) == 8.0);
+  VSS_CHECK(output.value().at(1U) == -15.0);
+  VSS_CHECK(output.value().at(2U) == 0.0);
+
+  const Vector wrong(std::array<Scalar, 2U>{1.0, 2.0});
+  const auto mismatch = linear::apply(diagonal, wrong.view(), limits());
+  VSS_CHECK(!mismatch.hasValue());
+  VSS_CHECK(mismatch.status().code() == ErrorCode::DimensionMismatch);
+
+  const linear::DiagonalMatrix empty{Vector{}};
+  const Vector empty_vector;
+  const auto empty_result = linear::apply(empty, empty_vector.view(), limits());
+  VSS_CHECK(empty_result.hasValue() && empty_result.value().empty());
+}
+
+void blockGridActionPreservesRectangularLayoutAndEmptyBlocks() {
+  const std::array<Extent, 2U> row_extents{{1U, 2U}};
+  const std::array<Extent, 2U> column_extents{{2U, 1U}};
+  const std::array<linear::MatrixBlock, 2U> blocks{{
+      {0U, 0U, matrix({{1.0, 2.0}})},
+      {1U, 1U, matrix({{3.0}, {4.0}})},
+  }};
+  const linear::BlockMatrix block_matrix{array(row_extents),
+                                         array(column_extents), array(blocks)};
+  const Vector input(std::array<Scalar, 3U>{5.0, 6.0, 7.0});
+  const auto output = linear::apply(block_matrix, input.view(), limits());
+  VSS_CHECK(output.hasValue());
+  VSS_CHECK(output.value().at(0U) == 17.0);
+  VSS_CHECK(output.value().at(1U) == 21.0);
+  VSS_CHECK(output.value().at(2U) == 28.0);
+
+  const std::array<linear::MatrixBlock, 3U> with_off_diagonal{
+      {blocks[0U], {1U, 0U, matrix({{1.0, 0.0}, {0.0, 1.0}})}, blocks[1U]}};
+  const linear::BlockMatrix nonsymmetric{
+      array(row_extents), array(column_extents), array(with_off_diagonal)};
+  const auto off_diagonal = linear::apply(nonsymmetric, input.view(), limits());
+  VSS_CHECK(off_diagonal.hasValue());
+  VSS_CHECK(off_diagonal.value().at(0U) == 17.0);
+  VSS_CHECK(off_diagonal.value().at(1U) == 26.0);
+  VSS_CHECK(off_diagonal.value().at(2U) == 34.0);
+
+  const linear::BlockMatrix zero_rows{Array<Extent>{},
+                                      array(std::array<Extent, 1U>{2U}),
+                                      Array<linear::MatrixBlock>{}};
+  const Vector two(std::array<Scalar, 2U>{1.0, 2.0});
+  const auto empty_output = linear::apply(zero_rows, two.view(), limits());
+  VSS_CHECK(empty_output.hasValue() && empty_output.value().empty());
+}
+
+void projectionUsesRetainedColumnSpan() {
+  const Matrix basis = matrix({{1.0}, {0.0}});
+  const Vector input(std::array<Scalar, 2U>{3.0, 4.0});
+  SolvePolicy policy{};
+  const auto output = linear::orthogonalProjection(basis.view(), input.view(),
+                                                   policy, limits());
+  VSS_CHECK(output.hasValue());
+  VSS_CHECK(output.value().at(0U) == 3.0);
+  VSS_CHECK(output.value().at(1U) == 0.0);
+
+  const Matrix empty_basis(2U, 0U);
+  policy.rank = RankPolicy::reject;
+  const auto zero = linear::orthogonalProjection(
+      empty_basis.view(), input.view(), policy, limits());
+  VSS_CHECK(zero.hasValue());
+  VSS_CHECK(zero.value().at(0U) == 0.0 && zero.value().at(1U) == 0.0);
+}
+
+void regularizedLeastSquaresUsesSquareRootAugmentation() {
+  const Matrix design = matrix({{2.0}});
+  const Matrix observations = matrix({{6.0}});
+  Index calls = 0U;
+  linear::LinearMap penalty{
+      .rows = 1U,
+      .columns = 1U,
+      .apply =
+          [&calls](ConstVectorView input) {
+            ++calls;
+            return Result<Vector>::success(Vector(input.size(), input.at(0U)));
+          },
+      .transpose = {},
+  };
+  SolvePolicy policy{};
+  policy.rank = RankPolicy::minimum_norm;
+  policy.iteration.max_iterations = 128U;
+  const auto result = linear::regularizedLeastSquares(
+      design.view(), observations.view(), penalty, 2.0, policy, limits());
+  VSS_CHECK(result.hasValue());
+  VSS_CHECK(std::abs(result.value().parameters.at(0U, 0U) - 2.0) < 1.0e-12);
+  VSS_CHECK(std::abs(result.value().residual_norms.at(0U) - 2.0) < 1.0e-12);
+  VSS_CHECK(calls == 1U);
+
+  calls = 0U;
+  penalty.apply = {};
+  const auto unregularized = linear::regularizedLeastSquares(
+      design.view(), observations.view(), penalty, 0.0, policy, limits());
+  VSS_CHECK(unregularized.hasValue());
+  VSS_CHECK(unregularized.value().parameters.at(0U, 0U) == 3.0);
+  VSS_CHECK(calls == 0U);
+
+  const auto negative = linear::regularizedLeastSquares(
+      design.view(), observations.view(), penalty, -1.0, policy, limits());
+  VSS_CHECK(!negative.hasValue());
+  VSS_CHECK(negative.status().code() == ErrorCode::InvalidDomain);
+
+  calls = 0U;
+  penalty.apply = [&calls](ConstVectorView input) {
+    ++calls;
+    return Result<Vector>::success(Vector(input.size(), input.at(0U)));
+  };
+  Limits no_callback_budget = limits();
+  no_callback_budget.evaluations = 0U;
+  const auto denied =
+      linear::regularizedLeastSquares(design.view(), observations.view(),
+                                      penalty, 2.0, policy, no_callback_budget);
+  VSS_CHECK(!denied.hasValue());
+  VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
+  VSS_CHECK(calls == 0U);
+
+  const Matrix large_design = matrix({{1.0e308}});
+  const Matrix large_observations = matrix({{1.0e308}});
+  linear::LinearMap large_penalty{
+      .rows = 1U,
+      .columns = 1U,
+      .apply =
+          [](ConstVectorView input) {
+            return Result<Vector>::success(
+                Vector(std::array<Scalar, 1U>{1.0e308 * input.at(0U)}));
+          },
+      .transpose = {},
+  };
+  const auto scaled = linear::regularizedLeastSquares(
+      large_design.view(), large_observations.view(), large_penalty, 100.0,
+      policy, limits());
+  VSS_CHECK(scaled.hasValue());
+  VSS_CHECK(std::abs(scaled.value().parameters.at(0U, 0U) - 1.0 / 101.0) <
+            1.0e-12);
+}
+
+void diagonalAndBlockSolvesUseOneGlobalCutoff() {
+  const std::array<Matrix, 2U> blocks{{matrix({{2.0}}), matrix({{4.0}})}};
+  const BlockDiagonal block_diagonal{array(blocks)};
+  const Matrix rhs = matrix({{2.0}, {8.0}});
+  SolvePolicy policy{};
+  policy.rank = RankPolicy::minimum_norm;
+  policy.rank_rel = 0.5;
+  const auto solved =
+      linear::solveBlockDiagonal(block_diagonal, rhs.view(), policy, limits());
+  VSS_CHECK(solved.hasValue());
+  VSS_CHECK(solved.value().rank == 1U);
+  VSS_CHECK(solved.value().rank_cutoff == 2.0);
+  VSS_CHECK(solved.value().parameters.at(0U, 0U) == 0.0);
+  VSS_CHECK(solved.value().parameters.at(1U, 0U) == 2.0);
+  VSS_CHECK(solved.value().residual_norms.at(0U) == 2.0);
+
+  const Matrix bands =
+      matrix({{0.0, 0.0, 2.0}, {1.0, 1.0, 3.0}, {1.0, 4.0, 0.0}});
+  const BandMatrix band{3U, 1U, 1U, bands};
+  const Matrix band_rhs = matrix({{4.0}, {12.0}, {14.0}});
+  policy.rank_rel = 0.0;
+  policy.rank_abs = 0.0;
+  policy.iteration.max_iterations = 128U;
+  const auto band_solution =
+      linear::solveBanded(band, band_rhs.view(), policy, limits());
+  VSS_CHECK(band_solution.hasValue());
+  VSS_CHECK(band_solution.value().rank == 3U);
+  VSS_CHECK(std::abs(band_solution.value().parameters.at(0U, 0U) - 1.0) <
+            1.0e-12);
+  VSS_CHECK(std::abs(band_solution.value().parameters.at(1U, 0U) - 2.0) <
+            1.0e-12);
+  VSS_CHECK(std::abs(band_solution.value().parameters.at(2U, 0U) - 3.0) <
+            1.0e-12);
+  VSS_CHECK(band_solution.value().residual_norms.at(0U) < 1.0e-12);
+}
+
+} // namespace
+
+int main() {
+  diagonalActionAndValidation();
+  blockGridActionPreservesRectangularLayoutAndEmptyBlocks();
+  projectionUsesRetainedColumnSpan();
+  regularizedLeastSquaresUsesSquareRootAugmentation();
+  diagonalAndBlockSolvesUseOneGlobalCutoff();
+  return 0;
+}

@@ -58,6 +58,12 @@ vss_math_add_algorithm_test(test_full_qr
 vss_math_add_algorithm_test(test_covariance
                              algorithms/test_covariance.cpp
                              math.covariance)
+vss_math_add_algorithm_test(test_sparse algorithms/test_sparse.cpp math.sparse)
+vss_math_add_algorithm_test(test_structured algorithms/test_structured.cpp
+                             math.structured)
+vss_math_add_algorithm_test(test_structured_covariance
+                             algorithms/test_structured_covariance.cpp
+                             math.structured_covariance)
 vss_math_add_algorithm_test(test_conditioning
                              algorithms/test_conditioning.cpp
                              math.conditioning)
@@ -68,7 +74,6 @@ vss_math_add_algorithm_test(test_diagnostics algorithms/test_diagnostics.cpp
 vss_math_add_algorithm_test(test_uncertainty_summary
                              algorithms/test_uncertainty_summary.cpp
                              math.uncertainty_summary)
-vss_math_add_algorithm_test(test_sparse algorithms/test_sparse.cpp math.sparse)
 vss_math_add_algorithm_test(test_finite_difference
                              algorithms/test_finite_difference.cpp
                              math.finite_difference)
