@@ -105,6 +105,17 @@ Fixture provenance and expected bounds are documented alongside the test map.
   columns, accept empty rows, and use scaled compensated row accumulation so
   intermediate products may cancel before final representability is checked.
   Both conversion and application enforce caller-provided storage limits.
+- Structured linear operations apply diagonal or tiled matrices without a full
+  matrix copy. Banded solves use compact pivoting when rank and accuracy can
+  be certified, with a separately bounded dense fallback. Block diagonal
+  solves use a single cutoff across the constituent spectra. Regularized
+  least squares factors the square-root augmented system and reports residuals
+  against the original observations.
+- Structured covariance supports diagonal updates, Toeplitz, direct sum,
+  Kronecker, and Gaussian kernel representations. Factorized solves report
+  rank and the original residual. Iterative solves require certified
+  full-rank support and check a freshly computed residual against the
+  specified tolerance before accepting a solution.
 
 Exact APIs and error codes are defined by the public headers. Sparse direct
 factorizations and solves, other scalar types, implicit units, application

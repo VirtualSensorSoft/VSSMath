@@ -6,6 +6,7 @@
 #include <initializer_list>
 #include <limits>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vss/math/Array.hpp>
 #include <vss/math/Core.hpp>
@@ -350,6 +351,125 @@ void redundantProjectionAndCallbackFailures() {
             "user penalty rejected basis vector");
 }
 
+void structuredActionFailureAndAccuracyCases() {
+  const auto one = array(std::array<Index, 1>{1});
+  const auto two = array(std::array<Index, 1>{2});
+  const Limits none{.elements = 0, .bytes = 0, .evaluations = 0};
+  const auto expect = [](const Result<Vector>& result, ErrorCode code) {
+    VSS_CHECK(!result.hasValue() && result.status().code() == code);
+  };
+  const auto value = std::numeric_limits<Scalar>::max();
+  const auto unit = Vector(1, 1);
+  const auto twice = Vector(1, 2);
+  const Vector pair(std::array{2.0, -2.0});
+  const auto cancellation =
+      linear::apply(linear::BlockMatrix{one, two,
+                                        array(std::array{linear::MatrixBlock{
+                                            0, 0, matrix({{value, value}})}})},
+                    pair.view(), limits());
+  VSS_CHECK(cancellation.hasValue() && cancellation.value().at(0) == 0);
+  const auto operation = [&](const Matrix& tile, const Vector& input,
+                             Limits bound) {
+    return linear::apply(
+        linear::BlockMatrix{one, two,
+                            array(std::array{linear::MatrixBlock{0, 0, tile}})},
+        input.view(), bound);
+  };
+  expect(operation(matrix({{value, value}}), Vector(2, 1), limits()),
+         ErrorCode::NonFiniteResult);
+  expect(operation(matrix({{1, 1}}), pair, none), ErrorCode::ResourceLimit);
+  expect(operation(matrix({{1}}), pair, limits()),
+         ErrorCode::DimensionMismatch);
+  const Scalar large = std::scalbn(1.0, 400);
+  const Scalar small = std::scalbn(1.0, -400);
+  auto mixed = operation(matrix({{large, small}}),
+                         Vector(std::array{small, large}), limits());
+  VSS_CHECK(mixed.hasValue() && mixed.value().at(0) == 2);
+
+  const linear::MatrixBlock valid{0, 0, Matrix(1, 2, 1)};
+  expect(linear::apply(
+             linear::BlockMatrix{one, two, array(std::array{valid, valid})},
+             pair.view(), limits()),
+         ErrorCode::InvalidDomain);
+  expect(linear::apply(linear::BlockMatrix{one, two,
+                                           array(std::array{linear::MatrixBlock{
+                                               1, 0, valid.value}})},
+                       pair.view(), limits()),
+         ErrorCode::IndexOutOfRange);
+  const auto widths = array(std::array<Index, 2>{1, 1});
+  expect(linear::apply(
+             linear::BlockMatrix{
+                 one, widths,
+                 array(std::array{linear::MatrixBlock{0, 1, Matrix(1, 1, 1)},
+                                  linear::MatrixBlock{0, 0, Matrix(1, 1, 1)}})},
+             pair.view(), limits()),
+         ErrorCode::InvalidDomain);
+  const auto absent =
+      linear::apply(linear::BlockMatrix{one, two, {}}, pair.view(), limits());
+  VSS_CHECK(absent.hasValue() && absent.value().at(0) == 0);
+  const auto zero_columns = linear::apply(linear::BlockMatrix{two, {}, {}},
+                                          Vector{}.view(), limits());
+  VSS_CHECK(zero_columns.hasValue() && zero_columns.value().size() == 2 &&
+            zero_columns.value().at(1) == 0);
+  expect(linear::apply(
+             linear::BlockMatrix{array(std::array<Index, 1>{0}), one, {}},
+             unit.view(), limits()),
+         ErrorCode::InvalidDomain);
+
+  expect(linear::apply(linear::DiagonalMatrix{Vector(1, value)}, twice.view(),
+                       limits()),
+         ErrorCode::NonFiniteResult);
+  expect(
+      linear::apply(linear::DiagonalMatrix{Vector(1, 1)}, twice.view(), none),
+      ErrorCode::ResourceLimit);
+  expect(linear::apply(linear::DiagonalMatrix{Vector(
+                           1, std::numeric_limits<Scalar>::infinity())},
+                       twice.view(), limits()),
+         ErrorCode::NonFiniteInput);
+  const Scalar tiny = std::numeric_limits<Scalar>::denorm_min();
+  const auto subnormal = linear::apply(linear::DiagonalMatrix{Vector(1, -tiny)},
+                                       twice.view(), limits());
+  VSS_CHECK(subnormal.hasValue() && subnormal.value().at(0) == -2 * tiny);
+}
+
+void exactProjectionCutoffAndSignedZeroPenalty() {
+  const Vector point(std::array{3.0, 4.0});
+  SolvePolicy policy{};
+  policy.rank = RankPolicy::minimum_norm;
+  policy.rank_rel = 0.25;
+  auto projected = linear::orthogonalProjection(matrix({{4, 0}, {0, 1}}).view(),
+                                                point.view(), policy, limits());
+  VSS_CHECK(projected.hasValue() && projected.value().at(0) == 3 &&
+            projected.value().at(1) == 0);
+  projected = linear::orthogonalProjection(matrix({{4, 0}, {0, 2}}).view(),
+                                           point.view(), policy, limits());
+  VSS_CHECK(projected.hasValue() && projected.value().at(0) == 3 &&
+            projected.value().at(1) == 4);
+
+  policy.rank_rel = 0;
+  policy.iteration.max_iterations = 64;
+  const Matrix design = matrix({{1, 1}});
+  const Matrix observations = matrix({{4}});
+  const linear::LinearMap penalty{
+      .rows = 1,
+      .columns = 2,
+      .apply = [](ConstVectorView) -> Result<Vector> {
+        throw std::runtime_error("intentional callback failure");
+      },
+      .transpose = {}};
+  const auto none = linear::regularizedLeastSquares(
+      design.view(), observations.view(), penalty, -0.0, policy, limits());
+  VSS_CHECK(none.hasValue());
+  VSS_CHECK(std::abs(none.value().parameters.at(0, 0) - 2) < 1e-12);
+  VSS_CHECK(std::abs(none.value().parameters.at(1, 0) - 2) < 1e-12);
+
+  policy.iteration.max_evaluations = 2;
+  const auto threw = linear::regularizedLeastSquares(
+      design.view(), observations.view(), penalty, 1, policy, limits());
+  VSS_CHECK(!threw.hasValue() &&
+            threw.status().code() == ErrorCode::CallbackFailure);
+}
+
 } // namespace
 
 int main() {
@@ -361,5 +481,7 @@ int main() {
   compactBandUsesLinearStorageAndKeepsSingularResidual();
   singularBlockSolveKeepsOriginalResidual();
   redundantProjectionAndCallbackFailures();
+  structuredActionFailureAndAccuracyCases();
+  exactProjectionCutoffAndSignedZeroPenalty();
   return 0;
 }
