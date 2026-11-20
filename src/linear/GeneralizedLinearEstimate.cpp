@@ -230,14 +230,16 @@ generalizedLinearEstimate(ConstMatrixView design, ConstMatrixView observations,
     if (!constrained.hasValue()) {
       return copyFailure<LinearEstimate>(constrained.status());
     }
-    if (!constrained.value().identified_basis.has_value()) {
+    const auto& constraintEstimate = constrained.value();
+    const auto& constraintBasis = constraintEstimate.identified_basis;
+    if (!constraintBasis.has_value()) {
       return failure<LinearEstimate>(
           ErrorCode::InvalidDomain,
           "exact-constraint solve omitted its identified basis");
     }
-    particular = constrained.value().parameters;
-    exactBasis = constrained.value().identified_basis.value();
-    exactRank = constrained.value().rank;
+    particular = constraintEstimate.parameters;
+    exactBasis = *constraintBasis;
+    exactRank = constraintEstimate.rank;
 
     Matrix reproduced;
     if (!multiply(constraints.view(), particular.view(), reproduced)) {
@@ -354,15 +356,15 @@ generalizedLinearEstimate(ConstMatrixView design, ConstMatrixView observations,
     }
   }
   if (tangentRank != 0U) {
-    if (!fitted.value().identified_basis.has_value()) {
+    const auto& stochasticEstimate = fitted.value();
+    const auto& stochasticBasis = stochasticEstimate.identified_basis;
+    if (!stochasticBasis.has_value()) {
       return failure<LinearEstimate>(
           ErrorCode::InvalidDomain,
           "stochastic solve omitted its identified basis");
     }
     Matrix tangentBasis;
-    if (!multiply(tangent.view(),
-                  fitted.value().identified_basis.value().view(),
-                  tangentBasis)) {
+    if (!multiply(tangent.view(), stochasticBasis->view(), tangentBasis)) {
       return failure<LinearEstimate>(ErrorCode::NonFiniteResult,
                                      "GLS identified basis overflowed");
     }
