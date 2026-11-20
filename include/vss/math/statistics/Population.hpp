@@ -3,10 +3,13 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vss/math/Limits.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::statistics {
 
@@ -88,6 +91,44 @@ covarianceMatrix(const SampleView& sample, const CenterSpec& center,
 crossCovariance(const SampleView& left, const SampleView& right,
                 const CenterSpec& leftCenter, const CenterSpec& rightCenter,
                 PopulationPolicy policy, Limits limits);
+
+/// @brief Converts a covariance matrix to its dimensionless correlation form.
+/// @details Validates the complete input as finite, symmetric and positive
+///          semidefinite before normalization. A zero-variance coordinate is
+///          accepted only when its entire covariance row and column are zero;
+///          it has no defined correlation and therefore causes
+///          `InvalidDomain`. Positive-variance coordinates are normalized in
+///          scaled arithmetic. Singular positive-semidefinite correlation
+///          matrices are valid. Rank and conditioning diagnostics describe the
+///          returned correlation matrix using `policy`.
+/// @param covariance Finite square covariance matrix, borrowed and unchanged.
+/// @param policy Rank cutoff, condition floor, and eigensolver work cap.
+/// @param limits Peak scratch and output-storage limits.
+/// @return Owned correlation matrix and spectral diagnostics.
+[[nodiscard]] Result<covariance::CovarianceResult>
+correlationMatrix(ConstMatrixView covariance, SolvePolicy policy,
+                  Limits limits);
+
+/// @brief Computes correlations among selected coordinates conditional on
+/// others.
+/// @details Standardizes the complete joint covariance first, then forms the
+///          Schur complement of the conditioning block using its retained
+///          eigenspace. `reject` fails when conditioning directions are
+///          discarded; supported-subspace and minimum-norm policies use the
+///          Moore-Penrose inverse on retained directions. The result preserves
+///          selected-coordinate order and is normalized to correlation form.
+///          Correlation rank decisions are consequently invariant to positive
+///          changes of input coordinate units.
+/// @param covariance Finite square joint covariance, borrowed and unchanged.
+/// @param selected Unique indices whose conditional correlation is returned.
+/// @param conditioned Unique disjoint indices conditioned upon.
+/// @param policy Rank cutoff, condition floor, rank handling, and sweep cap.
+/// @param limits Peak scratch and output-storage limits.
+/// @return Owned conditional correlation and spectral diagnostics.
+[[nodiscard]] Result<covariance::CovarianceResult>
+partialCorrelation(ConstMatrixView covariance, std::span<const Index> selected,
+                   std::span<const Index> conditioned, SolvePolicy policy,
+                   Limits limits);
 
 } // namespace vss::math::statistics
 

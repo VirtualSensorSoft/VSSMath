@@ -635,6 +635,32 @@ int main() {
     return 1;
   }
 
+  Matrix covarianceInput(3U, 3U, 4.0);
+  covarianceInput.at(0U, 1U) = 2.0;
+  covarianceInput.at(1U, 0U) = 2.0;
+  covarianceInput.at(0U, 2U) = 2.0;
+  covarianceInput.at(2U, 0U) = 2.0;
+  covarianceInput.at(1U, 2U) = 2.0;
+  covarianceInput.at(2U, 1U) = 2.0;
+  SolvePolicy correlationPolicy{};
+  correlationPolicy.iteration.max_iterations = 64U;
+  correlationPolicy.rank = RankPolicy::supported_subspace;
+  const auto installedCorrelation = statistics::correlationMatrix(
+      covarianceInput.view(), correlationPolicy, Limits{4096U, 262144U, 0U});
+  const std::array<Index, 2U> selectedCoordinates{0U, 1U};
+  const std::array<Index, 1U> conditionedCoordinate{2U};
+  const auto installedPartial = statistics::partialCorrelation(
+      covarianceInput.view(), selectedCoordinates, conditionedCoordinate,
+      correlationPolicy, Limits{4096U, 262144U, 0U});
+  if (!require(installedCorrelation.hasValue() && installedPartial.hasValue() &&
+                   std::abs(installedCorrelation.value().covariance.at(0U, 1U) -
+                            0.5) < 1.0e-12 &&
+                   std::abs(installedPartial.value().covariance.at(0U, 1U) -
+                            1.0 / 3.0) < 1.0e-12,
+               "installed correlation APIs failed")) {
+    return 1;
+  }
+
   std::cout << "VirtualSensorMath " << version::string << " consumer passed\n";
   return 0;
 }
