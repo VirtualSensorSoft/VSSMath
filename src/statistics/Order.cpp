@@ -4,9 +4,15 @@
 #include <detail/CompensatedSum.hpp>
 #include <limits>
 #include <new>
+#include <numbers>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/statistics/Order.hpp>
 
 namespace vss::math::statistics {
@@ -41,11 +47,11 @@ Status validateFinite(ConstVectorView values) {
 }
 
 Status validatePositiveFinite(ConstVectorView values) {
-  const Status extent = validateExtent(values);
+  Status extent = validateExtent(values);
   if (!extent.ok()) {
     return extent;
   }
-  const Status finite = validateFinite(values);
+  Status finite = validateFinite(values);
   if (!finite.ok()) {
     return finite;
   }
@@ -143,6 +149,17 @@ Scalar meanOfSorted(const std::vector<Scalar>& sorted, std::size_t first,
   return scale * (sum.total() / static_cast<Scalar>(last - first));
 }
 
+Scalar winsorizedObservation(const std::vector<Scalar>& sorted,
+                             std::size_t index, std::size_t trimCount) {
+  if (index < trimCount) {
+    return sorted[trimCount];
+  }
+  if (index >= sorted.size() - trimCount) {
+    return sorted[sorted.size() - trimCount - 1U];
+  }
+  return sorted[index];
+}
+
 Result<Scalar> sortedMean(ConstVectorView values, Scalar fraction,
                           Limits limits, bool winsorize) {
   const Status extent = validateExtent(values);
@@ -181,11 +198,7 @@ Result<Scalar> sortedMean(ConstVectorView values, Scalar fraction,
 
   Scalar scale = 0.0;
   for (std::size_t index = 0U; index < sorted.size(); ++index) {
-    const Scalar value = index < trimCount
-                             ? sorted[trimCount]
-                             : (index >= sorted.size() - trimCount
-                                    ? sorted[sorted.size() - trimCount - 1U]
-                                    : sorted[index]);
+    const Scalar value = winsorizedObservation(sorted, index, trimCount);
     scale = std::max(scale, std::abs(value));
   }
   if (scale == 0.0) {
@@ -193,11 +206,7 @@ Result<Scalar> sortedMean(ConstVectorView values, Scalar fraction,
   }
   detail::CompensatedSum sum;
   for (std::size_t index = 0U; index < sorted.size(); ++index) {
-    const Scalar value = index < trimCount
-                             ? sorted[trimCount]
-                             : (index >= sorted.size() - trimCount
-                                    ? sorted[sorted.size() - trimCount - 1U]
-                                    : sorted[index]);
+    const Scalar value = winsorizedObservation(sorted, index, trimCount);
     sum.add(value / scale);
   }
   const Scalar result =
@@ -308,7 +317,7 @@ Result<Scalar> geometricMean(ConstVectorView values) {
       const Scalar mantissa = std::frexp(value, &valueExponent);
       logRatio = std::log(mantissa) +
                  static_cast<Scalar>(valueExponent - referenceExponent) *
-                     std::log(2.0);
+                     std::numbers::ln2;
     }
     if (!std::isfinite(logRatio)) {
       return failure<Scalar>(ErrorCode::NonFiniteResult,
@@ -348,7 +357,7 @@ Result<Scalar> harmonicMean(ConstVectorView values) {
     scaledReciprocals.add(minimum / values.at(index));
   }
   const Scalar denominator = scaledReciprocals.total();
-  const Scalar count = static_cast<Scalar>(values.size());
+  const auto count = static_cast<Scalar>(values.size());
   const Scalar factor = count / denominator;
   if (!(denominator >= 1.0) || !std::isfinite(denominator) ||
       !std::isfinite(factor)) {
