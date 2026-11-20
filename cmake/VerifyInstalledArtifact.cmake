@@ -151,6 +151,7 @@ set(vss_expected_files
   include/vss/math/linear/LU.hpp
   include/vss/math/linear/QR.hpp
   include/vss/math/linear/RankAware.hpp
+  include/vss/math/linear/Reduction.hpp
   include/vss/math/linear/StructuredProducts.hpp
   include/vss/math/linear/SymmetricEigen.hpp
   include/vss/math/linear/TriangularSolve.hpp

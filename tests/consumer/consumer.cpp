@@ -25,6 +25,7 @@
 #include <vss/math/linear/FactorizationOptions.hpp>
 #include <vss/math/linear/LU.hpp>
 #include <vss/math/linear/RankAware.hpp>
+#include <vss/math/linear/Reduction.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/version.hpp>
 
@@ -430,6 +431,31 @@ int main() {
                        1.0e-12 &&
                    std::abs(gls.value().covariance->at(0U, 0U) - 1.0) < 1.0e-12,
                "installed known-covariance GLS API failed")) {
+    return 1;
+  }
+
+  Matrix reductionInput(2U, 2U);
+  reductionInput.at(0U, 0U) = 3.0;
+  const Limits reductionLimits{4096U, 262144U, 64U};
+  const auto reduced = linear::lowRankApproximation(reductionInput.view(), 1U,
+                                                    glsPolicy, reductionLimits);
+  if (!require(reduced.hasValue() &&
+                   reduced.value().singular_values.at(0U) == 3.0 &&
+                   reduced.value().residual_norm == 0.0,
+               "installed low-rank approximation API failed")) {
+    return 1;
+  }
+  Matrix sampleRows(4U, 2U);
+  sampleRows.at(0U, 0U) = 2.0;
+  sampleRows.at(1U, 0U) = -2.0;
+  sampleRows.at(2U, 1U) = 1.0;
+  sampleRows.at(3U, 1U) = -1.0;
+  const auto principal =
+      linear::pca(sampleRows.view(), 1U, true, glsPolicy, reductionLimits);
+  if (!require(principal.hasValue() &&
+                   std::abs(principal.value().explained_variance.at(0U) -
+                            8.0 / 3.0) < 1.0e-12,
+               "installed centered PCA API failed")) {
     return 1;
   }
 

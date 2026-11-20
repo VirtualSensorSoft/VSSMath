@@ -61,6 +61,8 @@ vss_math_add_algorithm_test(test_covariance
 vss_math_add_algorithm_test(test_conditioning
                              algorithms/test_conditioning.cpp
                              math.conditioning)
+vss_math_add_algorithm_test(test_reduction algorithms/test_reduction.cpp
+                             math.reduction)
 vss_math_add_algorithm_test(test_finite_difference
                              algorithms/test_finite_difference.cpp
                              math.finite_difference)

@@ -74,6 +74,10 @@ Fixture provenance and expected bounds are documented alongside the test map.
   retained positive support. It reports the discarded-space residual and
   rejects vectors outside that support; Mahalanobis distance does not silently
   project an incompatible residual.
+- Truncated low-rank approximation retains the requested leading SVD modes and
+  returns factors, reconstruction, and the Frobenius residual. PCA treats rows
+  as observations, centers each column, reports sample explained variance, and
+  whitens only retained components with positive sample variance.
 - Known-covariance generalized least squares whitens admitted stochastic
   observation directions and enforces excluded covariance directions as exact
   constraints. It returns parameter covariance only when every parameter
