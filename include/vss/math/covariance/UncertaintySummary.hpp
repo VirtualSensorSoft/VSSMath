@@ -16,11 +16,17 @@ namespace vss::math {
 /// @details Bounds are copied unchanged and do not imply a probability or
 ///          coverage level. `coverage_factor` applies only to `expanded`.
 struct UncertaintySummary final {
+  /// @brief Nominal output values, copied from the propagation result.
   Vector nominal;
+  /// @brief Component standard uncertainties from covariance diagonals.
   Vector standard;
+  /// @brief Standard uncertainty multiplied by coverage_factor.
   Vector expanded;
+  /// @brief Optional caller-supplied lower bounds; no coverage is inferred.
   std::optional<Vector> lower;
+  /// @brief Optional caller-supplied upper bounds; no coverage is inferred.
   std::optional<Vector> upper;
+  /// @brief Explicit multiplier used only for expanded uncertainty.
   Scalar coverage_factor;
 };
 
