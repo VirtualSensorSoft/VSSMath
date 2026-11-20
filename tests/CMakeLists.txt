@@ -68,6 +68,7 @@ vss_math_add_algorithm_test(test_diagnostics algorithms/test_diagnostics.cpp
 vss_math_add_algorithm_test(test_uncertainty_summary
                              algorithms/test_uncertainty_summary.cpp
                              math.uncertainty_summary)
+vss_math_add_algorithm_test(test_sparse algorithms/test_sparse.cpp math.sparse)
 vss_math_add_algorithm_test(test_finite_difference
                              algorithms/test_finite_difference.cpp
                              math.finite_difference)

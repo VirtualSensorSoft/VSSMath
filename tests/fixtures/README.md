@@ -13,6 +13,7 @@ The identifiers below name logical cases in the C++ tests; they do not imply a s
 - `DIF-01`–`DIF-07`: gradient/Jacobian formulas, bounds, callback order and failure handling.
 - `STA-01`–`STA-06`: descriptive statistics, sample-size distinctions, finite input and variance boundaries.
 - `PRO-01`–`PRO-07`: chi-square survival and log-survival domains, accuracy and extreme-tail behavior.
+- `SP-01`–`SP-05`: sparse coordinate coalescing, empty-row structure, canonical CSR validation, scaled row products and resource/input limits.
 
 ## Supplemental boundaries
 

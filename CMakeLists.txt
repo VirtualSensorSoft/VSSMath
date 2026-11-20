@@ -42,6 +42,7 @@ add_library(vss_math STATIC
   src/SecondMoment.cpp
   src/Scaling.cpp
   src/linear/StructuredProducts.cpp
+  src/linear/Sparse.cpp
   src/Tensor.cpp
   src/TensorLimits.cpp
   src/TensorShape.cpp

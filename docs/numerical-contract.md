@@ -99,7 +99,14 @@ Fixture provenance and expected bounds are documented alongside the test map.
   invalid steps or callback results fail without publishing partial output.
 - Descriptive statistics and chi-square tail functions follow explicit domain,
   finite-value, and accuracy checks.
+- Sparse CSR conversion sorts triplets by row and column, coalesces duplicate
+  coordinates with scaled compensated summation, and omits exact-zero entries.
+  Sparse matrix-vector products validate canonical offsets and strictly ordered
+  columns, accept empty rows, and use scaled compensated row accumulation so
+  intermediate products may cancel before final representability is checked.
+  Both conversion and application enforce caller-provided storage limits.
 
-Exact APIs and error codes are defined by the public headers. Sparse matrices,
-other scalar types, implicit units, application workflows, automatic repair,
-and unsupported platforms are not part of the current contract.
+Exact APIs and error codes are defined by the public headers. Sparse direct
+factorizations and solves, other scalar types, implicit units, application
+workflows, automatic repair, and unsupported platforms are not part of the
+current contract.
