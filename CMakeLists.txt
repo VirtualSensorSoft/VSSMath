@@ -51,6 +51,10 @@ add_library(vss_math STATIC
   src/TensorOperations.cpp
   src/TensorElementwise.cpp
   src/covariance/Covariance.cpp
+  src/covariance/Conditioning.cpp
+  src/covariance/Diagnostics.cpp
+  src/covariance/Determinant.cpp
+  src/covariance/UncertaintySummary.cpp
   src/differentiation/FiniteDifference.cpp
   src/probability/ChiSquare.cpp
   src/statistics/Descriptive.cpp
@@ -59,6 +63,8 @@ add_library(vss_math STATIC
   src/linear/GeneralizedEigen.cpp
   src/linear/FullQR.cpp
   src/linear/RankAware.cpp
+  src/linear/GeneralizedLinearEstimate.cpp
+  src/linear/Reduction.cpp
   src/linear/SVD.cpp
   src/linear/LU.cpp
   src/linear/QR.cpp

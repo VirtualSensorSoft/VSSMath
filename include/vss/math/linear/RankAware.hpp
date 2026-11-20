@@ -16,8 +16,10 @@ namespace vss::math::linear {
 ///        linear system.
 /// @details `parameters` has one column per right-hand side. When supplied,
 ///          each column of `identified_basis` is a right singular vector in
-///          the retained numerical support. `residual_norms` are Euclidean
-///          norms evaluated against the original design and observations.
+///          the retained numerical support. For `leastSquaresMinNorm`,
+///          `residual_norms` are Euclidean norms in original observation
+///          coordinates; for `generalizedLinearEstimate`, they are Euclidean
+///          norms in admitted whitened coordinates after exact constraints.
 ///          Covariance is optional because a solve alone does not specify a
 ///          stochastic model.
 struct LinearEstimate final {
@@ -72,6 +74,37 @@ struct LinearEstimate final {
 [[nodiscard]] Result<LinearEstimate>
 leastSquaresMinNorm(ConstMatrixView design, ConstMatrixView observations,
                     SolvePolicy policy, Limits limits);
+
+/// @brief Computes generalized least-squares estimates for known observation
+///        covariance, including exact zero-variance observation directions.
+/// @details For H (m×n), observations Z (m×p), and shared covariance R
+///          (m×m), each column is solved independently. Positive admitted
+///          covariance modes are whitened; excluded covariance modes are
+///          enforced as exact linear constraints. The returned residual norms
+///          are Euclidean norms in admitted whitened coordinates. If all
+///          parameter directions are identified, covariance is returned in
+///          original parameter coordinates without residual-variance scaling;
+///          otherwise it is disengaged. `identified_basis` spans the union of
+///          exact-constraint and stochastic identified parameter directions.
+/// @param design Finite m×n model matrix, borrowed and unchanged.
+/// @param observations Finite m×p observations; each column is an independent
+///        estimate under the same covariance model.
+/// @param observationCovariance Finite symmetric positive-semidefinite m×m
+///        covariance; symmetry, PSD, cutoff and conditioning follow C014.
+/// @param policy Rank, conditioning, exact-constraint and SVD certification
+///        policy. `reject` requires full covariance support and full parameter
+///        rank; other policies use admitted support and minimum-norm
+///        representatives.
+/// @param limits Peak owned/workspace limits for the complete operation.
+/// @return An owned estimate or a failure without partial output. Failures
+///         include dimension, sample, finite-input, tolerance, symmetry,
+///         positive-semidefinite, exact-constraint, rank, conditioning,
+///         convergence, resource and representability errors.
+/// @throws std::bad_alloc if storage within `limits` cannot be allocated.
+[[nodiscard]] Result<LinearEstimate>
+generalizedLinearEstimate(ConstMatrixView design, ConstMatrixView observations,
+                          ConstMatrixView observationCovariance,
+                          SolvePolicy policy, Limits limits);
 
 /// @brief Computes an orthonormal basis for the numerical right null space.
 /// @details For an m×n input, the result has shape n×(n-r), where `r` is the

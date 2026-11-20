@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vss/math/Array.hpp>
@@ -15,15 +16,21 @@
 #include <vss/math/Operations.hpp>
 #include <vss/math/PrintOptions.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/TensorElementwise.hpp>
 #include <vss/math/TensorOperations.hpp>
 #include <vss/math/TensorShape.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/Conditioning.hpp>
+#include <vss/math/covariance/Diagnostics.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/covariance/UncertaintySummary.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
 #include <vss/math/linear/LU.hpp>
 #include <vss/math/linear/RankAware.hpp>
+#include <vss/math/linear/Reduction.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/version.hpp>
 
@@ -376,6 +383,139 @@ int main() {
                    fullQr.value().permutation.view()[0U] == 1U &&
                    fullQr.value().rank == 2U,
                "installed full QR API failed")) {
+    return 1;
+  }
+
+  Matrix jointCovariance(2U, 2U);
+  jointCovariance.at(0U, 0U) = 4.0;
+  jointCovariance.at(0U, 1U) = 3.0;
+  jointCovariance.at(1U, 0U) = 3.0;
+  jointCovariance.at(1U, 1U) = 9.0;
+  const std::array<Index, 1U> kept{0U};
+  const std::array<Index, 1U> conditioned{1U};
+  const auto conditional = covariance::conditionalCovariance(
+      jointCovariance.view(), kept, conditioned, decompositionPolicy, limits);
+  if (!require(conditional.hasValue() && conditional.value().rank == 1U &&
+                   std::abs(conditional.value().covariance.at(0U, 0U) - 3.0) <
+                       1.0e-12,
+               "installed conditional covariance API failed")) {
+    return 1;
+  }
+  const Vector whiteningInput{std::array<Scalar, 2U>{2.0, 3.0}};
+  const auto whitening =
+      covariance::whitenSupported(jointCovariance.view(), whiteningInput.view(),
+                                  decompositionPolicy, limits);
+  const auto mahalanobis =
+      whitening.hasValue()
+          ? covariance::mahalanobisSquared(whitening.value(),
+                                           whiteningInput.view())
+          : Result<Scalar>::failure(ErrorCode::InvalidDomain,
+                                    "whitening consumer setup failed");
+  if (!require(whitening.hasValue() && mahalanobis.hasValue() &&
+                   std::abs(mahalanobis.value() - (4.0 / 3.0)) < 1.0e-12,
+               "installed covariance whitening APIs failed")) {
+    return 1;
+  }
+
+  Matrix glsDesign(2U, 1U, 1.0);
+  Matrix glsObservations(2U, 1U);
+  glsObservations.at(0U, 0U) = 1.0;
+  glsObservations.at(1U, 0U) = 3.0;
+  Matrix glsCovariance(2U, 2U);
+  glsCovariance.at(0U, 0U) = 4.0;
+  glsCovariance.at(0U, 1U) = 1.0;
+  glsCovariance.at(1U, 0U) = 1.0;
+  glsCovariance.at(1U, 1U) = 1.0;
+  SolvePolicy glsPolicy = decompositionPolicy;
+  glsPolicy.rank = RankPolicy::supported_subspace;
+  const auto gls = linear::generalizedLinearEstimate(
+      glsDesign.view(), glsObservations.view(), glsCovariance.view(), glsPolicy,
+      limits);
+  if (!require(gls.hasValue() && gls.value().covariance.has_value() &&
+                   std::abs(gls.value().parameters.at(0U, 0U) - 3.0) <
+                       1.0e-12 &&
+                   std::abs(gls.value().covariance->at(0U, 0U) - 1.0) < 1.0e-12,
+               "installed known-covariance GLS API failed")) {
+    return 1;
+  }
+
+  Matrix reductionInput(2U, 2U);
+  reductionInput.at(0U, 0U) = 3.0;
+  const Limits reductionLimits{
+      .elements = 4096U, .bytes = 262144U, .evaluations = 64U};
+  const auto reduced = linear::lowRankApproximation(reductionInput.view(), 1U,
+                                                    glsPolicy, reductionLimits);
+  if (!require(reduced.hasValue() && reduced.value().singular.at(0U) == 3.0 &&
+                   reduced.value().residual_frobenius == 0.0,
+               "installed low-rank approximation API failed")) {
+    return 1;
+  }
+  Matrix sampleRows(4U, 2U);
+  sampleRows.at(0U, 0U) = 2.0;
+  sampleRows.at(1U, 0U) = -2.0;
+  sampleRows.at(2U, 1U) = 1.0;
+  sampleRows.at(3U, 1U) = -1.0;
+  const std::array<Index, 1U> sampleShape{2U};
+  const SampleView sampleView{
+      .rows = sampleRows.view(), .observation_shape = sampleShape, .valid = {}};
+  const auto principal =
+      linear::pca(sampleView, 1U, true, glsPolicy, reductionLimits);
+  if (!require(principal.hasValue() &&
+                   std::abs(principal.value().explained_variance.at(0U) -
+                            (8.0 / 3.0)) < 1.0e-12,
+               "installed centered PCA API failed")) {
+    return 1;
+  }
+
+  Matrix propagatedCovariance(2U, 2U);
+  propagatedCovariance.at(0U, 0U) = 4.0;
+  propagatedCovariance.at(1U, 1U) = 9.0;
+  const PropagationResult propagated{
+      .mean = Vector{std::array<Scalar, 2U>{2.0, -3.0}},
+      .covariance = propagatedCovariance,
+      .method = Approximation::exact,
+      .diagnostics = {},
+      .covariance_check = PropagationCovarianceCheck::positive_semidefinite};
+  const auto uncertainty = covariance::summarizeUncertainty(
+      propagated, 2.0, std::nullopt, std::nullopt, reductionLimits);
+  if (!require(uncertainty.hasValue() &&
+                   uncertainty.value().standard.at(0U) == 2.0 &&
+                   uncertainty.value().expanded.at(1U) == 6.0,
+               "installed uncertainty summary API failed")) {
+    return 1;
+  }
+
+  const std::array<Index, 1U> marginalIndex{1U};
+  const auto marginal = covariance::marginalCovariance(
+      jointCovariance.view(), marginalIndex, glsPolicy, reductionLimits);
+  const auto inverseRoot = covariance::inverseSquareRoot(
+      jointCovariance.view(), glsPolicy, reductionLimits);
+  if (!require(marginal.hasValue() && marginal.value().at(0U, 0U) == 9.0 &&
+                   inverseRoot.hasValue() && inverseRoot.value().rank == 2U,
+               "installed covariance diagnostic APIs failed")) {
+    return 1;
+  }
+
+  const auto jointDeterminant = covariance::determinant(
+      jointCovariance.view(), glsPolicy, reductionLimits);
+  const auto jointLogDeterminant = covariance::logAbsoluteDeterminant(
+      jointCovariance.view(), glsPolicy, reductionLimits);
+  if (!require(jointDeterminant.hasValue() && jointLogDeterminant.hasValue() &&
+                   std::abs(jointDeterminant.value() - 27.0) < 1.0e-12 &&
+                   std::abs(jointLogDeterminant.value() - std::log(27.0)) <
+                       1.0e-12,
+               "installed determinant diagnostic APIs failed")) {
+    return 1;
+  }
+
+  Matrix leftMap(1U, 1U, 2.0);
+  Matrix sourceCross(1U, 1U, 0.5);
+  Matrix rightMap(1U, 1U, 3.0);
+  const auto transformedCross = covariance::crossCovarianceFromMaps(
+      leftMap.view(), sourceCross.view(), rightMap.view(), reductionLimits);
+  if (!require(transformedCross.hasValue() &&
+                   transformedCross.value().at(0U, 0U) == 3.0,
+               "installed cross-covariance transformation API failed")) {
     return 1;
   }
 

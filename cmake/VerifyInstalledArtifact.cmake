@@ -127,6 +127,7 @@ set(vss_expected_files
   include/vss/math/PackedSymmetric.hpp
   include/vss/math/Result.hpp
   include/vss/math/Scaling.hpp
+  include/vss/math/SampleView.hpp
   include/vss/math/SecondMoment.hpp
   include/vss/math/Tolerance.hpp
   include/vss/math/Tensor.hpp
@@ -138,6 +139,10 @@ set(vss_expected_files
   include/vss/math/ThirdMoment.hpp
   include/vss/math/Vector.hpp
   include/vss/math/VectorView.hpp
+  include/vss/math/covariance/Conditioning.hpp
+  include/vss/math/covariance/Diagnostics.hpp
+  include/vss/math/covariance/PropagationResult.hpp
+  include/vss/math/covariance/UncertaintySummary.hpp
   include/vss/math/covariance/Covariance.hpp
   include/vss/math/differentiation/FiniteDifference.hpp
   include/vss/math/probability/ChiSquare.hpp
@@ -150,6 +155,7 @@ set(vss_expected_files
   include/vss/math/linear/LU.hpp
   include/vss/math/linear/QR.hpp
   include/vss/math/linear/RankAware.hpp
+  include/vss/math/linear/Reduction.hpp
   include/vss/math/linear/StructuredProducts.hpp
   include/vss/math/linear/SymmetricEigen.hpp
   include/vss/math/linear/TriangularSolve.hpp

@@ -65,6 +65,36 @@ Fixture provenance and expected bounds are documented alongside the test map.
   are compared as subspaces.
 - Covariance operations distinguish positive-definite, semidefinite, and
   non-semidefinite results, and do not silently repair input.
+- Schur complements use a bounded symmetric spectrum and the selected rank
+  policy to apply the signed pseudoinverse on retained directions. Conditional
+  covariance first validates the complete joint covariance as positive
+  semidefinite, preserves requested coordinate order, and reports the
+  conditional spectrum without projecting its result.
+- Covariance whitening constructs the symmetric inverse square root on the
+  retained positive support. It reports the discarded-space residual and
+  rejects vectors outside that support; Mahalanobis distance does not silently
+  project an incompatible residual.
+- Truncated low-rank approximation retains the requested leading SVD modes and
+  returns owning factors and the Frobenius residual without allocating the
+  full reconstruction; callers can form entries or materialize it when needed.
+  It applies to the supplied uncentered matrix. PCA accepts a complete shaped
+  population with rows as observations, centers each coordinate, reports
+  sample explained variance, and whitens only retained components with positive
+  sample variance.
+- Known-covariance generalized least squares whitens admitted stochastic
+  observation directions and enforces excluded covariance directions as exact
+  constraints. It returns parameter covariance only when every parameter
+  direction is identified; otherwise the covariance is disengaged and the
+  identified subspace is explicit.
+- Covariance diagnostics validate the complete joint matrix before extracting
+  ordered marginals or constructing the supported symmetric inverse square
+  root. Cross-covariance transforms preserve their rectangular source ordering
+  and evaluate the full two-map contraction without requiring a PSD test on the
+  cross block.
+- Determinants use scaled pivoted LU with numerical bounds and exact dyadic
+  elimination when those bounds cannot establish the sign, singularity, or
+  output range. Log magnitudes are evaluated from the scaled result, including
+  for nonzero determinants that overflow or underflow as scalars.
 - Finite-difference operations use deterministic formulas and callback order;
   invalid steps or callback results fail without publishing partial output.
 - Descriptive statistics and chi-square tail functions follow explicit domain,
