@@ -928,8 +928,9 @@ void rotateProduct(std::span<const Spectrum> factors, WideVector& values,
     }
     axisProduct(values, work, factor.values.size(), stride,
                 [&](Index row, Index col) {
-                  return transpose ? factor.basis.at(col, row)
-                                   : factor.basis.at(row, col);
+                  const Index source_row = transpose ? col : row;
+                  const Index source_col = transpose ? row : col;
+                  return factor.basis.at(source_row, source_col);
                 });
     values.swap(work);
   }
@@ -1588,6 +1589,22 @@ Result<StructuredCovariance> structuredCovariance(const StructuredSpec& spec,
     return forward<StructuredCovariance>(dimension.status());
   }
   const Index n = dimension.value();
+  Limits copy_budget = limits;
+  if (!reserve<Scalar>(copy_budget, spec.diagonal_or_lags.size()) ||
+      (spec.low_rank_or_points &&
+       !reserve<Scalar>(copy_budget, spec.low_rank_or_points->rows(),
+                        spec.low_rank_or_points->columns())) ||
+      !reserve<Matrix>(copy_budget, spec.factors.size(), 2)) {
+    return fail<StructuredCovariance>(
+        ErrorCode::ResourceLimit,
+        "owned covariance payload exceeds storage limits");
+  }
+  for (const auto& factor : spec.factors) {
+    if (!reserve<Scalar>(copy_budget, factor.size(), 2)) {
+      return fail<StructuredCovariance>(
+          ErrorCode::ResourceLimit, "copied covariance factors exceed limits");
+    }
+  }
   if (spec.kind == StructureKind::toeplitz &&
       bandwidth(spec.diagonal_or_lags) != 0) {
     auto spectrum = symmetricSpectrum(
@@ -1617,22 +1634,6 @@ Result<StructuredCovariance> structuredCovariance(const StructuredSpec& spec,
     }
   }
 
-  Limits copy_budget = limits;
-  if (!reserve<Scalar>(copy_budget, spec.diagonal_or_lags.size()) ||
-      (spec.low_rank_or_points &&
-       !reserve<Scalar>(copy_budget, spec.low_rank_or_points->rows(),
-                        spec.low_rank_or_points->columns())) ||
-      !reserve<Matrix>(copy_budget, spec.factors.size(), 2)) {
-    return fail<StructuredCovariance>(
-        ErrorCode::ResourceLimit,
-        "owned covariance payload exceeds storage limits");
-  }
-  for (const auto& factor : spec.factors) {
-    if (!reserve<Scalar>(copy_budget, factor.size(), 2)) {
-      return fail<StructuredCovariance>(
-          ErrorCode::ResourceLimit, "copied covariance factors exceed limits");
-    }
-  }
   std::vector<Matrix> canonical;
   canonical.reserve(spec.factors.size());
   for (const auto& factor : spec.factors) {

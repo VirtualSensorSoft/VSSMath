@@ -533,8 +533,7 @@ Result<Vector> apply(const BlockMatrix& matrix, ConstVectorView vector,
   bool has_previous = false;
   Extent row_terms = 0U;
   Extent max_terms = 0U;
-  for (Index i = 0U; i < blocks.size(); ++i) {
-    const auto& block = blocks[i];
+  for (const auto& block : blocks) {
     if (block.block_row >= row_extents.size() ||
         block.block_column >= column_extents.size()) {
       return failure<Vector>(ErrorCode::IndexOutOfRange,
@@ -1000,8 +999,8 @@ Result<LinearEstimate> solveBanded(const BandMatrix& band, ConstMatrixView rhs,
       if (!(std::abs(diagonal) > cutoff)) {
         continue;
       }
-      if (result.identified_basis) {
-        result.identified_basis->at(i, basis_column++) = 1.0;
+      if (auto& basis_output = result.identified_basis; basis_output) {
+        basis_output->at(i, basis_column++) = 1.0;
       }
       for (Index column = 0U; column < p; ++column) {
         const Wide value =

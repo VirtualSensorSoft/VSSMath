@@ -38,15 +38,15 @@ struct LinearMap final {
                                                   Limits limits);
 
 /// @brief Solves a square compact-band system for one or more right-hand sides.
-[[nodiscard]] Result<LinearEstimate>
-solveBanded(const BandMatrix& matrix, ConstMatrixView right_hand_sides,
-            SolvePolicy policy, Limits limits);
+[[nodiscard]] Result<LinearEstimate> solveBanded(const BandMatrix& band,
+                                                 ConstMatrixView rhs,
+                                                 SolvePolicy policy,
+                                                 Limits limits);
 
 /// @brief Solves a block-diagonal least-squares system with one global cutoff.
 [[nodiscard]] Result<LinearEstimate>
-solveBlockDiagonal(const BlockDiagonal& matrix,
-                   ConstMatrixView right_hand_sides, SolvePolicy policy,
-                   Limits limits);
+solveBlockDiagonal(const BlockDiagonal& matrix, ConstMatrixView rhs,
+                   SolvePolicy policy, Limits limits);
 
 /// @brief Solves a bounded square-root augmented regularized least-squares
 /// problem.

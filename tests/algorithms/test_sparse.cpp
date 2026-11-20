@@ -4,6 +4,7 @@
 #include <limits>
 #include <span>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Vector.hpp>

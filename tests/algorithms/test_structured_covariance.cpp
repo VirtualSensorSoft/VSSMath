@@ -2,8 +2,15 @@
 
 #include <array>
 #include <cmath>
-#include <span>
+#include <initializer_list>
+#include <optional>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/covariance/Structured.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace {
 using namespace vss::math;
@@ -15,14 +22,15 @@ constexpr Limits budget{
 
 Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
   const Index n = rows.size();
-  const Index m = n ? rows.begin()->size() : 0U;
+  const Index m = n != 0 ? rows.begin()->size() : 0U;
   Matrix out(n, m, 0.0);
   Index i = 0;
   for (const auto& row : rows) {
     VSS_CHECK(row.size() == m);
     Index j = 0;
-    for (Scalar x : row)
+    for (const Scalar x : row) {
       out.at(i, j++) = x;
+    }
     ++i;
   }
   return out;
@@ -31,7 +39,7 @@ Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
 void diagonalLowRankAndRankAwareSolve() {
   const Vector diagonal(std::array<Scalar, 2>{1.0, 2.0});
   const Matrix u = matrix({{1.0}, {1.0}});
-  StructuredSpec spec{
+  const StructuredSpec spec{
       StructureKind::diagonal_low_rank, diagonal.view(), u.view(), {}, {}, {}};
   auto covariance = structuredCovariance(spec, SolvePolicy{}, budget);
   VSS_CHECK(covariance.hasValue());
@@ -164,8 +172,8 @@ void factorizedKroneckerUsesGlobalCutoffAndOriginalResidual() {
   VSS_CHECK(cutoff.hasValue() && cutoff.value().rank == 1);
   VSS_CHECK(cutoff.value().rank_cutoff == 10);
   VSS_CHECK(cutoff.value().parameters.at(1, 0) == 1);
-  VSS_CHECK(cutoff.value().identified_basis &&
-            cutoff.value().identified_basis->at(1, 0) == 1);
+  VSS_CHECK(cutoff.value().identified_basis.has_value() &&
+            cutoff.value().identified_basis.value().at(1, 0) == 1);
   VSS_CHECK(std::abs(cutoff.value().residual_norms.at(0) - std::sqrt(9106.0)) <
             1e-12);
   const auto iterative =

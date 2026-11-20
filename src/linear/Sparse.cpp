@@ -1,9 +1,17 @@
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <span>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/linear/Sparse.hpp>
 
 namespace vss::math::linear {

@@ -2,12 +2,22 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <initializer_list>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/Structured.hpp>
+#include <vss/math/linear/StructuredProducts.hpp>
 
 namespace {
 
@@ -167,7 +177,7 @@ void regularizedLeastSquaresUsesSquareRootAugmentation() {
 
   const Matrix large_design = matrix({{1.0e308}});
   const Matrix large_observations = matrix({{1.0e308}});
-  linear::LinearMap large_penalty{
+  const linear::LinearMap large_penalty{
       .rows = 1U,
       .columns = 1U,
       .apply =

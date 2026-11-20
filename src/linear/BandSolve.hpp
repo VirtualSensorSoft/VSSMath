@@ -3,9 +3,19 @@
 
 #include "DenseWorkspace.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <vector>
-#include <vss/math/linear/Structured.hpp>
+#include <vss/math/Core.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/linear/RankAware.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
+#include <vss/math/linear/StructuredProducts.hpp>
 
 namespace vss::math::linear::detail {
 namespace band_detail {
