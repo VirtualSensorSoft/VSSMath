@@ -1,15 +1,30 @@
 #include "Test.hpp"
 
+#include <array>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
+#include <optional>
+#include <stdexcept>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/covariance/UncertaintySummary.hpp>
 
 namespace {
 
 using namespace vss::math;
+
+template <class T> const T& required(const std::optional<T>& value) {
+  if (!value.has_value()) {
+    throw std::logic_error("expected an engaged optional test result");
+  }
+  return value.value();
+}
 
 Limits limits() { return {4096U, 262144U, 0U}; }
 
@@ -35,9 +50,9 @@ void scalarAndRectangularTransforms() {
   VSS_CHECK(rectangular.value().at(0U, 0U) == -2.0);
   VSS_CHECK(rectangular.value().at(1U, 0U) == 0.0);
 
-  const Matrix reversedLeft = right1;
+  const Matrix& reversedLeft = right1;
   const Matrix reversedBlock = matrix({{1.0, 1.0}, {1.0, -1.0}});
-  const Matrix reversedRight = left2;
+  const Matrix& reversedRight = left2;
   const auto reversed = covariance::crossCovarianceFromMaps(
       reversedLeft.view(), reversedBlock.view(), reversedRight.view(),
       limits());
@@ -112,8 +127,8 @@ void uncertaintySummaries() {
   const auto bounded = covariance::summarizeUncertainty(
       value, 0.0, lower.view(), upper.view(), limits());
   VSS_CHECK(bounded.hasValue());
-  VSS_CHECK(bounded.value().lower->at(0U) == -1.0);
-  VSS_CHECK(bounded.value().upper->at(1U) == 1.0);
+  VSS_CHECK(required(bounded.value().lower).at(0U) == -1.0);
+  VSS_CHECK(required(bounded.value().upper).at(1U) == 1.0);
   VSS_CHECK(bounded.value().expanded.at(0U) == 0.0);
 
   auto rejected = [&](const PropagationResult& candidate, Scalar factor,
