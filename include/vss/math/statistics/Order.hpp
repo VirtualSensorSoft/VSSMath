@@ -77,6 +77,25 @@ namespace vss::math::statistics {
 ///       are scaled by the smallest observation.
 [[nodiscard]] Result<Scalar> harmonicMean(ConstVectorView values);
 
+/// @brief Computes the scaled median absolute deviation of finite observations.
+/// @param values Borrowed observations; they are not modified.
+/// @param scale Finite nonnegative scale applied to the unscaled MAD.
+/// @param limits Per-call scratch and result storage limits.
+/// @return The scaled MAD, or a documented input, resource, or range failure.
+/// @note The center and deviation median both use the linear empirical median.
+///       Complexity is O(N log N) time and O(N) auxiliary storage.
+[[nodiscard]] Result<Scalar>
+medianAbsoluteDeviation(ConstVectorView values, Scalar scale, Limits limits);
+
+/// @brief Computes the interquartile range under the selected quantile rule.
+/// @param values Borrowed observations; they are not modified.
+/// @param rule Empirical quantile convention used at probabilities 0.25/0.75.
+/// @param limits Per-call scratch and result storage limits.
+/// @return q(0.75)-q(0.25), or a documented input, resource, or range failure.
+/// @note Complexity is O(N log N) time and O(N) auxiliary storage.
+[[nodiscard]] Result<Scalar>
+interquartileRange(ConstVectorView values, QuantileRule rule, Limits limits);
+
 } // namespace vss::math::statistics
 
 #endif // VSS_MATH_STATISTICS_ORDER_HPP

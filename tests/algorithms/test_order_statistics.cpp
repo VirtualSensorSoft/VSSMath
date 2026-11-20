@@ -52,6 +52,10 @@ void publicSignatures() {
       vss::math::Result<Scalar> (*)(vss::math::ConstVectorView, Scalar, Limits);
   using PositiveMeanSignature =
       vss::math::Result<Scalar> (*)(vss::math::ConstVectorView);
+  using MadSignature =
+      vss::math::Result<Scalar> (*)(vss::math::ConstVectorView, Scalar, Limits);
+  using IqrSignature = vss::math::Result<Scalar> (*)(vss::math::ConstVectorView,
+                                                     QuantileRule, Limits);
   static_assert(std::is_same_v<decltype(static_cast<QuantileSignature>(
                                    &vss::math::statistics::quantile)),
                                QuantileSignature>);
@@ -70,6 +74,76 @@ void publicSignatures() {
   static_assert(std::is_same_v<decltype(static_cast<PositiveMeanSignature>(
                                    &vss::math::statistics::harmonicMean)),
                                PositiveMeanSignature>);
+  static_assert(
+      std::is_same_v<decltype(static_cast<MadSignature>(
+                         &vss::math::statistics::medianAbsoluteDeviation)),
+                     MadSignature>);
+  static_assert(std::is_same_v<decltype(static_cast<IqrSignature>(
+                                   &vss::math::statistics::interquartileRange)),
+                               IqrSignature>);
+}
+
+void robustOrderSummaryCases() {
+  const Vector values = vector({1.0, 2.0, 3.0, 5.0});
+  checkNear(vss::math::statistics::medianAbsoluteDeviation(values.view(), 1.0,
+                                                           unlimited)
+                .value(),
+            1.0);
+  checkNear(vss::math::statistics::medianAbsoluteDeviation(values.view(), 0.0,
+                                                           unlimited)
+                .value(),
+            0.0);
+  checkNear(vss::math::statistics::interquartileRange(
+                values.view(), QuantileRule::linear, unlimited)
+                .value(),
+            1.75);
+  checkNear(vss::math::statistics::interquartileRange(
+                values.view(), QuantileRule::inverse_empirical, unlimited)
+                .value(),
+            2.0);
+
+  const Vector empty;
+  checkFailure(vss::math::statistics::medianAbsoluteDeviation(empty.view(), 1.0,
+                                                              unlimited),
+               ErrorCode::InsufficientSamples);
+  checkFailure(vss::math::statistics::interquartileRange(
+                   empty.view(), QuantileRule::linear, unlimited),
+               ErrorCode::InsufficientSamples);
+  checkFailure(vss::math::statistics::medianAbsoluteDeviation(values.view(),
+                                                              -1.0, unlimited),
+               ErrorCode::InvalidDomain);
+  checkFailure(
+      vss::math::statistics::medianAbsoluteDeviation(
+          values.view(), std::numeric_limits<Scalar>::infinity(), unlimited),
+      ErrorCode::InvalidDomain);
+  checkFailure(vss::math::statistics::interquartileRange(
+                   values.view(), static_cast<QuantileRule>(255U), unlimited),
+               ErrorCode::InvalidDomain);
+  const Vector nonfinite =
+      vector({1.0, std::numeric_limits<Scalar>::infinity()});
+  checkFailure(vss::math::statistics::medianAbsoluteDeviation(nonfinite.view(),
+                                                              1.0, unlimited),
+               ErrorCode::NonFiniteInput);
+  checkFailure(vss::math::statistics::interquartileRange(
+                   nonfinite.view(), QuantileRule::linear, unlimited),
+               ErrorCode::NonFiniteInput);
+  const Limits tooSmall{1U, std::numeric_limits<std::size_t>::max(), 0U};
+  checkFailure(vss::math::statistics::medianAbsoluteDeviation(values.view(),
+                                                              1.0, tooSmall),
+               ErrorCode::ResourceLimit);
+  checkFailure(vss::math::statistics::interquartileRange(
+                   values.view(), QuantileRule::linear, tooSmall),
+               ErrorCode::ResourceLimit);
+
+  const Scalar maximum = std::numeric_limits<Scalar>::max();
+  const Vector largeMad = vector({-1.0, 1.0, 3.0, 5.0});
+  checkFailure(vss::math::statistics::medianAbsoluteDeviation(
+                   largeMad.view(), maximum, unlimited),
+               ErrorCode::NonFiniteResult);
+  const Vector wideIqr = vector({-maximum, -maximum, maximum, maximum});
+  checkFailure(vss::math::statistics::interquartileRange(
+                   wideIqr.view(), QuantileRule::linear, unlimited),
+               ErrorCode::NonFiniteResult);
 }
 
 void quantileCases() {
@@ -312,6 +386,7 @@ int main() {
   geometricMeanCases();
   harmonicMeanCases();
   positiveMeanExtremes();
+  robustOrderSummaryCases();
 }
 
 // VSS-MATH-TRACEABILITY: STAT-ORDER-01

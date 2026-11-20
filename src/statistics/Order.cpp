@@ -370,4 +370,87 @@ Result<Scalar> harmonicMean(ConstVectorView values) {
   return Result<Scalar>::success(result);
 }
 
+Result<Scalar> medianAbsoluteDeviation(ConstVectorView values, Scalar scale,
+                                       Limits limits) {
+  const Status extent = validateExtent(values);
+  if (!extent.ok()) {
+    return Result<Scalar>::failure(extent.code(),
+                                   std::string(extent.message()));
+  }
+  if (!std::isfinite(scale) || scale < 0.0) {
+    return failure<Scalar>(ErrorCode::InvalidDomain,
+                           "MAD scale must be finite and nonnegative");
+  }
+  const Status validation = validateFinite(values);
+  if (!validation.ok()) {
+    return Result<Scalar>::failure(validation.code(),
+                                   std::string(validation.message()));
+  }
+  auto sortedResult = sortedCopy(values, limits);
+  if (!sortedResult.hasValue()) {
+    return Result<Scalar>::failure(
+        sortedResult.status().code(),
+        std::string(sortedResult.status().message()));
+  }
+  auto deviations = std::move(sortedResult).value();
+  const Scalar center = linearQuantile(deviations, 0.5);
+  for (Scalar& value : deviations) {
+    value = std::abs(value - center);
+  }
+  std::stable_sort(deviations.begin(), deviations.end());
+
+  Scalar unscaledMad = 0.0;
+  if ((deviations.size() % 2U) == 1U) {
+    unscaledMad = deviations[deviations.size() / 2U];
+  } else {
+    const Scalar lower = deviations[(deviations.size() / 2U) - 1U];
+    const Scalar upper = deviations[deviations.size() / 2U];
+    unscaledMad = std::isinf(upper) ? upper : std::lerp(lower, upper, 0.5);
+  }
+  const Scalar result = scale == 0.0 ? 0.0 : scale * unscaledMad;
+  if (!std::isfinite(result)) {
+    return failure<Scalar>(
+        ErrorCode::NonFiniteResult,
+        "scaled median absolute deviation is not representable");
+  }
+  return Result<Scalar>::success(result);
+}
+
+Result<Scalar> interquartileRange(ConstVectorView values, QuantileRule rule,
+                                  Limits limits) {
+  const Status extent = validateExtent(values);
+  if (!extent.ok()) {
+    return Result<Scalar>::failure(extent.code(),
+                                   std::string(extent.message()));
+  }
+  if (!validRule(rule)) {
+    return failure<Scalar>(ErrorCode::InvalidDomain,
+                           "interquartile quantile rule is invalid");
+  }
+  const Status validation = validateFinite(values);
+  if (!validation.ok()) {
+    return Result<Scalar>::failure(validation.code(),
+                                   std::string(validation.message()));
+  }
+  auto sortedResult = sortedCopy(values, limits);
+  if (!sortedResult.hasValue()) {
+    return Result<Scalar>::failure(
+        sortedResult.status().code(),
+        std::string(sortedResult.status().message()));
+  }
+  const auto& sorted = sortedResult.value();
+  const Scalar lower = rule == QuantileRule::linear
+                           ? linearQuantile(sorted, 0.25)
+                           : inverseEmpiricalQuantile(sorted, 0.25);
+  const Scalar upper = rule == QuantileRule::linear
+                           ? linearQuantile(sorted, 0.75)
+                           : inverseEmpiricalQuantile(sorted, 0.75);
+  const Scalar result = upper - lower;
+  if (!std::isfinite(result)) {
+    return failure<Scalar>(ErrorCode::NonFiniteResult,
+                           "interquartile range is not representable");
+  }
+  return Result<Scalar>::success(result);
+}
+
 } // namespace vss::math::statistics

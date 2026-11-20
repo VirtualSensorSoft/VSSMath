@@ -596,13 +596,19 @@ int main() {
       statistics::trimmedMean(orderSample.view(), 0.25, orderLimits);
   const auto installedGeometric = statistics::geometricMean(orderSample.view());
   const auto installedHarmonic = statistics::harmonicMean(orderSample.view());
+  const auto installedMad =
+      statistics::medianAbsoluteDeviation(orderSample.view(), 1.0, orderLimits);
+  const auto installedIqr = statistics::interquartileRange(
+      orderSample.view(), QuantileRule::linear, orderLimits);
   if (!require(
           installedQuantile.hasValue() && installedQuantile.value() == 1.75 &&
               installedTrimmed.hasValue() && installedTrimmed.value() == 3.0 &&
               installedGeometric.hasValue() &&
               std::abs(installedGeometric.value() - std::sqrt(8.0)) < 1.0e-12 &&
               installedHarmonic.hasValue() &&
-              std::abs(installedHarmonic.value() - 32.0 / 15.0) < 1.0e-12,
+              std::abs(installedHarmonic.value() - 32.0 / 15.0) < 1.0e-12 &&
+              installedMad.hasValue() && installedMad.value() == 1.5 &&
+              installedIqr.hasValue() && installedIqr.value() == 3.25,
           "installed order-statistics API failed")) {
     return 1;
   }
