@@ -50,6 +50,8 @@ void publicSignatures() {
       vss::math::Result<Scalar> (*)(vss::math::ConstVectorView, Limits);
   using TailMeanSignature =
       vss::math::Result<Scalar> (*)(vss::math::ConstVectorView, Scalar, Limits);
+  using PositiveMeanSignature =
+      vss::math::Result<Scalar> (*)(vss::math::ConstVectorView);
   static_assert(std::is_same_v<decltype(static_cast<QuantileSignature>(
                                    &vss::math::statistics::quantile)),
                                QuantileSignature>);
@@ -62,6 +64,12 @@ void publicSignatures() {
   static_assert(std::is_same_v<decltype(static_cast<TailMeanSignature>(
                                    &vss::math::statistics::winsorizedMean)),
                                TailMeanSignature>);
+  static_assert(std::is_same_v<decltype(static_cast<PositiveMeanSignature>(
+                                   &vss::math::statistics::geometricMean)),
+                               PositiveMeanSignature>);
+  static_assert(std::is_same_v<decltype(static_cast<PositiveMeanSignature>(
+                                   &vss::math::statistics::harmonicMean)),
+                               PositiveMeanSignature>);
 }
 
 void quantileCases() {
@@ -225,6 +233,73 @@ void extremeFiniteValues() {
                 .value() == maximum);
 }
 
+void geometricMeanCases() {
+  const Vector values = vector({1.0, 4.0});
+  checkNear(vss::math::statistics::geometricMean(values.view()).value(), 2.0);
+  const Vector scaled = vector({8.0, 32.0});
+  checkNear(vss::math::statistics::geometricMean(scaled.view()).value(), 16.0);
+  const Vector empty;
+  checkFailure(vss::math::statistics::geometricMean(empty.view()),
+               ErrorCode::InsufficientSamples);
+  const Vector zero = vector({0.0, 1.0});
+  checkFailure(vss::math::statistics::geometricMean(zero.view()),
+               ErrorCode::InvalidDomain);
+  const Vector negative = vector({-1.0, 2.0});
+  checkFailure(vss::math::statistics::geometricMean(negative.view()),
+               ErrorCode::InvalidDomain);
+  const Vector nonfinite =
+      vector({1.0, std::numeric_limits<Scalar>::infinity()});
+  checkFailure(vss::math::statistics::geometricMean(nonfinite.view()),
+               ErrorCode::NonFiniteInput);
+}
+
+void harmonicMeanCases() {
+  const Vector values = vector({1.0, 3.0});
+  checkNear(vss::math::statistics::harmonicMean(values.view()).value(), 1.5);
+  const Vector conventional = vector({1.0, 4.0});
+  checkNear(vss::math::statistics::harmonicMean(conventional.view()).value(),
+            1.6);
+  const Vector empty;
+  checkFailure(vss::math::statistics::harmonicMean(empty.view()),
+               ErrorCode::InsufficientSamples);
+  const Vector zero = vector({0.0, 1.0});
+  checkFailure(vss::math::statistics::harmonicMean(zero.view()),
+               ErrorCode::InvalidDomain);
+  const Vector negative = vector({-1.0, 2.0});
+  checkFailure(vss::math::statistics::harmonicMean(negative.view()),
+               ErrorCode::InvalidDomain);
+  const Vector nonfinite =
+      vector({1.0, std::numeric_limits<Scalar>::infinity()});
+  checkFailure(vss::math::statistics::harmonicMean(nonfinite.view()),
+               ErrorCode::NonFiniteInput);
+}
+
+void positiveMeanExtremes() {
+  const Scalar smallest = std::numeric_limits<Scalar>::denorm_min();
+  const Scalar largest = std::numeric_limits<Scalar>::max();
+  const Vector smallestOnly = vector({smallest});
+  const Vector largestOnly = vector({largest});
+  VSS_CHECK(vss::math::statistics::geometricMean(smallestOnly.view()).value() ==
+            smallest);
+  VSS_CHECK(vss::math::statistics::harmonicMean(smallestOnly.view()).value() ==
+            smallest);
+  VSS_CHECK(vss::math::statistics::geometricMean(largestOnly.view()).value() ==
+            largest);
+  VSS_CHECK(vss::math::statistics::harmonicMean(largestOnly.view()).value() ==
+            largest);
+
+  const Vector extremes = vector({smallest, largest});
+  const auto geometric = vss::math::statistics::geometricMean(extremes.view());
+  const auto harmonic = vss::math::statistics::harmonicMean(extremes.view());
+  VSS_CHECK(geometric.hasValue() && std::isfinite(geometric.value()));
+  VSS_CHECK(harmonic.hasValue() && harmonic.value() == 2.0 * smallest);
+  if (geometric.hasValue()) {
+    const Scalar expected = std::scalbn(1.0, -25);
+    VSS_CHECK(std::abs(std::log(geometric.value()) - std::log(expected)) <=
+              2.0e-12);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -234,6 +309,9 @@ int main() {
   trimmedMeanCases();
   winsorizedMeanCases();
   extremeFiniteValues();
+  geometricMeanCases();
+  harmonicMeanCases();
+  positiveMeanExtremes();
 }
 
 // VSS-MATH-TRACEABILITY: STAT-ORDER-01

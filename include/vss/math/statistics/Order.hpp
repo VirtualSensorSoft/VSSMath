@@ -61,6 +61,22 @@ namespace vss::math::statistics {
 [[nodiscard]] Result<Scalar> winsorizedMean(ConstVectorView values,
                                             Scalar fraction, Limits limits);
 
+/// @brief Computes the geometric mean of strictly positive finite observations.
+/// @param values Borrowed observations; they are not modified.
+/// @return The geometric mean or an insufficient-sample, domain, non-finite
+///         input, or numerical-result failure.
+/// @note Complexity: O(N) time and O(1) auxiliary storage. The logarithmic
+///       reduction is referenced to a power-of-two scale.
+[[nodiscard]] Result<Scalar> geometricMean(ConstVectorView values);
+
+/// @brief Computes the harmonic mean of strictly positive finite observations.
+/// @param values Borrowed observations; they are not modified.
+/// @return The harmonic mean or an insufficient-sample, domain, non-finite
+///         input, or numerical-result failure.
+/// @note Complexity: O(N) time and O(1) auxiliary storage. Reciprocal terms
+///       are scaled by the smallest observation.
+[[nodiscard]] Result<Scalar> harmonicMean(ConstVectorView values);
+
 } // namespace vss::math::statistics
 
 #endif // VSS_MATH_STATISTICS_ORDER_HPP

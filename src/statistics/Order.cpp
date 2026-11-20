@@ -40,6 +40,26 @@ Status validateFinite(ConstVectorView values) {
   return Status::success();
 }
 
+Status validatePositiveFinite(ConstVectorView values) {
+  const Status extent = validateExtent(values);
+  if (!extent.ok()) {
+    return extent;
+  }
+  const Status finite = validateFinite(values);
+  if (!finite.ok()) {
+    return finite;
+  }
+  for (Index index = 0U; index < values.size(); ++index) {
+    if (values.at(index) <= 0.0) {
+      return Status::failure(ErrorCode::InvalidDomain,
+                             "positive mean input is not strictly positive at "
+                             "index " +
+                                 std::to_string(index));
+    }
+  }
+  return Status::success();
+}
+
 Status preflightScratch(std::size_t count, Limits limits) {
   constexpr std::size_t scalarBytes = sizeof(Scalar);
   if (count > (std::numeric_limits<std::size_t>::max() - 1U) / 2U) {
@@ -189,6 +209,21 @@ Result<Scalar> sortedMean(ConstVectorView values, Scalar fraction,
   return Result<Scalar>::success(result);
 }
 
+Scalar clampRoundingExcursion(Scalar result, Scalar lower, Scalar upper,
+                              Scalar logResult) {
+  if (result == 0.0 &&
+      logResult >= std::nextafter(std::log(lower),
+                                  -std::numeric_limits<Scalar>::infinity())) {
+    return lower;
+  }
+  if (std::isinf(result) && result > 0.0 &&
+      logResult <= std::nextafter(std::log(upper),
+                                  std::numeric_limits<Scalar>::infinity())) {
+    return upper;
+  }
+  return result;
+}
+
 } // namespace
 
 Result<Scalar> quantile(ConstVectorView values, Scalar probability,
@@ -237,6 +272,102 @@ Result<Scalar> trimmedMean(ConstVectorView values, Scalar fraction,
 Result<Scalar> winsorizedMean(ConstVectorView values, Scalar fraction,
                               Limits limits) {
   return sortedMean(values, fraction, limits, true);
+}
+
+Result<Scalar> geometricMean(ConstVectorView values) {
+  const Status validation = validatePositiveFinite(values);
+  if (!validation.ok()) {
+    return Result<Scalar>::failure(validation.code(),
+                                   std::string(validation.message()));
+  }
+
+  Scalar minimum = values.at(0U);
+  Scalar maximum = values.at(0U);
+  for (Index index = 1U; index < values.size(); ++index) {
+    minimum = std::min(minimum, values.at(index));
+    maximum = std::max(maximum, values.at(index));
+  }
+  if (minimum == maximum) {
+    return Result<Scalar>::success(minimum);
+  }
+
+  int maximumExponent = 0;
+  static_cast<void>(std::frexp(maximum, &maximumExponent));
+  const int referenceExponent = maximumExponent - 1;
+  const Scalar reference = std::scalbn(1.0, referenceExponent);
+  const Scalar logReference = std::log(reference);
+  detail::CompensatedSum logRatios;
+  for (Index index = 0U; index < values.size(); ++index) {
+    const Scalar value = values.at(index);
+    const Scalar ratio = value / reference;
+    Scalar logRatio = 0.0;
+    if (ratio > 0.0) {
+      logRatio = std::log(ratio);
+    } else {
+      int valueExponent = 0;
+      const Scalar mantissa = std::frexp(value, &valueExponent);
+      logRatio = std::log(mantissa) +
+                 static_cast<Scalar>(valueExponent - referenceExponent) *
+                     std::log(2.0);
+    }
+    if (!std::isfinite(logRatio)) {
+      return failure<Scalar>(ErrorCode::NonFiniteResult,
+                             "geometric mean log ratio is not finite");
+    }
+    logRatios.add(logRatio);
+  }
+  const Scalar averageLogRatio =
+      logRatios.total() / static_cast<Scalar>(values.size());
+  const Scalar logResult = logReference + averageLogRatio;
+  if (!std::isfinite(averageLogRatio) || !std::isfinite(logResult)) {
+    return failure<Scalar>(ErrorCode::NonFiniteResult,
+                           "geometric mean logarithmic reduction failed");
+  }
+  const Scalar result =
+      clampRoundingExcursion(std::exp(logResult), minimum, maximum, logResult);
+  if (!std::isfinite(result) || result < minimum || result > maximum) {
+    return failure<Scalar>(ErrorCode::NonFiniteResult,
+                           "geometric mean reconstruction exceeded its bounds");
+  }
+  return Result<Scalar>::success(result);
+}
+
+Result<Scalar> harmonicMean(ConstVectorView values) {
+  const Status validation = validatePositiveFinite(values);
+  if (!validation.ok()) {
+    return Result<Scalar>::failure(validation.code(),
+                                   std::string(validation.message()));
+  }
+
+  Scalar minimum = values.at(0U);
+  for (Index index = 1U; index < values.size(); ++index) {
+    minimum = std::min(minimum, values.at(index));
+  }
+  detail::CompensatedSum scaledReciprocals;
+  for (Index index = 0U; index < values.size(); ++index) {
+    scaledReciprocals.add(minimum / values.at(index));
+  }
+  const Scalar denominator = scaledReciprocals.total();
+  const Scalar count = static_cast<Scalar>(values.size());
+  const Scalar factor = count / denominator;
+  if (!(denominator >= 1.0) || !std::isfinite(denominator) ||
+      !std::isfinite(factor)) {
+    return failure<Scalar>(ErrorCode::NonFiniteResult,
+                           "harmonic mean scaled denominator is invalid");
+  }
+  Scalar result = minimum * factor;
+  if (!std::isfinite(result)) {
+    const Scalar logResult =
+        std::log(minimum) + std::log(count) - std::log(denominator);
+    result =
+        clampRoundingExcursion(std::exp(logResult), minimum,
+                               std::numeric_limits<Scalar>::max(), logResult);
+  }
+  if (!std::isfinite(result) || result < minimum) {
+    return failure<Scalar>(ErrorCode::NonFiniteResult,
+                           "harmonic mean reconstruction is not finite");
+  }
+  return Result<Scalar>::success(result);
 }
 
 } // namespace vss::math::statistics
