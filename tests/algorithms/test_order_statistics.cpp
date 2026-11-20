@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
@@ -25,6 +26,10 @@ using vss::math::Vector;
 
 Vector vector(std::initializer_list<Scalar> values) {
   return Vector(std::vector<Scalar>(values));
+}
+
+QuantileRule ruleFromUnderlyingForTest(std::uint8_t value) {
+  return static_cast<QuantileRule>(value);
 }
 
 constexpr Limits unlimited{std::numeric_limits<std::size_t>::max(),
@@ -117,7 +122,7 @@ void robustOrderSummaryCases() {
           values.view(), std::numeric_limits<Scalar>::infinity(), unlimited),
       ErrorCode::InvalidDomain);
   checkFailure(vss::math::statistics::interquartileRange(
-                   values.view(), static_cast<QuantileRule>(255U), unlimited),
+                   values.view(), ruleFromUnderlyingForTest(255U), unlimited),
                ErrorCode::InvalidDomain);
   const Vector nonfinite =
       vector({1.0, std::numeric_limits<Scalar>::infinity()});
@@ -176,7 +181,7 @@ void quantileCases() {
                                                QuantileRule::linear, unlimited),
                ErrorCode::InvalidDomain);
   checkFailure(vss::math::statistics::quantile(values.view(), 0.5,
-                                               static_cast<QuantileRule>(255U),
+                                               ruleFromUnderlyingForTest(255U),
                                                unlimited),
                ErrorCode::InvalidDomain);
   const Vector nonfinite =
