@@ -20,6 +20,7 @@
 #include <vss/math/TensorOperations.hpp>
 #include <vss/math/TensorShape.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
 #include <vss/math/linear/LU.hpp>
@@ -376,6 +377,22 @@ int main() {
                    fullQr.value().permutation.view()[0U] == 1U &&
                    fullQr.value().rank == 2U,
                "installed full QR API failed")) {
+    return 1;
+  }
+
+  Matrix jointCovariance(2U, 2U);
+  jointCovariance.at(0U, 0U) = 4.0;
+  jointCovariance.at(0U, 1U) = 3.0;
+  jointCovariance.at(1U, 0U) = 3.0;
+  jointCovariance.at(1U, 1U) = 9.0;
+  const std::array<Index, 1U> kept{0U};
+  const std::array<Index, 1U> conditioned{1U};
+  const auto conditional = covariance::conditionalCovariance(
+      jointCovariance.view(), kept, conditioned, decompositionPolicy, limits);
+  if (!require(conditional.hasValue() && conditional.value().rank == 1U &&
+                   std::abs(conditional.value().covariance.at(0U, 0U) - 3.0) <
+                       1.0e-12,
+               "installed conditional covariance API failed")) {
     return 1;
   }
 

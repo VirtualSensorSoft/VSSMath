@@ -138,6 +138,7 @@ set(vss_expected_files
   include/vss/math/ThirdMoment.hpp
   include/vss/math/Vector.hpp
   include/vss/math/VectorView.hpp
+  include/vss/math/covariance/Conditioning.hpp
   include/vss/math/covariance/Covariance.hpp
   include/vss/math/differentiation/FiniteDifference.hpp
   include/vss/math/probability/ChiSquare.hpp

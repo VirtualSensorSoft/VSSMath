@@ -65,6 +65,11 @@ Fixture provenance and expected bounds are documented alongside the test map.
   are compared as subspaces.
 - Covariance operations distinguish positive-definite, semidefinite, and
   non-semidefinite results, and do not silently repair input.
+- Schur complements use a bounded symmetric spectrum and the selected rank
+  policy to apply the signed pseudoinverse on retained directions. Conditional
+  covariance first validates the complete joint covariance as positive
+  semidefinite, preserves requested coordinate order, and reports the
+  conditional spectrum without projecting its result.
 - Finite-difference operations use deterministic formulas and callback order;
   invalid steps or callback results fail without publishing partial output.
 - Descriptive statistics and chi-square tail functions follow explicit domain,
