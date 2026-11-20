@@ -56,6 +56,44 @@ bool finite(ConstMatrixView matrix) noexcept {
   return true;
 }
 
+Status validateSampleView(const SampleView& samples) {
+  Index flattened = 1U;
+  for (const Index extent : samples.observation_shape) {
+    if (extent == 0U) {
+      return Status::failure(ErrorCode::InvalidExtent,
+                             "sample observation extents must be positive");
+    }
+    if (!checkedMultiply(flattened, extent, flattened)) {
+      return Status::failure(ErrorCode::SizeOverflow,
+                             "sample observation shape overflows");
+    }
+  }
+  if (flattened != samples.rows.columns()) {
+    return Status::failure(ErrorCode::DimensionMismatch,
+                           "sample shape does not match row width");
+  }
+  Index cells = 0U;
+  if (!checkedMultiply(samples.rows.rows(), samples.rows.columns(), cells)) {
+    return Status::failure(ErrorCode::SizeOverflow,
+                           "sample population size overflows");
+  }
+  if (!samples.valid.empty() && samples.valid.size() != cells) {
+    return Status::failure(ErrorCode::DimensionMismatch,
+                           "sample validity mask has the wrong size");
+  }
+  for (const std::uint8_t observed : samples.valid) {
+    if (observed > 1U) {
+      return Status::failure(ErrorCode::InvalidDomain,
+                             "sample validity mask entries must be zero or one");
+    }
+    if (observed == 0U) {
+      return Status::failure(ErrorCode::InvalidDomain,
+                             "PCA requires complete observations");
+    }
+  }
+  return Status::success();
+}
+
 bool representable(long double value) noexcept {
   return std::isfinite(value) &&
          std::abs(value) <= std::numeric_limits<Scalar>::max() &&
@@ -97,19 +135,16 @@ Result<LowRank> lowRankApproximation(ConstMatrixView input, Index rank,
   const Index thin = std::min(rows, columns);
   if (rank > thin) {
     return failure<LowRank>(
-        ErrorCode::InvalidDomain,
+        ErrorCode::InvalidExtent,
         "requested approximation rank exceeds matrix shape");
   }
   Index leftElements = 0U;
   Index rightElements = 0U;
-  Index approximationElements = 0U;
   Index outputElements = 0U;
   if (!checkedMultiply(rows, rank, leftElements) ||
       !checkedMultiply(rank, columns, rightElements) ||
-      !checkedMultiply(rows, columns, approximationElements) ||
       !checkedAdd(leftElements, rightElements, outputElements) ||
-      !checkedAdd(outputElements, rank, outputElements) ||
-      !checkedAdd(outputElements, approximationElements, outputElements)) {
+      !checkedAdd(outputElements, rank, outputElements)) {
     return failure<LowRank>(ErrorCode::ResourceLimit,
                             "low-rank output dimensions overflow");
   }
@@ -141,7 +176,6 @@ Result<LowRank> lowRankApproximation(ConstMatrixView input, Index rank,
     }
   }
 
-  Matrix approximation(rows, columns, 0.0);
   ScaledSumSquares residual;
   for (Index row = 0U; row < rows; ++row) {
     for (Index column = 0U; column < columns; ++column) {
@@ -156,7 +190,6 @@ Result<LowRank> lowRankApproximation(ConstMatrixView input, Index rank,
         return failure<LowRank>(ErrorCode::NonFiniteResult,
                                 "low-rank reconstruction is not representable");
       }
-      approximation.at(row, column) = static_cast<Scalar>(reconstructed);
       residual.add(static_cast<long double>(input.at(row, column)) -
                    reconstructed);
     }
@@ -168,18 +201,15 @@ Result<LowRank> lowRankApproximation(ConstMatrixView input, Index rank,
   }
   return Result<LowRank>::success(
       {.left = std::move(left),
-       .singular_values = std::move(singular),
+       .singular = std::move(singular),
        .right_transpose = std::move(rightTranspose),
-       .approximation = std::move(approximation),
-       .residual_norm = static_cast<Scalar>(residualNorm),
-       .rank_cutoff = factor.value().cutoff});
+       .residual_frobenius = static_cast<Scalar>(residualNorm)});
 }
 
 Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
                 SolvePolicy policy, Limits limits) {
-  const Index count = samples.rows();
-  const Index dimensions = samples.columns();
-  const Index thin = std::min(count, dimensions);
+  const Index count = samples.rows.rows();
+  const Index dimensions = samples.rows.columns();
   if (count == 0U || dimensions == 0U) {
     return failure<PCA>(ErrorCode::InsufficientSamples,
                         "PCA requires observations and variables");
@@ -188,9 +218,15 @@ Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
     return failure<PCA>(ErrorCode::InsufficientSamples,
                         "PCA sample variance requires at least two rows");
   }
+  const Status sampleStatus = validateSampleView(samples);
+  if (!sampleStatus.ok()) {
+    return Result<PCA>::failure(sampleStatus.code(),
+                                std::string(sampleStatus.message()));
+  }
+  const Index thin = std::min(count - 1U, dimensions);
   if (rank > thin) {
-    return failure<PCA>(ErrorCode::InvalidDomain,
-                        "requested PCA rank exceeds sample matrix shape");
+    return failure<PCA>(ErrorCode::InvalidExtent,
+                        "requested PCA rank exceeds centered sample rank");
   }
 
   Index centeredElements = 0U;
@@ -212,7 +248,7 @@ Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
     return failure<PCA>(ErrorCode::ResourceLimit,
                         "PCA centered data and outputs exceed limits");
   }
-  if (!finite(samples)) {
+  if (!finite(samples.rows)) {
     return failure<PCA>(ErrorCode::NonFiniteInput,
                         "PCA samples must be finite");
   }
@@ -221,7 +257,7 @@ Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
   for (Index column = 0U; column < dimensions; ++column) {
     long double sum = 0.0L;
     for (Index row = 0U; row < count; ++row) {
-      sum += static_cast<long double>(samples.at(row, column));
+      sum += static_cast<long double>(samples.rows.at(row, column));
     }
     const long double mean = sum / static_cast<long double>(count);
     if (!representable(mean)) {
@@ -235,7 +271,7 @@ Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
   for (Index row = 0U; row < count; ++row) {
     for (Index column = 0U; column < dimensions; ++column) {
       const long double value =
-          static_cast<long double>(samples.at(row, column)) -
+          static_cast<long double>(samples.rows.at(row, column)) -
           static_cast<long double>(center.at(column));
       if (!representable(value)) {
         return failure<PCA>(ErrorCode::NonFiniteResult,
@@ -249,15 +285,15 @@ Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
   if (!factor.hasValue()) {
     return copyFailure<PCA>(factor.status());
   }
-  Matrix components(dimensions, rank, 0.0);
+  Matrix axes(dimensions, rank, 0.0);
   Matrix scores(count, rank, 0.0);
   Vector explained(rank, 0.0);
   const long double sampleDenominator = static_cast<long double>(count - 1U);
   for (Index mode = 0U; mode < rank; ++mode) {
     const Scalar singular = factor.value().singular.at(mode);
-    if (whiten && singular == 0.0) {
+    if (whiten && singular <= factor.value().cutoff) {
       return failure<PCA>(ErrorCode::RankDeficient,
-                          "PCA cannot whiten a zero-variance component");
+                          "PCA cannot whiten a zero or discarded component");
     }
     const long double sigma = singular;
     const long double variance = sigma * sigma / sampleDenominator;
@@ -267,7 +303,7 @@ Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
     }
     explained.at(mode) = static_cast<Scalar>(variance);
     for (Index dimension = 0U; dimension < dimensions; ++dimension) {
-      components.at(dimension, mode) =
+      axes.at(dimension, mode) =
           factor.value().right_transpose.at(mode, dimension);
     }
     for (Index row = 0U; row < count; ++row) {
@@ -286,11 +322,10 @@ Result<PCA> pca(const SampleView& samples, Index rank, bool whiten,
   }
 
   return Result<PCA>::success({.center = std::move(center),
-                               .components = std::move(components),
+                               .axes = std::move(axes),
                                .scores = std::move(scores),
                                .explained_variance = std::move(explained),
-                               .whitened = whiten,
-                               .rank_cutoff = factor.value().cutoff});
+                               .whitened = whiten});
 }
 
 } // namespace vss::math::linear

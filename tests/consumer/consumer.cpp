@@ -442,8 +442,8 @@ int main() {
   const auto reduced = linear::lowRankApproximation(reductionInput.view(), 1U,
                                                     glsPolicy, reductionLimits);
   if (!require(reduced.hasValue() &&
-                   reduced.value().singular_values.at(0U) == 3.0 &&
-                   reduced.value().residual_norm == 0.0,
+                   reduced.value().singular.at(0U) == 3.0 &&
+                   reduced.value().residual_frobenius == 0.0,
                "installed low-rank approximation API failed")) {
     return 1;
   }
@@ -452,12 +452,30 @@ int main() {
   sampleRows.at(1U, 0U) = -2.0;
   sampleRows.at(2U, 1U) = 1.0;
   sampleRows.at(3U, 1U) = -1.0;
+  const std::array<Index, 1U> sampleShape{2U};
+  const SampleView sampleView{sampleRows.view(), sampleShape, {}};
   const auto principal =
-      linear::pca(sampleRows.view(), 1U, true, glsPolicy, reductionLimits);
+      linear::pca(sampleView, 1U, true, glsPolicy, reductionLimits);
   if (!require(principal.hasValue() &&
                    std::abs(principal.value().explained_variance.at(0U) -
                             8.0 / 3.0) < 1.0e-12,
                "installed centered PCA API failed")) {
+    return 1;
+  }
+
+  Matrix propagatedCovariance(2U, 2U);
+  propagatedCovariance.at(0U, 0U) = 4.0;
+  propagatedCovariance.at(1U, 1U) = 9.0;
+  const PropagationResult propagated{
+      Vector{std::array<Scalar, 2U>{2.0, -3.0}}, propagatedCovariance,
+      Approximation::exact, {},
+      PropagationCovarianceCheck::positive_semidefinite};
+  const auto uncertainty = covariance::summarizeUncertainty(
+      propagated, 2.0, std::nullopt, std::nullopt, reductionLimits);
+  if (!require(uncertainty.hasValue() &&
+                   uncertainty.value().standard.at(0U) == 2.0 &&
+                   uncertainty.value().expanded.at(1U) == 6.0,
+               "installed uncertainty summary API failed")) {
     return 1;
   }
 

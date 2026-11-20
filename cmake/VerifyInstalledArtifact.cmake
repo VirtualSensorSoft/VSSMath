@@ -127,6 +127,7 @@ set(vss_expected_files
   include/vss/math/PackedSymmetric.hpp
   include/vss/math/Result.hpp
   include/vss/math/Scaling.hpp
+  include/vss/math/SampleView.hpp
   include/vss/math/SecondMoment.hpp
   include/vss/math/Tolerance.hpp
   include/vss/math/Tensor.hpp
