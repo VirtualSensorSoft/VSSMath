@@ -642,14 +642,21 @@ int main() {
   const Vector rowWeights{std::array<Scalar, 2U>{1.0, 2.0}};
   const statistics::WeightSpec empiricalWeights{
       WeightRule::empirical, rowWeights.view(), std::nullopt, {}};
+  const statistics::WeightSpec fixedWeights{
+      WeightRule::fixed_iid, rowWeights.view(), std::nullopt, {}};
   const SampleView weightedSample{weightedRows.view(), {}, {}};
   const auto weightedAverage = statistics::weightedMean(
       weightedSample, empiricalWeights, Limits{16U, 1024U, 0U});
   const auto weightedSpread = statistics::weightedEmpiricalCovariance(
       weightedSample, empiricalWeights, Limits{16U, 1024U, 0U});
+  const auto unbiasedSpread = statistics::unbiasedFixedWeightedCovariance(
+      weightedSample, fixedWeights, Limits{16U, 1024U, 0U});
   if (!require(weightedAverage.hasValue() && weightedSpread.hasValue() &&
+                   unbiasedSpread.hasValue() &&
                    weightedAverage.value().value.at(0U) == 2.0 &&
-                   weightedSpread.value().value.at(0U, 0U) == 2.0,
+                   weightedSpread.value().value.at(0U, 0U) == 2.0 &&
+                   std::abs(unbiasedSpread.value().value.at(0U, 0U) - 4.5) <
+                       1.0e-12,
                "installed weighted-population APIs failed")) {
     return 1;
   }

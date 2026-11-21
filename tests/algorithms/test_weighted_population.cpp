@@ -77,6 +77,13 @@ WeightSpec rowWeights(const Vector& values) {
           .frequencyCounts = {}};
 }
 
+WeightSpec fixedWeights(const Vector& values) {
+  return {.rule = WeightRule::fixed_iid,
+          .rowWeights = values.view(),
+          .componentWeights = std::nullopt,
+          .frequencyCounts = {}};
+}
+
 void weightedScalarMeanAndEmpiricalVariance() {
   const Matrix values = matrix({{0.0}, {3.0}});
   const Vector weights = vector({1.0, 2.0});
@@ -219,6 +226,70 @@ void covarianceUsesCompleteRowsAndRejectsNonFiniteValues() {
   VSS_CHECK(invalid.status().code() == ErrorCode::NonFiniteInput);
 }
 
+void fixedWeightUnbiasedCovariance() {
+  const Matrix values = matrix({{0.0}, {3.0}});
+  const Vector weights = vector({1.0, 2.0});
+  const Vector scaledWeights = vector({1.0e200, 2.0e200});
+  const auto estimate = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(weights), limits());
+  const auto scaled = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(scaledWeights), limits());
+  VSS_CHECK(estimate && scaled);
+  close(estimate.value().value.at(0U, 0U), 4.5);
+  close(scaled.value().value.at(0U, 0U), 4.5);
+  VSS_CHECK(estimate.value().diagnostics.weight == WeightRule::fixed_iid);
+
+  const Matrix equalValues = matrix({{0.0}, {2.0}, {4.0}});
+  const Vector equalWeights = vector({1.0, 1.0, 1.0});
+  const auto equal = unbiasedFixedWeightedCovariance(
+      sample(equalValues), fixedWeights(equalWeights), limits());
+  VSS_CHECK(equal);
+  close(equal.value().value.at(0U, 0U), 4.0);
+
+  const Matrix vectorValues = matrix({{0.0, 0.0}, {1.0, 2.0}, {2.0, 4.0}});
+  const Vector vectorWeights = vector({1.0, 2.0, 1.0});
+  const auto vectorEstimate = unbiasedFixedWeightedCovariance(
+      sample(vectorValues), fixedWeights(vectorWeights), limits());
+  VSS_CHECK(vectorEstimate);
+  close(vectorEstimate.value().value.at(0U, 0U), 0.8);
+  close(vectorEstimate.value().value.at(0U, 1U), 1.6);
+  close(vectorEstimate.value().value.at(1U, 1U), 3.2);
+}
+
+void fixedWeightCovarianceRejectsInvalidInputs() {
+  const Matrix values = matrix({{0.0}, {3.0}});
+  const Vector empirical = vector({1.0, 2.0});
+  const auto wrongRule = unbiasedFixedWeightedCovariance(
+      sample(values), rowWeights(empirical), limits());
+  VSS_CHECK(!wrongRule);
+  VSS_CHECK(wrongRule.status().code() == ErrorCode::InvalidDomain);
+
+  const Vector onePositive = vector({1.0, 0.0});
+  const auto insufficient = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(onePositive), limits());
+  VSS_CHECK(!insufficient);
+  VSS_CHECK(insufficient.status().code() == ErrorCode::InsufficientSamples);
+
+  const Vector invalid = vector({1.0, -1.0});
+  const auto negative = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(invalid), limits());
+  VSS_CHECK(!negative);
+  VSS_CHECK(negative.status().code() == ErrorCode::InvalidDomain);
+
+  const Vector singular = vector({1.0, std::numeric_limits<Scalar>::min()});
+  const auto nearSingular = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(singular), limits());
+  VSS_CHECK(!nearSingular);
+  VSS_CHECK(nearSingular.status().code() == ErrorCode::InvalidDomain);
+
+  const Vector weights = vector({1.0, 1.0});
+  const auto limited = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(weights),
+      {.elements = 1U, .bytes = 1U, .evaluations = 0U});
+  VSS_CHECK(!limited);
+  VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+}
+
 void rejectsMalformedInputsAndUnrepresentableCovariance() {
   const Matrix values = matrix({{1.0}, {2.0}});
   const Vector oneWeight = vector({1.0});
@@ -262,6 +333,8 @@ int main() {
   masksAndInvalidWeights();
   rejectsUnsupportedRulesAndLimits();
   covarianceUsesCompleteRowsAndRejectsNonFiniteValues();
+  fixedWeightUnbiasedCovariance();
+  fixedWeightCovarianceRejectsInvalidInputs();
   rejectsMalformedInputsAndUnrepresentableCovariance();
   std::cout << "weighted population estimators passed\n";
 }

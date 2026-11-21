@@ -58,6 +58,27 @@ struct WeightSpec final {
 weightedEmpiricalCovariance(const SampleView& sample, const WeightSpec& weights,
                             Limits limits);
 
+/// @brief Estimates covariance corrected for fixed, observation-independent
+///        weights under an IID observation model.
+/// @param sample Rows of observations and optional cell-validity mask.
+/// @param fixedWeights A `fixed_iid` WeightSpec with one nonnegative row weight
+///        per observation; component and frequency weights are not accepted.
+/// @param limits Maximum output and simultaneously required workspace storage.
+/// @return Owned covariance and support diagnostics identifying the fixed-IID
+///         weighting premise.
+/// @details Uses C025's weighted empirical covariance divided by
+///          `1 - sum(a_i^2)`, where `a_i` are normalized weights over retained
+///          complete rows. The correction is accumulated as the stable
+///          unordered-pair sum `2 sum_{i<j}(s_i s_j) / (sum_i s_i)^2`, with
+///          maximum-scaled weights `s_i`. Requires at least two positive
+///          retained weights and rejects corrections no greater than
+///          `64 * epsilon`. This is unbiased only when weights are fixed
+///          independently of IID observations. Complexity is O(Nd^2); owned
+///          output and workspace are O(d^2).
+[[nodiscard]] Result<Estimate<Matrix>>
+unbiasedFixedWeightedCovariance(const SampleView& sample,
+                                const WeightSpec& fixedWeights, Limits limits);
+
 } // namespace vss::math::statistics
 
 #endif // VSS_MATH_STATISTICS_WEIGHTED_HPP
