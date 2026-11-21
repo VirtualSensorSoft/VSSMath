@@ -37,6 +37,7 @@
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/Sparse.hpp>
 #include <vss/math/linear/Structured.hpp>
+#include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Order.hpp>
 #include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/Weighted.hpp>
@@ -646,6 +647,14 @@ int main() {
   const statistics::WeightSpec fixedWeights{
       WeightRule::fixed_iid, rowWeights.view(), std::nullopt, {}};
   const SampleView weightedSample{weightedRows.view(), {}, {}};
+  const statistics::MomentRequest rawMomentRequest{
+      .orders = 0x03U,
+      .representation = statistics::MomentRepresentation::dense,
+      .selected = {},
+      .contraction = std::nullopt};
+  const auto installedMoments =
+      statistics::estimateRawMoments(weightedSample, empiricalWeights,
+                                     rawMomentRequest, Limits{128U, 4096U, 0U});
   const auto weightedAverage = statistics::weightedMean(
       weightedSample, empiricalWeights, Limits{16U, 1024U, 0U});
   const auto weightedSpread = statistics::weightedEmpiricalCovariance(
@@ -664,7 +673,13 @@ int main() {
   const auto precisionAverage = statistics::precisionWeightedMean(
       weightedSample, knownVariances.view(), Limits{16U, 1024U, 0U});
   if (!require(
-          weightedAverage.hasValue() && weightedSpread.hasValue() &&
+          installedMoments.hasValue() &&
+              installedMoments.value().terms.view().size() == 2U &&
+              std::abs(installedMoments.value().terms.view()[0].values.at(0U) -
+                       2.0) < 1.0e-12 &&
+              std::abs(installedMoments.value().terms.view()[1].values.at(0U) -
+                       6.0) < 1.0e-12 &&
+              weightedAverage.hasValue() && weightedSpread.hasValue() &&
               unbiasedSpread.hasValue() && meanSpread.hasValue() &&
               frequencySpread.hasValue() && precisionAverage.hasValue() &&
               weightedAverage.value().value.at(0U) == 2.0 &&
