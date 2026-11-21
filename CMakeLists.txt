@@ -64,7 +64,9 @@ add_library(vss_math STATIC
   src/statistics/Descriptive.cpp
   src/statistics/Order.cpp
   src/statistics/Population.cpp
+  src/statistics/Weighted.cpp
   include/vss/math/statistics/Population.hpp
+  include/vss/math/statistics/Weighted.hpp
   src/linear/Cholesky.cpp
   src/linear/LDLT.cpp
   src/linear/GeneralizedEigen.cpp
