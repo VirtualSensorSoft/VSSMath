@@ -1,6 +1,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -653,15 +654,23 @@ int main() {
       weightedSample, fixedWeights, Limits{16U, 1024U, 0U});
   const auto meanSpread = statistics::weightedMeanCovariance(
       weightedSample, fixedWeights, Limits{16U, 1024U, 0U});
-  if (!require(weightedAverage.hasValue() && weightedSpread.hasValue() &&
-                   unbiasedSpread.hasValue() && meanSpread.hasValue() &&
-                   weightedAverage.value().value.at(0U) == 2.0 &&
-                   weightedSpread.value().value.at(0U, 0U) == 2.0 &&
-                   std::abs(unbiasedSpread.value().value.at(0U, 0U) - 4.5) <
-                       1.0e-12 &&
-                   std::abs(meanSpread.value().value.at(0U, 0U) - 2.5) <
-                       1.0e-12,
-               "installed weighted-population APIs failed")) {
+  const std::array<std::uint64_t, 2U> frequencyCounts{1U, 2U};
+  const auto frequencySpread = statistics::frequencyWeightedCovariance(
+      weightedSample, frequencyCounts, statistics::VarianceMode::iid_sample,
+      Limits{16U, 1024U, 0U});
+  if (!require(
+          weightedAverage.hasValue() && weightedSpread.hasValue() &&
+              unbiasedSpread.hasValue() && meanSpread.hasValue() &&
+              frequencySpread.hasValue() &&
+              weightedAverage.value().value.at(0U) == 2.0 &&
+              weightedSpread.value().value.at(0U, 0U) == 2.0 &&
+              std::abs(unbiasedSpread.value().value.at(0U, 0U) - 4.5) <
+                  1.0e-12 &&
+              std::abs(meanSpread.value().value.at(0U, 0U) - 2.5) < 1.0e-12 &&
+              std::abs(frequencySpread.value().value.at(0U, 0U) - 3.0) <
+                  1.0e-12 &&
+              frequencySpread.value().diagnostics.global.frequency_mass == 3U,
+          "installed weighted-population APIs failed")) {
     return 1;
   }
 

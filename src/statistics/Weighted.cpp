@@ -4,6 +4,7 @@
 #include <detail/CompensatedSum.hpp>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -767,6 +768,231 @@ Result<Estimate<Matrix>> weightedMeanCovariance(const SampleView& sample,
       "complete rows are independent and identically distributed; row weights "
       "are fixed independently of observations";
   return covariance;
+}
+
+Result<Estimate<Matrix>>
+frequencyWeightedCovariance(const SampleView& sample,
+                            std::span<const std::uint64_t> counts,
+                            VarianceMode mode, Limits limits) {
+  const auto dimension = validateSample(sample);
+  if (!dimension) {
+    return fail<Estimate<Matrix>>(dimension.status().code(),
+                                  std::string(dimension.status().message()));
+  }
+  if (counts.size() != sample.rows.rows()) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::DimensionMismatch,
+        "frequency counts must match the observation count");
+  }
+  if (mode == VarianceMode::known_center) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::InvalidDomain,
+        "frequency covariance does not accept known-center normalization");
+  }
+  if (mode != VarianceMode::empirical && mode != VarianceMode::iid_sample) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::InvalidDomain,
+        "frequency covariance received an unknown variance mode");
+  }
+
+  const Extent columns = dimension.value();
+  const Extent maximum = std::numeric_limits<Extent>::max();
+  if (columns > maximum / columns) {
+    return fail<Estimate<Matrix>>(ErrorCode::SizeOverflow,
+                                  "frequency covariance extent overflows");
+  }
+  const Extent outputElements = columns * columns;
+  if (outputElements > maximum / sizeof(detail::CompensatedSum) ||
+      columns > maximum / (2U * sizeof(Scalar))) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::SizeOverflow,
+        "frequency covariance workspace bytes overflow");
+  }
+  const Extent outputBytes = outputElements * sizeof(Scalar);
+  const Extent accumulatorBytes =
+      outputElements * sizeof(detail::CompensatedSum);
+  const Extent vectorWorkspaceBytes = 2U * columns * sizeof(Scalar);
+  if (accumulatorBytes > maximum - vectorWorkspaceBytes) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::SizeOverflow,
+        "frequency covariance workspace bytes overflow");
+  }
+  const Extent workspaceBytes = accumulatorBytes + vectorWorkspaceBytes;
+  if (outputElements > maximum - (2U * columns) ||
+      workspaceBytes > maximum - outputBytes ||
+      !withinLimits(outputElements, outputElements + (2U * columns),
+                    outputBytes, workspaceBytes, limits)) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::ResourceLimit,
+        "frequency covariance exceeds configured limits");
+  }
+
+  Index validRows = 0U;
+  Index positiveRows = 0U;
+  std::uint64_t frequencyMass = 0U;
+  std::uint64_t maximumCount = 0U;
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (counts[row] == 0U || !completeRow(sample, row)) {
+      continue;
+    }
+    for (Index column = 0U; column < columns; ++column) {
+      if (!std::isfinite(sample.rows.at(row, column))) {
+        return fail<Estimate<Matrix>>(ErrorCode::NonFiniteInput,
+                                      "a retained frequency-weighted row "
+                                      "contains a non-finite coordinate");
+      }
+    }
+    if (counts[row] >
+        std::numeric_limits<std::uint64_t>::max() - frequencyMass) {
+      return fail<Estimate<Matrix>>(
+          ErrorCode::SizeOverflow,
+          "retained frequency count total overflows uint64_t");
+    }
+    frequencyMass += counts[row];
+    maximumCount = std::max(maximumCount, counts[row]);
+    ++validRows;
+    ++positiveRows;
+  }
+  const std::uint64_t minimumMass = mode == VarianceMode::iid_sample ? 2U : 1U;
+  if (frequencyMass < minimumMass) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::InsufficientSamples,
+        mode == VarianceMode::iid_sample
+            ? "IID frequency covariance requires at least two replications"
+            : "empirical frequency covariance requires positive replication "
+              "mass");
+  }
+
+  const auto countScale = static_cast<long double>(maximumCount);
+  detail::CompensatedSum scaledMassAccumulator;
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (counts[row] != 0U && completeRow(sample, row)) {
+      const auto scaledCount = static_cast<Scalar>(
+          static_cast<long double>(counts[row]) / countScale);
+      if (scaledCount == 0.0 || !std::isfinite(scaledCount)) {
+        return fail<Estimate<Matrix>>(
+            ErrorCode::NonFiniteResult,
+            "positive frequency count cannot be normalized representably");
+      }
+      scaledMassAccumulator.add(scaledCount);
+    }
+  }
+  const Scalar scaledMass = scaledMassAccumulator.total();
+  if (!(scaledMass > 0.0) || !std::isfinite(scaledMass)) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::NonFiniteResult,
+        "normalized frequency mass is not representable");
+  }
+
+  Vector scales(columns, 0.0);
+  Vector normalizedCenter(columns, 0.0);
+  for (Index column = 0U; column < columns; ++column) {
+    for (Index row = 0U; row < sample.rows.rows(); ++row) {
+      if (counts[row] != 0U && completeRow(sample, row)) {
+        scales.at(column) =
+            std::max(scales.at(column), std::abs(sample.rows.at(row, column)));
+      }
+    }
+    if (scales.at(column) == 0.0) {
+      continue;
+    }
+    detail::CompensatedSum coordinate;
+    for (Index row = 0U; row < sample.rows.rows(); ++row) {
+      if (counts[row] == 0U || !completeRow(sample, row)) {
+        continue;
+      }
+      const auto scaledCount = static_cast<Scalar>(
+          static_cast<long double>(counts[row]) / countScale);
+      coordinate.add(scaledCount *
+                     (sample.rows.at(row, column) / scales.at(column)));
+    }
+    normalizedCenter.at(column) = coordinate.total() / scaledMass;
+  }
+
+  std::vector<detail::CompensatedSum> products(outputElements);
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (counts[row] == 0U || !completeRow(sample, row)) {
+      continue;
+    }
+    const auto scaledCount =
+        static_cast<Scalar>(static_cast<long double>(counts[row]) / countScale);
+    for (Index left = 0U; left < columns; ++left) {
+      const Scalar leftDelta =
+          scales.at(left) == 0.0 ? 0.0
+                                 : sample.rows.at(row, left) / scales.at(left) -
+                                       normalizedCenter.at(left);
+      for (Index right = left; right < columns; ++right) {
+        const Scalar rightDelta =
+            scales.at(right) == 0.0
+                ? 0.0
+                : sample.rows.at(row, right) / scales.at(right) -
+                      normalizedCenter.at(right);
+        products[(left * columns) + right].add(scaledCount * leftDelta *
+                                               rightDelta);
+      }
+    }
+  }
+
+  Scalar denominator = scaledMass;
+  if (mode == VarianceMode::iid_sample) {
+    const auto total = static_cast<Scalar>(frequencyMass);
+    denominator *= (total - 1.0) / total;
+  }
+  if (!(denominator > 0.0) || !std::isfinite(denominator)) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::NonFiniteResult,
+        "frequency covariance denominator is not representable");
+  }
+
+  Matrix covariance(columns, columns, 0.0);
+  for (Index left = 0U; left < columns; ++left) {
+    for (Index right = left; right < columns; ++right) {
+      const Scalar normalized =
+          products[(left * columns) + right].total() / denominator;
+      const Scalar value =
+          scaledProduct(scales.at(left), scales.at(right), normalized);
+      if (!std::isfinite(value)) {
+        return fail<Estimate<Matrix>>(
+            ErrorCode::NonFiniteResult,
+            "frequency covariance is outside the finite scalar range");
+      }
+      covariance.at(left, right) = value;
+      covariance.at(right, left) = value;
+    }
+  }
+
+  const long double inverseMass =
+      1.0L / static_cast<long double>(frequencyMass);
+  const auto inverse = static_cast<Scalar>(inverseMass);
+  const Scalar inverseSquared = inverse * inverse;
+  const Support global{
+      .input = sample.rows.rows(),
+      .valid = validRows,
+      .positive = positiveRows,
+      .frequency_mass = frequencyMass,
+      .weight_mass = std::nullopt,
+      .normalized_weight_powers = {1.0, inverse, inverseSquared},
+      .effective_count = static_cast<Scalar>(frequencyMass),
+      .degrees_of_freedom =
+          mode == VarianceMode::iid_sample
+              ? std::optional<Scalar>{static_cast<Scalar>(frequencyMass - 1U)}
+              : std::nullopt,
+      .squared_weight_mass = std::nullopt};
+  auto supports = makeSupports(std::vector<Support>{}, limits);
+  if (!supports) {
+    return fail<Estimate<Matrix>>(supports.status().code(),
+                                  std::string(supports.status().message()));
+  }
+  auto diagnostics = diagnosticsFor(
+      WeightRule::frequency, global, std::move(supports).value(),
+      "checked-count-scaled compensated frequency covariance",
+      mode == VarianceMode::iid_sample
+          ? "complete rows represent replicated IID observations"
+          : "descriptive empirical covariance over integer replication counts");
+  return Result<Estimate<Matrix>>::success(
+      Estimate<Matrix>{.value = std::move(covariance),
+                       .diagnostics = std::move(diagnostics),
+                       .error_covariance = std::nullopt});
 }
 
 Result<Matrix> linearEstimateCovariance(ConstMatrixView map,

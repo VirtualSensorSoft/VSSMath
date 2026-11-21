@@ -18,6 +18,7 @@
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/Weighted.hpp>
 
 using namespace vss::math;
@@ -361,6 +362,84 @@ void rejectsMalformedInputsAndUnrepresentableCovariance() {
   VSS_CHECK(overflow.status().code() == ErrorCode::NonFiniteResult);
 }
 
+void frequencyWeightedCovarianceMatchesReplicatedObservations() {
+  const Matrix compressedValues = matrix({{1.0}, {4.0}});
+  const std::array<std::uint64_t, 2U> counts{2U, 1U};
+  const auto compressedSample = sample(compressedValues);
+  const auto empirical = frequencyWeightedCovariance(
+      compressedSample, counts, VarianceMode::empirical, limits());
+  const auto unbiased = frequencyWeightedCovariance(
+      compressedSample, counts, VarianceMode::iid_sample, limits());
+  VSS_CHECK(empirical && unbiased);
+  close(empirical.value().value.at(0U, 0U), 2.0);
+  close(unbiased.value().value.at(0U, 0U), 3.0);
+  VSS_CHECK(unbiased.value().diagnostics.weight == WeightRule::frequency);
+  VSS_CHECK(unbiased.value().diagnostics.global.frequency_mass == 3U);
+  VSS_CHECK(unbiased.value().diagnostics.global.positive == 2U);
+
+  const Matrix replicatedValues = matrix({{1.0}, {1.0}, {4.0}});
+  const Vector replicatedWeights = vector({1.0, 1.0, 1.0});
+  const auto replicated = unbiasedFixedWeightedCovariance(
+      sample(replicatedValues), fixedWeights(replicatedWeights), limits());
+  VSS_CHECK(replicated);
+  close(unbiased.value().value.at(0U, 0U), replicated.value().value.at(0U, 0U));
+}
+
+void frequencyWeightedCovariancePreservesExactCountMass() {
+  const Matrix values = matrix({{1.0}, {4.0}});
+  constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+  const std::array<std::uint64_t, 2U> maximumCounts{maximum - 1U, 1U};
+  const auto estimate = frequencyWeightedCovariance(
+      sample(values), maximumCounts, VarianceMode::iid_sample, limits());
+  VSS_CHECK(estimate);
+  VSS_CHECK(estimate.value().diagnostics.global.frequency_mass == maximum);
+  close(estimate.value().value.at(0U, 0U) * static_cast<Scalar>(maximum), 9.0);
+
+  const std::array<std::uint64_t, 2U> overflowingCounts{maximum, 1U};
+  const auto overflow = frequencyWeightedCovariance(
+      sample(values), overflowingCounts, VarianceMode::iid_sample, limits());
+  VSS_CHECK(!overflow);
+  VSS_CHECK(overflow.status().code() == ErrorCode::SizeOverflow);
+}
+
+void frequencyWeightedCovarianceHandlesVectorObservations() {
+  const Matrix values = matrix({{0.0, 0.0}, {2.0, 4.0}});
+  const std::array<std::uint64_t, 2U> counts{2U, 1U};
+  const auto estimate = frequencyWeightedCovariance(
+      sample(values), counts, VarianceMode::iid_sample, limits());
+  VSS_CHECK(estimate);
+  close(estimate.value().value.at(0U, 0U), 4.0 / 3.0);
+  close(estimate.value().value.at(0U, 1U), 8.0 / 3.0);
+  close(estimate.value().value.at(1U, 1U), 16.0 / 3.0);
+}
+
+void frequencyWeightedCovarianceRejectsInvalidSupportAndMode() {
+  const Matrix values = matrix({{1.0}, {4.0}});
+  const std::array<std::uint64_t, 2U> counts{1U, 1U};
+  const auto knownCenter = frequencyWeightedCovariance(
+      sample(values), counts, VarianceMode::known_center, limits());
+  VSS_CHECK(!knownCenter);
+  VSS_CHECK(knownCenter.status().code() == ErrorCode::InvalidDomain);
+
+  const std::array<std::uint64_t, 1U> wrongCountLength{1U};
+  const auto wrongLength = frequencyWeightedCovariance(
+      sample(values), wrongCountLength, VarianceMode::empirical, limits());
+  VSS_CHECK(!wrongLength);
+  VSS_CHECK(wrongLength.status().code() == ErrorCode::DimensionMismatch);
+
+  const std::array<std::uint64_t, 2U> noReplication{1U, 0U};
+  const auto insufficient = frequencyWeightedCovariance(
+      sample(values), noReplication, VarianceMode::iid_sample, limits());
+  VSS_CHECK(!insufficient);
+  VSS_CHECK(insufficient.status().code() == ErrorCode::InsufficientSamples);
+
+  const auto limited = frequencyWeightedCovariance(
+      sample(values), counts, VarianceMode::empirical,
+      {.elements = 0U, .bytes = 0U, .evaluations = 0U});
+  VSS_CHECK(!limited);
+  VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+}
+
 } // namespace
 
 int main() {
@@ -374,5 +453,9 @@ int main() {
   fixedWeightCovarianceRejectsInvalidInputs();
   weightedMeanAndLinearEstimateCovariance();
   rejectsMalformedInputsAndUnrepresentableCovariance();
+  frequencyWeightedCovarianceMatchesReplicatedObservations();
+  frequencyWeightedCovariancePreservesExactCountMass();
+  frequencyWeightedCovarianceHandlesVectorObservations();
+  frequencyWeightedCovarianceRejectsInvalidSupportAndMode();
   std::cout << "weighted population estimators passed\n";
 }
