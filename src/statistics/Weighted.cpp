@@ -133,7 +133,8 @@ Scalar componentWeightAt(const WeightSpec& weights, Index row, Index column) {
 }
 
 Scalar weightAt(const WeightSpec& weights, Index row, Index column) {
-  if (weights.rule == WeightRule::empirical) {
+  if (weights.rule == WeightRule::empirical ||
+      weights.rule == WeightRule::fixed_iid) {
     return rowWeightAt(weights, row);
   }
   return componentWeightAt(weights, row, column);
@@ -156,7 +157,8 @@ Status validateWeightValues(const SampleView& sample,
         return Status::failure(ErrorCode::InvalidDomain,
                                "weights must be nonnegative");
       }
-      if (weights.rule == WeightRule::empirical) {
+      if (weights.rule == WeightRule::empirical ||
+          weights.rule == WeightRule::fixed_iid) {
         break;
       }
     }
@@ -618,6 +620,112 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
       Estimate<Matrix>{.value = std::move(covariance),
                        .diagnostics = std::move(diagnostics),
                        .error_covariance = std::nullopt});
+}
+
+Result<Estimate<Matrix>>
+unbiasedFixedWeightedCovariance(const SampleView& sample,
+                                const WeightSpec& fixedWeights, Limits limits) {
+  const auto dimension = validateSample(sample);
+  if (!dimension) {
+    return fail<Estimate<Matrix>>(dimension.status().code(),
+                                  std::string(dimension.status().message()));
+  }
+  if (fixedWeights.rule != WeightRule::fixed_iid ||
+      !fixedWeights.rowWeights.has_value() ||
+      fixedWeights.componentWeights.has_value() ||
+      !fixedWeights.frequencyCounts.empty()) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::InvalidDomain,
+        "unbiased covariance requires fixed-IID row weights only");
+  }
+  if (fixedWeights.rowWeights->size() != sample.rows.rows()) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::DimensionMismatch,
+        "fixed-IID row weights must match the observation count");
+  }
+
+  const WeightSpec empirical{.rule = WeightRule::empirical,
+                             .rowWeights = fixedWeights.rowWeights,
+                             .componentWeights = std::nullopt,
+                             .frequencyCounts = {}};
+  const auto valuesStatus = validateWeightValues(sample, fixedWeights);
+  if (!valuesStatus.ok()) {
+    return fail<Estimate<Matrix>>(valuesStatus.code(),
+                                  std::string(valuesStatus.message()));
+  }
+
+  Index positiveCount = 0U;
+  Scalar maximumWeight = 0.0;
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (!completeRow(sample, row)) {
+      continue;
+    }
+    const Scalar weight = rowWeightAt(fixedWeights, row);
+    if (weight > 0.0) {
+      ++positiveCount;
+      maximumWeight = std::max(maximumWeight, weight);
+    }
+  }
+  if (positiveCount < 2U) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::InsufficientSamples,
+        "fixed-IID covariance requires at least two positive complete rows");
+  }
+
+  detail::CompensatedSum mass;
+  detail::CompensatedSum pairProducts;
+  detail::CompensatedSum prefix;
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (!completeRow(sample, row)) {
+      continue;
+    }
+    const Scalar scaled = rowWeightAt(fixedWeights, row) / maximumWeight;
+    if (scaled == 0.0) {
+      continue;
+    }
+    pairProducts.add(scaled * prefix.total());
+    prefix.add(scaled);
+    mass.add(scaled);
+  }
+  const Scalar scaledMass = mass.total();
+  const Scalar correction =
+      (2.0 * pairProducts.total() / scaledMass) / scaledMass;
+  constexpr Scalar minimumCorrection =
+      64.0 * std::numeric_limits<Scalar>::epsilon();
+  if (!std::isfinite(correction) || correction <= minimumCorrection ||
+      correction > 1.0) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::InvalidDomain,
+        "fixed-IID unbiased covariance correction is singular or invalid");
+  }
+
+  auto empiricalEstimate =
+      weightedEmpiricalCovariance(sample, empirical, limits);
+  if (!empiricalEstimate) {
+    return fail<Estimate<Matrix>>(
+        empiricalEstimate.status().code(),
+        std::string(empiricalEstimate.status().message()));
+  }
+  Matrix& covariance = empiricalEstimate.value().value;
+  for (Index row = 0U; row < covariance.rows(); ++row) {
+    for (Index column = 0U; column < covariance.columns(); ++column) {
+      covariance.at(row, column) /= correction;
+      if (!std::isfinite(covariance.at(row, column))) {
+        return fail<Estimate<Matrix>>(
+            ErrorCode::NonFiniteResult,
+            "unbiased fixed-IID covariance is outside the finite range");
+      }
+    }
+  }
+  auto& diagnostics = empiricalEstimate.value().diagnostics;
+  diagnostics.weight = WeightRule::fixed_iid;
+  diagnostics.algorithm =
+      "maximum-scaled compensated weighted covariance with fixed-IID "
+      "pair-sum correction";
+  diagnostics.premises =
+      "complete rows with nonnegative weights fixed independently of IID "
+      "observations";
+  return empiricalEstimate;
 }
 
 } // namespace vss::math::statistics
