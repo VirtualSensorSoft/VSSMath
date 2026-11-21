@@ -290,6 +290,43 @@ void fixedWeightCovarianceRejectsInvalidInputs() {
   VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
 }
 
+void weightedMeanAndLinearEstimateCovariance() {
+  const Matrix values = matrix({{1.0}, {2.0}, {4.0}, {8.0}, {16.0}});
+  const Vector weights = vector({0.1, 0.15, 0.2, 0.25, 0.3});
+  const auto estimate =
+      weightedMeanCovariance(sample(values), fixedWeights(weights), limits());
+  VSS_CHECK(estimate);
+  close(estimate.value().value.at(0U, 0U), 2943.0 / 310.0);
+  VSS_CHECK(estimate.value().diagnostics.weight == WeightRule::fixed_iid);
+  VSS_CHECK(estimate.value().diagnostics.estimand == Estimand::estimate);
+
+  const Matrix averageMap = matrix({{0.5, 0.5}});
+  const Matrix correlated = matrix({{0.29, 0.25}, {0.25, 0.29}});
+  const auto propagated =
+      linearEstimateCovariance(averageMap.view(), correlated.view(), limits());
+  VSS_CHECK(propagated);
+  close(propagated.value().at(0U, 0U), 0.27);
+
+  const Matrix incompatible = matrix({{1.0, 0.0, 0.0}});
+  const auto dimensionError = linearEstimateCovariance(
+      incompatible.view(), correlated.view(), limits());
+  VSS_CHECK(!dimensionError);
+  VSS_CHECK(dimensionError.status().code() == ErrorCode::DimensionMismatch);
+
+  const Matrix indefinite = matrix({{1.0, 2.0}, {2.0, 1.0}});
+  const auto invalidCovariance =
+      linearEstimateCovariance(averageMap.view(), indefinite.view(), limits());
+  VSS_CHECK(!invalidCovariance);
+  VSS_CHECK(invalidCovariance.status().code() ==
+            ErrorCode::NotPositiveSemidefinite);
+
+  const auto limited = linearEstimateCovariance(
+      averageMap.view(), correlated.view(),
+      {.elements = 0U, .bytes = 0U, .evaluations = 0U});
+  VSS_CHECK(!limited);
+  VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+}
+
 void rejectsMalformedInputsAndUnrepresentableCovariance() {
   const Matrix values = matrix({{1.0}, {2.0}});
   const Vector oneWeight = vector({1.0});
@@ -335,6 +372,7 @@ int main() {
   covarianceUsesCompleteRowsAndRejectsNonFiniteValues();
   fixedWeightUnbiasedCovariance();
   fixedWeightCovarianceRejectsInvalidInputs();
+  weightedMeanAndLinearEstimateCovariance();
   rejectsMalformedInputsAndUnrepresentableCovariance();
   std::cout << "weighted population estimators passed\n";
 }

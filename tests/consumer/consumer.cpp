@@ -651,13 +651,34 @@ int main() {
       weightedSample, empiricalWeights, Limits{16U, 1024U, 0U});
   const auto unbiasedSpread = statistics::unbiasedFixedWeightedCovariance(
       weightedSample, fixedWeights, Limits{16U, 1024U, 0U});
+  const auto meanSpread = statistics::weightedMeanCovariance(
+      weightedSample, fixedWeights, Limits{16U, 1024U, 0U});
   if (!require(weightedAverage.hasValue() && weightedSpread.hasValue() &&
-                   unbiasedSpread.hasValue() &&
+                   unbiasedSpread.hasValue() && meanSpread.hasValue() &&
                    weightedAverage.value().value.at(0U) == 2.0 &&
                    weightedSpread.value().value.at(0U, 0U) == 2.0 &&
                    std::abs(unbiasedSpread.value().value.at(0U, 0U) - 4.5) <
+                       1.0e-12 &&
+                   std::abs(meanSpread.value().value.at(0U, 0U) - 2.5) <
                        1.0e-12,
                "installed weighted-population APIs failed")) {
+    return 1;
+  }
+
+  Matrix averageMap(1U, 2U);
+  averageMap.at(0U, 0U) = 0.5;
+  averageMap.at(0U, 1U) = 0.5;
+  Matrix meanJointCovariance(2U, 2U);
+  meanJointCovariance.at(0U, 0U) = 0.29;
+  meanJointCovariance.at(0U, 1U) = 0.25;
+  meanJointCovariance.at(1U, 0U) = 0.25;
+  meanJointCovariance.at(1U, 1U) = 0.29;
+  const auto mappedCovariance = statistics::linearEstimateCovariance(
+      averageMap.view(), meanJointCovariance.view(), Limits{64U, 4096U, 0U});
+  if (!require(mappedCovariance.hasValue() &&
+                   std::abs(mappedCovariance.value().at(0U, 0U) - 0.27) <
+                       1.0e-12,
+               "installed linear estimate covariance API failed")) {
     return 1;
   }
 
