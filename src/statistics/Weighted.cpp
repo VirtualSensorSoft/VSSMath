@@ -3,14 +3,20 @@
 #include <cstdint>
 #include <detail/CompensatedSum.hpp>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/Weighted.hpp>
 
 namespace vss::math::statistics {
@@ -113,9 +119,9 @@ Status validateWeightSpec(const WeightSpec& weights, const SampleView& sample,
 
 Scalar weightAt(const WeightSpec& weights, Index row, Index column) {
   if (weights.rule == WeightRule::empirical) {
-    return weights.rowWeights->at(row);
+    return weights.rowWeights.value().at(row);
   }
-  return weights.componentWeights->at(row, column);
+  return weights.componentWeights.value().at(row, column);
 }
 
 Status validateWeightValues(const SampleView& sample,
@@ -145,13 +151,10 @@ Status validateWeightValues(const SampleView& sample,
 
 bool withinLimits(Extent outputElements, Extent workspaceElements,
                   Extent outputBytes, Extent workspaceBytes, Limits limits) {
-  if (outputElements > limits.elements ||
-      workspaceElements > limits.elements - outputElements ||
-      outputBytes > limits.bytes ||
-      workspaceBytes > limits.bytes - outputBytes) {
-    return false;
-  }
-  return true;
+  return outputElements <= limits.elements &&
+         workspaceElements <= limits.elements - outputElements &&
+         outputBytes <= limits.bytes &&
+         workspaceBytes <= limits.bytes - outputBytes;
 }
 
 Result<Array<Support>> makeSupports(const std::vector<Support>& supports,
@@ -349,7 +352,7 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
     }
     ++completeValid;
     if (weights.rule == WeightRule::empirical) {
-      const Scalar weight = weights.rowWeights->at(row);
+      const Scalar weight = weights.rowWeights.value().at(row);
       if (weight > 0.0) {
         ++completePositive;
         globalMaximum = std::max(globalMaximum, weight);
@@ -373,7 +376,8 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
     detail::CompensatedSum power3;
     for (Index row = 0U; row < sample.rows.rows(); ++row) {
       if (completeRow(sample, row)) {
-        const Scalar scaled = weights.rowWeights->at(row) / globalMaximum;
+        const Scalar scaled =
+            weights.rowWeights.value().at(row) / globalMaximum;
         mass.add(scaled);
         power2.add(scaled * scaled);
         power3.add(scaled * scaled * scaled);
@@ -432,8 +436,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
                                   "weighted covariance workspace overflows");
   }
   const Extent workspaceElements = outputElements + vectorElements;
-  if (outputElements > std::numeric_limits<Extent>::max() / sizeof(Scalar) ||
-      outputElements >
+  if (outputElements >
           std::numeric_limits<Extent>::max() / sizeof(detail::CompensatedSum) ||
       vectorElements > std::numeric_limits<Extent>::max() / sizeof(Scalar) ||
       columns > std::numeric_limits<Extent>::max() / sizeof(Support)) {
@@ -479,7 +482,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
             "a complete sample row contains a non-finite coordinate");
       }
     }
-    const Scalar weight = weights.rowWeights->at(row);
+    const Scalar weight = weights.rowWeights.value().at(row);
     if (weight > 0.0) {
       ++positiveCount;
       maximumWeight = std::max(maximumWeight, weight);
