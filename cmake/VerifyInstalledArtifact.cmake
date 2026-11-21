@@ -150,6 +150,7 @@ set(vss_expected_files
   include/vss/math/statistics/Descriptive.hpp
   include/vss/math/statistics/Order.hpp
   include/vss/math/statistics/Population.hpp
+  include/vss/math/statistics/Weighted.hpp
   include/vss/math/linear/Cholesky.hpp
   include/vss/math/linear/Decomposition.hpp
   include/vss/math/linear/SolvePolicy.hpp

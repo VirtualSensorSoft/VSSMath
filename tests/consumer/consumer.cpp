@@ -38,6 +38,7 @@
 #include <vss/math/linear/Structured.hpp>
 #include <vss/math/statistics/Order.hpp>
 #include <vss/math/statistics/Population.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 #include <vss/math/version.hpp>
 
 namespace {
@@ -632,6 +633,24 @@ int main() {
                    std::abs(populationEstimate.value().value.at(0U, 0U) -
                             2.0 / 3.0) < 1.0e-12,
                "installed population covariance API failed")) {
+    return 1;
+  }
+
+  Matrix weightedRows(2U, 1U);
+  weightedRows.at(0U, 0U) = 0.0;
+  weightedRows.at(1U, 0U) = 3.0;
+  const Vector rowWeights{std::array<Scalar, 2U>{1.0, 2.0}};
+  const statistics::WeightSpec empiricalWeights{
+      WeightRule::empirical, rowWeights.view(), std::nullopt, {}};
+  const SampleView weightedSample{weightedRows.view(), {}, {}};
+  const auto weightedAverage = statistics::weightedMean(
+      weightedSample, empiricalWeights, Limits{16U, 1024U, 0U});
+  const auto weightedSpread = statistics::weightedEmpiricalCovariance(
+      weightedSample, empiricalWeights, Limits{16U, 1024U, 0U});
+  if (!require(weightedAverage.hasValue() && weightedSpread.hasValue() &&
+                   weightedAverage.value().value.at(0U) == 2.0 &&
+                   weightedSpread.value().value.at(0U, 0U) == 2.0,
+               "installed weighted-population APIs failed")) {
     return 1;
   }
 
