@@ -79,6 +79,27 @@ weightedEmpiricalCovariance(const SampleView& sample, const WeightSpec& weights,
 unbiasedFixedWeightedCovariance(const SampleView& sample,
                                 const WeightSpec& fixedWeights, Limits limits);
 
+/// @brief Estimates the sampling covariance of a fixed-IID weighted mean.
+/// @details Multiplies C026's unbiased population covariance by the sum of
+///          squared normalized fixed weights. This estimates uncertainty of
+///          the weighted mean under independent, identically distributed
+///          observations and fixed weights.
+[[nodiscard]] Result<Estimate<Matrix>>
+weightedMeanCovariance(const SampleView& sample, const WeightSpec& fixedWeights,
+                       Limits limits);
+
+/// @brief Propagates a supplied joint covariance through a linear estimate map.
+/// @param map Finite k-by-j linear map from source coordinates to estimates.
+/// @param jointCovariance Finite symmetric positive-semidefinite j-by-j joint
+///        covariance, including any cross-coordinate or cross-time terms.
+/// @param limits Maximum result and conservative workspace storage.
+/// @return The owned k-by-k covariance `map * jointCovariance * map^T`.
+/// @details Preserves correlations and shared-error terms. Complexity is
+///          O(kj^2 + k^2j); storage is O(kj + j^2 + k^2).
+[[nodiscard]] Result<Matrix>
+linearEstimateCovariance(ConstMatrixView map, ConstMatrixView jointCovariance,
+                         Limits limits);
+
 } // namespace vss::math::statistics
 
 #endif // VSS_MATH_STATISTICS_WEIGHTED_HPP
