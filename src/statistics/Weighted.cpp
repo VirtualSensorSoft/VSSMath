@@ -4,6 +4,7 @@
 #include <detail/CompensatedSum.hpp>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -862,11 +863,11 @@ frequencyWeightedCovariance(const SampleView& sample,
               "mass");
   }
 
-  const long double countScale = static_cast<long double>(maximumCount);
+  const auto countScale = static_cast<long double>(maximumCount);
   detail::CompensatedSum scaledMassAccumulator;
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
     if (counts[row] != 0U && completeRow(sample, row)) {
-      const Scalar scaledCount = static_cast<Scalar>(
+      const auto scaledCount = static_cast<Scalar>(
           static_cast<long double>(counts[row]) / countScale);
       if (scaledCount == 0.0 || !std::isfinite(scaledCount)) {
         return fail<Estimate<Matrix>>(
@@ -900,7 +901,7 @@ frequencyWeightedCovariance(const SampleView& sample,
       if (counts[row] == 0U || !completeRow(sample, row)) {
         continue;
       }
-      const Scalar scaledCount = static_cast<Scalar>(
+      const auto scaledCount = static_cast<Scalar>(
           static_cast<long double>(counts[row]) / countScale);
       coordinate.add(scaledCount *
                      (sample.rows.at(row, column) / scales.at(column)));
@@ -913,7 +914,7 @@ frequencyWeightedCovariance(const SampleView& sample,
     if (counts[row] == 0U || !completeRow(sample, row)) {
       continue;
     }
-    const Scalar scaledCount =
+    const auto scaledCount =
         static_cast<Scalar>(static_cast<long double>(counts[row]) / countScale);
     for (Index left = 0U; left < columns; ++left) {
       const Scalar leftDelta =
@@ -934,7 +935,7 @@ frequencyWeightedCovariance(const SampleView& sample,
 
   Scalar denominator = scaledMass;
   if (mode == VarianceMode::iid_sample) {
-    const Scalar total = static_cast<Scalar>(frequencyMass);
+    const auto total = static_cast<Scalar>(frequencyMass);
     denominator *= (total - 1.0) / total;
   }
   if (!(denominator > 0.0) || !std::isfinite(denominator)) {
@@ -962,7 +963,7 @@ frequencyWeightedCovariance(const SampleView& sample,
 
   const long double inverseMass =
       1.0L / static_cast<long double>(frequencyMass);
-  const Scalar inverse = static_cast<Scalar>(inverseMass);
+  const auto inverse = static_cast<Scalar>(inverseMass);
   const Scalar inverseSquared = inverse * inverse;
   const Support global{
       .input = sample.rows.rows(),
