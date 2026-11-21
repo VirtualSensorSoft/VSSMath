@@ -4,6 +4,7 @@
 #include <detail/CompensatedSum.hpp>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -75,7 +76,7 @@ Result<Extent> validateSample(const SampleView& sample) {
 
 bool validCell(const SampleView& sample, Index row, Index column) {
   return sample.valid.empty() ||
-         sample.valid[row * sample.rows.columns() + column] != 0U;
+         sample.valid[(row * sample.rows.columns()) + column] != 0U;
 }
 
 bool completeRow(const SampleView& sample, Index row) {
@@ -117,11 +118,25 @@ Status validateWeightSpec(const WeightSpec& weights, const SampleView& sample,
             "weights");
 }
 
-Scalar weightAt(const WeightSpec& weights, Index row, Index column) {
-  if (weights.rule == WeightRule::empirical) {
+Scalar rowWeightAt(const WeightSpec& weights, Index row) {
+  if (weights.rowWeights.has_value()) {
     return weights.rowWeights.value().at(row);
   }
-  return weights.componentWeights.value().at(row, column);
+  throw std::logic_error("validated row weights are unexpectedly absent");
+}
+
+Scalar componentWeightAt(const WeightSpec& weights, Index row, Index column) {
+  if (weights.componentWeights.has_value()) {
+    return weights.componentWeights.value().at(row, column);
+  }
+  throw std::logic_error("validated component weights are unexpectedly absent");
+}
+
+Scalar weightAt(const WeightSpec& weights, Index row, Index column) {
+  if (weights.rule == WeightRule::empirical) {
+    return rowWeightAt(weights, row);
+  }
+  return componentWeightAt(weights, row, column);
 }
 
 Status validateWeightValues(const SampleView& sample,
@@ -352,7 +367,7 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
     }
     ++completeValid;
     if (weights.rule == WeightRule::empirical) {
-      const Scalar weight = weights.rowWeights.value().at(row);
+      const Scalar weight = rowWeightAt(weights, row);
       if (weight > 0.0) {
         ++completePositive;
         globalMaximum = std::max(globalMaximum, weight);
@@ -376,8 +391,7 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
     detail::CompensatedSum power3;
     for (Index row = 0U; row < sample.rows.rows(); ++row) {
       if (completeRow(sample, row)) {
-        const Scalar scaled =
-            weights.rowWeights.value().at(row) / globalMaximum;
+        const Scalar scaled = rowWeightAt(weights, row) / globalMaximum;
         mass.add(scaled);
         power2.add(scaled * scaled);
         power3.add(scaled * scaled * scaled);
@@ -425,8 +439,8 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
   const Extent outputElements = columns * columns;
   constexpr Extent vectorWorkspaceCount = 3U;
   if (columns > std::numeric_limits<Extent>::max() / vectorWorkspaceCount ||
-      outputElements >
-          std::numeric_limits<Extent>::max() - columns * vectorWorkspaceCount) {
+      outputElements > std::numeric_limits<Extent>::max() -
+                           (columns * vectorWorkspaceCount)) {
     return fail<Estimate<Matrix>>(ErrorCode::SizeOverflow,
                                   "weighted covariance workspace overflows");
   }
@@ -482,7 +496,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
             "a complete sample row contains a non-finite coordinate");
       }
     }
-    const Scalar weight = weights.rowWeights.value().at(row);
+    const Scalar weight = rowWeightAt(weights, row);
     if (weight > 0.0) {
       ++positiveCount;
       maximumWeight = std::max(maximumWeight, weight);
@@ -500,7 +514,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
     if (!completeRow(sample, row)) {
       continue;
     }
-    const Scalar weight = weights.rowWeights->at(row);
+    const Scalar weight = rowWeightAt(weights, row);
     if (weight == 0.0) {
       continue;
     }
@@ -519,7 +533,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
   Vector normalizedCenter(columns, 0.0);
   for (Index column = 0U; column < columns; ++column) {
     for (Index row = 0U; row < sample.rows.rows(); ++row) {
-      if (completeRow(sample, row) && weights.rowWeights->at(row) > 0.0) {
+      if (completeRow(sample, row) && rowWeightAt(weights, row) > 0.0) {
         scales.at(column) =
             std::max(scales.at(column), std::abs(sample.rows.at(row, column)));
       }
@@ -532,7 +546,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
       if (!completeRow(sample, row)) {
         continue;
       }
-      const Scalar weight = weights.rowWeights->at(row);
+      const Scalar weight = rowWeightAt(weights, row);
       if (weight > 0.0) {
         weightedCoordinate.add(
             (weight / maximumWeight) *
@@ -547,23 +561,24 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
     if (!completeRow(sample, row)) {
       continue;
     }
-    const Scalar weight = weights.rowWeights->at(row);
+    const Scalar weight = rowWeightAt(weights, row);
     if (weight == 0.0) {
       continue;
     }
     for (Index left = 0U; left < columns; ++left) {
       const Scalar leftDelta =
-          scales.at(left) == 0.0 ? 0.0
-                                 : sample.rows.at(row, left) / scales.at(left) -
-                                       normalizedCenter.at(left);
+          scales.at(left) == 0.0
+              ? 0.0
+              : (sample.rows.at(row, left) / scales.at(left)) -
+                    normalizedCenter.at(left);
       for (Index right = left; right < columns; ++right) {
         const Scalar rightDelta =
             scales.at(right) == 0.0
                 ? 0.0
-                : sample.rows.at(row, right) / scales.at(right) -
+                : (sample.rows.at(row, right) / scales.at(right)) -
                       normalizedCenter.at(right);
-        products[left * columns + right].add((weight / maximumWeight) *
-                                             leftDelta * rightDelta);
+        products[(left * columns) + right].add((weight / maximumWeight) *
+                                               leftDelta * rightDelta);
       }
     }
   }
@@ -572,7 +587,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
   for (Index left = 0U; left < columns; ++left) {
     for (Index right = left; right < columns; ++right) {
       const Scalar normalized =
-          products[left * columns + right].total() / scaledMass;
+          products[(left * columns) + right].total() / scaledMass;
       const Scalar value =
           scaledProduct(scales.at(left), scales.at(right), normalized);
       if (!std::isfinite(value)) {
