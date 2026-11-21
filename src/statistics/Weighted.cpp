@@ -426,6 +426,10 @@ Result<Estimate<Vector>> precisionWeightedMean(const SampleView& sample,
   }
   const Extent columns = dimension.value();
   const Extent rows = sample.rows.rows();
+  if (columns == 0U) {
+    return fail<Estimate<Vector>>(ErrorCode::InvalidExtent,
+                                  "precision mean requires coordinates");
+  }
   if (variances.rows() != rows || variances.columns() != columns) {
     return fail<Estimate<Vector>>(
         ErrorCode::DimensionMismatch,
@@ -567,15 +571,15 @@ Result<Estimate<Vector>> precisionWeightedMean(const SampleView& sample,
     return fail<Estimate<Vector>>(supports.status().code(),
                                   std::string(supports.status().message()));
   }
-  Support global{.input = rows,
-                 .valid = rowsWithAnyCell,
-                 .positive = rowsWithAnyCell,
-                 .frequency_mass = std::nullopt,
-                 .weight_mass = std::nullopt,
-                 .normalized_weight_powers = {},
-                 .effective_count = std::nullopt,
-                 .degrees_of_freedom = std::nullopt,
-                 .squared_weight_mass = std::nullopt};
+  const Support global{.input = rows,
+                       .valid = rowsWithAnyCell,
+                       .positive = rowsWithAnyCell,
+                       .frequency_mass = std::nullopt,
+                       .weight_mass = std::nullopt,
+                       .normalized_weight_powers = {},
+                       .effective_count = std::nullopt,
+                       .degrees_of_freedom = std::nullopt,
+                       .squared_weight_mass = std::nullopt};
   auto diagnostics = diagnosticsFor(
       WeightRule::precision, global, std::move(supports).value(),
       "minimum-scaled compensated inverse-variance weighted coordinate mean",
