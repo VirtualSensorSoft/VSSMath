@@ -16,6 +16,7 @@
 #include <vss/math/Result.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/Covariance.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/Weighted.hpp>
@@ -726,6 +727,88 @@ unbiasedFixedWeightedCovariance(const SampleView& sample,
       "complete rows with nonnegative weights fixed independently of IID "
       "observations";
   return empiricalEstimate;
+}
+
+Result<Estimate<Matrix>> weightedMeanCovariance(const SampleView& sample,
+                                                const WeightSpec& fixedWeights,
+                                                Limits limits) {
+  auto covariance =
+      unbiasedFixedWeightedCovariance(sample, fixedWeights, limits);
+  if (!covariance) {
+    return fail<Estimate<Matrix>>(covariance.status().code(),
+                                  std::string(covariance.status().message()));
+  }
+  const auto squaredWeightMass =
+      covariance.value().diagnostics.global.normalized_weight_powers[1];
+  if (!squaredWeightMass.has_value() ||
+      !std::isfinite(squaredWeightMass.value()) ||
+      !(squaredWeightMass.value() > 0.0)) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::NonFiniteResult,
+        "fixed-IID normalized squared weight mass is unavailable");
+  }
+  Matrix& estimateCovariance = covariance.value().value;
+  for (Index row = 0U; row < estimateCovariance.rows(); ++row) {
+    for (Index column = 0U; column < estimateCovariance.columns(); ++column) {
+      estimateCovariance.at(row, column) *= squaredWeightMass.value();
+      if (!std::isfinite(estimateCovariance.at(row, column))) {
+        return fail<Estimate<Matrix>>(
+            ErrorCode::NonFiniteResult,
+            "weighted mean covariance is outside the finite range");
+      }
+    }
+  }
+  auto& diagnostics = covariance.value().diagnostics;
+  diagnostics.estimand = Estimand::estimate;
+  diagnostics.algorithm =
+      "fixed-IID unbiased population covariance scaled by normalized "
+      "squared weight mass";
+  diagnostics.premises =
+      "complete rows are independent and identically distributed; row weights "
+      "are fixed independently of observations";
+  return covariance;
+}
+
+Result<Matrix> linearEstimateCovariance(ConstMatrixView map,
+                                        ConstMatrixView jointCovariance,
+                                        Limits limits) {
+  if (map.columns() != jointCovariance.rows() ||
+      jointCovariance.rows() != jointCovariance.columns()) {
+    return fail<Matrix>(ErrorCode::DimensionMismatch,
+                        "linear map and joint covariance dimensions differ");
+  }
+  const Extent maximum = std::numeric_limits<Extent>::max();
+  const Extent source = jointCovariance.rows();
+  const Extent output = map.rows();
+  const Extent input = map.columns();
+  if ((source != 0U && source > maximum / source) ||
+      (output != 0U && output > maximum / output) ||
+      (output != 0U && input > maximum / output)) {
+    return fail<Matrix>(ErrorCode::SizeOverflow,
+                        "linear covariance workspace extent overflows");
+  }
+  const Extent covarianceElements = source * source;
+  const Extent outputElements = output * output;
+  const Extent mapElements = output * input;
+  if (covarianceElements > maximum / 6U ||
+      mapElements > maximum - (6U * covarianceElements)) {
+    return fail<Matrix>(ErrorCode::SizeOverflow,
+                        "linear covariance workspace extent overflows");
+  }
+  const Extent workspaceElements = mapElements + (6U * covarianceElements);
+  if (outputElements > maximum / sizeof(Scalar) ||
+      workspaceElements > maximum / sizeof(Scalar)) {
+    return fail<Matrix>(ErrorCode::SizeOverflow,
+                        "linear covariance workspace bytes overflow");
+  }
+  const Extent outputBytes = outputElements * sizeof(Scalar);
+  const Extent workspaceBytes = workspaceElements * sizeof(Scalar);
+  if (!withinLimits(outputElements, workspaceElements, outputBytes,
+                    workspaceBytes, limits)) {
+    return fail<Matrix>(ErrorCode::ResourceLimit,
+                        "linear covariance exceeds configured limits");
+  }
+  return covariance::propagateCovariance(map, jointCovariance);
 }
 
 } // namespace vss::math::statistics
