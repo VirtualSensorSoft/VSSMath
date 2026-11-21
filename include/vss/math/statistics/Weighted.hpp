@@ -88,6 +88,27 @@ unbiasedFixedWeightedCovariance(const SampleView& sample,
 weightedMeanCovariance(const SampleView& sample, const WeightSpec& fixedWeights,
                        Limits limits);
 
+/// @brief Estimates covariance from integer observation replication counts.
+/// @param sample Rows of observations and optional cell-validity mask.
+/// @param counts Exact nonnegative replication count for each sample row.
+/// @param mode Selects descriptive empirical or unbiased IID-sample scaling.
+/// @param limits Maximum output and simultaneously required workspace storage.
+/// @return Owned covariance with exact retained replication mass and stored-row
+///         support diagnostics.
+/// @details Counts are summed with checked `uint64_t` arithmetic and are never
+///          expanded into replicated rows. Incomplete rows are omitted using
+///          the covariance complete-row rule; zero-count rows do not contribute
+///          or require finite values. `iid_sample` has an unbiased
+///          interpretation only when the counts describe replicated IID
+///          observations. Complexity is O(Nd^2); owned output and workspace
+///          are O(d^2). Ratios are formed after exact integer-total checks and
+///          accumulated with compensation; scalar rounding is limited to the
+///          normalized numerical calculation.
+[[nodiscard]] Result<Estimate<Matrix>>
+frequencyWeightedCovariance(const SampleView& sample,
+                            std::span<const std::uint64_t> counts,
+                            VarianceMode mode, Limits limits);
+
 /// @brief Propagates a supplied joint covariance through a linear estimate map.
 /// @param map Finite k-by-j linear map from source coordinates to estimates.
 /// @param jointCovariance Finite symmetric positive-semidefinite j-by-j joint
