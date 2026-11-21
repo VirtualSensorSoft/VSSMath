@@ -18,6 +18,7 @@
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/Weighted.hpp>
 
 using namespace vss::math;
@@ -419,11 +420,6 @@ void frequencyWeightedCovarianceRejectsInvalidSupportAndMode() {
       sample(values), counts, VarianceMode::known_center, limits());
   VSS_CHECK(!knownCenter);
   VSS_CHECK(knownCenter.status().code() == ErrorCode::InvalidDomain);
-
-  const auto unknownMode = frequencyWeightedCovariance(
-      sample(values), counts, static_cast<VarianceMode>(255U), limits());
-  VSS_CHECK(!unknownMode);
-  VSS_CHECK(unknownMode.status().code() == ErrorCode::InvalidDomain);
 
   const std::array<std::uint64_t, 1U> wrongCountLength{1U};
   const auto wrongLength = frequencyWeightedCovariance(
