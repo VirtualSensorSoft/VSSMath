@@ -8,11 +8,16 @@
 #include <initializer_list>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <span>
 #include <vector>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Weighted.hpp>
 
 using namespace vss::math;
@@ -59,7 +64,7 @@ Limits limits() {
 
 void close(Scalar actual, Scalar expected) {
   if (!(std::abs(actual - expected) <=
-        1.0e-12 + 1.0e-10 * std::max(std::abs(actual), std::abs(expected)))) {
+        1.0e-12 + (1.0e-10 * std::max(std::abs(actual), std::abs(expected))))) {
     std::cerr << "expected " << expected << ", got " << actual << '\n';
     VSS_CHECK(false);
   }
@@ -81,13 +86,18 @@ void weightedScalarMeanAndEmpiricalVariance() {
   close(estimate.value().value.at(0U), 2.0);
   VSS_CHECK(estimate.value().diagnostics.weight == WeightRule::empirical);
   VSS_CHECK(estimate.value().diagnostics.global.positive == 2U);
-  close(*estimate.value().diagnostics.global.effective_count, 1.8);
+  const auto effectiveCount =
+      estimate.value().diagnostics.global.effective_count;
+  VSS_CHECK(effectiveCount.has_value());
+  close(effectiveCount.value_or(-1.0), 1.8);
 
   const auto covariance = weightedEmpiricalCovariance(
       sample(values), rowWeights(weights), limits());
   VSS_CHECK(covariance.hasValue());
   close(covariance.value().value.at(0U, 0U), 2.0);
-  close(covariance.value().diagnostics.global.weight_mass.value(), 3.0);
+  const auto weightMass = covariance.value().diagnostics.global.weight_mass;
+  VSS_CHECK(weightMass.has_value());
+  close(weightMass.value_or(-1.0), 3.0);
 }
 
 void rowWeightScalingAndVectorCovariance() {
