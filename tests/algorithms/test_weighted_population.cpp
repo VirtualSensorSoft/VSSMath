@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <initializer_list>
 #include <iostream>
 #include <limits>
@@ -564,7 +565,7 @@ void precisionWeightedMeanRejectsInvalidInputsAndResourceExcess() {
 
 } // namespace
 
-int main() {
+int main() try {
   weightedScalarMeanAndEmpiricalVariance();
   rowWeightScalingAndVectorCovariance();
   componentWeightsAndPerCoordinateSupport();
@@ -584,4 +585,8 @@ int main() {
   precisionWeightedMeanHonorsComponentMasks();
   precisionWeightedMeanRejectsInvalidInputsAndResourceExcess();
   std::cout << "weighted population estimators passed\n";
+  return 0;
+} catch (const std::exception& error) {
+  std::cerr << error.what() << '\n';
+  return 1;
 }
