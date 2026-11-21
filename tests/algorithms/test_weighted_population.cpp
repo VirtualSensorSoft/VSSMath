@@ -440,6 +440,120 @@ void frequencyWeightedCovarianceRejectsInvalidSupportAndMode() {
   VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
 }
 
+void precisionWeightedMeanUsesKnownVariances() {
+  const Matrix values = matrix({{1.0}, {3.0}});
+  const Matrix variances = matrix({{1.0}, {3.0}});
+  const auto estimate =
+      precisionWeightedMean(sample(values), variances.view(), limits());
+  VSS_CHECK(estimate);
+  close(estimate.value().value.at(0U), 1.5);
+  VSS_CHECK(estimate.value().error_covariance.has_value());
+  close(estimate.value().error_covariance->at(0U, 0U), 0.75);
+  VSS_CHECK(estimate.value().diagnostics.weight == WeightRule::precision);
+  VSS_CHECK(estimate.value().diagnostics.estimand == Estimand::estimate);
+  VSS_CHECK(estimate.value().diagnostics.global.effective_count ==
+            std::nullopt);
+  VSS_CHECK(estimate.value().diagnostics.global.degrees_of_freedom ==
+            std::nullopt);
+}
+
+void precisionWeightedMeanHandlesHeterogeneousComponentsAndSubnormals() {
+  const Matrix values = matrix({{1.0, 2.0}, {3.0, 6.0}});
+  Matrix variances(2U, 2U);
+  const Scalar tinyVariance = std::numeric_limits<Scalar>::min() / 8.0;
+  variances.at(0U, 0U) = tinyVariance;
+  variances.at(1U, 0U) = tinyVariance;
+  variances.at(0U, 1U) = 3.0;
+  variances.at(1U, 1U) = 1.0;
+  const auto estimate =
+      precisionWeightedMean(sample(values), variances.view(), limits());
+  VSS_CHECK(estimate);
+  close(estimate.value().value.at(0U), 2.0);
+  close(estimate.value().value.at(1U), 5.0);
+  VSS_CHECK(estimate.value().error_covariance.has_value());
+  close(estimate.value().error_covariance->at(0U, 0U) / tinyVariance, 0.5);
+  close(estimate.value().error_covariance->at(1U, 1U), 0.75);
+  close(estimate.value().error_covariance->at(0U, 1U), 0.0);
+}
+
+void precisionWeightedMeanHonorsComponentMasks() {
+  const Matrix values = matrix({{1.0, 2.0}, {100.0, 6.0}, {5.0, 10.0}});
+  const std::array<std::uint8_t, 6U> validity{1U, 1U, 0U, 1U, 1U, 1U};
+  const Matrix variances = matrix({{1.0, 1.0}, {0.0, 3.0}, {3.0, 1.0}});
+  const auto estimate = precisionWeightedMean(sample(values, validity),
+                                              variances.view(), limits());
+  VSS_CHECK(!estimate);
+  VSS_CHECK(estimate.status().code() == ErrorCode::InvalidDomain);
+
+  Matrix validVariances = matrix({{1.0, 1.0}, {2.0, 3.0}, {3.0, 1.0}});
+  const auto masked = precisionWeightedMean(sample(values, validity),
+                                            validVariances.view(), limits());
+  VSS_CHECK(masked);
+  close(masked.value().value.at(0U), 2.0);
+  close(masked.value().value.at(1U), 6.0);
+  const auto coordinateSupport =
+      masked.value().diagnostics.coordinate_support.view();
+  VSS_CHECK(coordinateSupport.size() == 2U);
+  VSS_CHECK(coordinateSupport[0U].valid == 2U);
+  VSS_CHECK(coordinateSupport[1U].valid == 3U);
+}
+
+void precisionWeightedMeanRejectsInvalidInputsAndResourceExcess() {
+  const Matrix values = matrix({{1.0}, {3.0}});
+  const Matrix validVariances = matrix({{1.0}, {3.0}});
+  const Matrix wrongShape = matrix({{1.0, 2.0}, {3.0, 4.0}});
+  const auto wrongDimensions =
+      precisionWeightedMean(sample(values), wrongShape.view(), limits());
+  VSS_CHECK(!wrongDimensions);
+  VSS_CHECK(wrongDimensions.status().code() == ErrorCode::DimensionMismatch);
+
+  const Matrix nonpositive = matrix({{1.0}, {0.0}});
+  const auto badVariance =
+      precisionWeightedMean(sample(values), nonpositive.view(), limits());
+  VSS_CHECK(!badVariance);
+  VSS_CHECK(badVariance.status().code() == ErrorCode::InvalidDomain);
+
+  const Matrix nonfinite =
+      matrix({{1.0}, {std::numeric_limits<Scalar>::infinity()}});
+  const auto badVarianceValue =
+      precisionWeightedMean(sample(values), nonfinite.view(), limits());
+  VSS_CHECK(!badVarianceValue);
+  VSS_CHECK(badVarianceValue.status().code() == ErrorCode::NonFiniteInput);
+
+  const Matrix badObservations =
+      matrix({{1.0}, {std::numeric_limits<Scalar>::quiet_NaN()}});
+  const auto badObservation = precisionWeightedMean(
+      sample(badObservations), validVariances.view(), limits());
+  VSS_CHECK(!badObservation);
+  VSS_CHECK(badObservation.status().code() == ErrorCode::NonFiniteInput);
+
+  const std::array<std::uint8_t, 2U> noSupport{0U, 0U};
+  const auto emptySupport = precisionWeightedMean(
+      sample(values, noSupport), validVariances.view(), limits());
+  VSS_CHECK(!emptySupport);
+  VSS_CHECK(emptySupport.status().code() == ErrorCode::InsufficientSamples);
+
+  const auto limited =
+      precisionWeightedMean(sample(values), validVariances.view(),
+                            {.elements = 1U, .bytes = 1U, .evaluations = 0U});
+  VSS_CHECK(!limited);
+  VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+
+  const Scalar smallest = std::numeric_limits<Scalar>::denorm_min();
+  const Matrix subnormalVariance = matrix({{smallest}, {smallest}});
+  const auto unrepresentableError =
+      precisionWeightedMean(sample(values), subnormalVariance.view(), limits());
+  VSS_CHECK(!unrepresentableError);
+  VSS_CHECK(unrepresentableError.status().code() == ErrorCode::NonFiniteResult);
+
+  const Matrix widelySeparatedVariances =
+      matrix({{smallest}, {std::numeric_limits<Scalar>::max()}});
+  const auto lostPrecision = precisionWeightedMean(
+      sample(values), widelySeparatedVariances.view(), limits());
+  VSS_CHECK(!lostPrecision);
+  VSS_CHECK(lostPrecision.status().code() == ErrorCode::NonFiniteResult);
+}
+
 } // namespace
 
 int main() {
@@ -457,5 +571,9 @@ int main() {
   frequencyWeightedCovariancePreservesExactCountMass();
   frequencyWeightedCovarianceHandlesVectorObservations();
   frequencyWeightedCovarianceRejectsInvalidSupportAndMode();
+  precisionWeightedMeanUsesKnownVariances();
+  precisionWeightedMeanHandlesHeterogeneousComponentsAndSubnormals();
+  precisionWeightedMeanHonorsComponentMasks();
+  precisionWeightedMeanRejectsInvalidInputsAndResourceExcess();
   std::cout << "weighted population estimators passed\n";
 }

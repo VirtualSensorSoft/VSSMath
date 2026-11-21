@@ -6,6 +6,8 @@
 - Add typed first through fourth moments and dimension-checked multivariate
   moment aggregation with derived statistical queries.
 - Add bounded stream output for numerical containers and moment records.
+- Add precision-weighted component means with known diagonal measurement
+  variances, per-component support, and propagated estimate covariance.
 
 This development version is not a published release and makes no stable ABI or
 production-qualification claim.

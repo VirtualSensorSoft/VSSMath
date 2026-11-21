@@ -416,6 +416,178 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
                        .error_covariance = std::nullopt});
 }
 
+Result<Estimate<Vector>> precisionWeightedMean(const SampleView& sample,
+                                               ConstMatrixView variances,
+                                               Limits limits) {
+  const auto dimension = validateSample(sample);
+  if (!dimension) {
+    return fail<Estimate<Vector>>(dimension.status().code(),
+                                  std::string(dimension.status().message()));
+  }
+  const Extent columns = dimension.value();
+  const Extent rows = sample.rows.rows();
+  if (variances.rows() != rows || variances.columns() != columns) {
+    return fail<Estimate<Vector>>(
+        ErrorCode::DimensionMismatch,
+        "known variances must match sample rows and coordinates");
+  }
+  for (Index row = 0U; row < rows; ++row) {
+    for (Index column = 0U; column < columns; ++column) {
+      const Scalar variance = variances.at(row, column);
+      if (!std::isfinite(variance)) {
+        return fail<Estimate<Vector>>(
+            ErrorCode::NonFiniteInput,
+            "known variance input contains a non-finite value");
+      }
+      if (!(variance > 0.0)) {
+        return fail<Estimate<Vector>>(
+            ErrorCode::InvalidDomain,
+            "known variances must be positive, including masked cells");
+      }
+    }
+  }
+
+  const Extent maximum = std::numeric_limits<Extent>::max();
+  if (columns > maximum / columns) {
+    return fail<Estimate<Vector>>(ErrorCode::SizeOverflow,
+                                  "precision mean output extent overflows");
+  }
+  const Extent covarianceElements = columns * columns;
+  if (covarianceElements > maximum - columns ||
+      columns > maximum / sizeof(Support)) {
+    return fail<Estimate<Vector>>(ErrorCode::SizeOverflow,
+                                  "precision mean output extent overflows");
+  }
+  const Extent outputElements = covarianceElements + columns;
+  const Extent supportBytes = columns * sizeof(Support);
+  if (outputElements > maximum / sizeof(Scalar) ||
+      supportBytes > maximum / 2U) {
+    return fail<Estimate<Vector>>(ErrorCode::SizeOverflow,
+                                  "precision mean storage size overflows");
+  }
+  const Extent scalarBytes = outputElements * sizeof(Scalar);
+  const Extent outputBytes = scalarBytes + supportBytes;
+  const Extent workspaceBytes = supportBytes;
+  if (outputBytes < scalarBytes ||
+      !withinLimits(outputElements, 0U, outputBytes, workspaceBytes, limits)) {
+    return fail<Estimate<Vector>>(ErrorCode::ResourceLimit,
+                                  "precision mean exceeds configured limits");
+  }
+
+  Vector mean(columns);
+  Matrix errorCovariance(columns, columns);
+  std::vector<Support> coordinateSupports;
+  coordinateSupports.reserve(columns);
+  Index rowsWithAnyCell = 0U;
+  for (Index row = 0U; row < rows; ++row) {
+    bool admitted = false;
+    for (Index column = 0U; column < columns; ++column) {
+      admitted = admitted || validCell(sample, row, column);
+    }
+    rowsWithAnyCell += admitted ? 1U : 0U;
+  }
+
+  for (Index column = 0U; column < columns; ++column) {
+    Scalar minimumVariance = std::numeric_limits<Scalar>::infinity();
+    Scalar valueScale = 0.0;
+    Index validCount = 0U;
+    for (Index row = 0U; row < rows; ++row) {
+      if (!validCell(sample, row, column)) {
+        continue;
+      }
+      const Scalar value = sample.rows.at(row, column);
+      if (!std::isfinite(value)) {
+        return fail<Estimate<Vector>>(
+            ErrorCode::NonFiniteInput,
+            "a valid precision-weighted sample coordinate is non-finite");
+      }
+      minimumVariance = std::min(minimumVariance, variances.at(row, column));
+      valueScale = std::max(valueScale, std::abs(value));
+      ++validCount;
+    }
+    if (validCount == 0U) {
+      return fail<Estimate<Vector>>(
+          ErrorCode::InsufficientSamples,
+          "each precision mean coordinate requires valid support");
+    }
+
+    detail::CompensatedSum precisionMass;
+    detail::CompensatedSum weightedValue;
+    for (Index row = 0U; row < rows; ++row) {
+      if (!validCell(sample, row, column)) {
+        continue;
+      }
+      const Scalar relativePrecision =
+          minimumVariance / variances.at(row, column);
+      if (!(relativePrecision > 0.0) || !std::isfinite(relativePrecision)) {
+        return fail<Estimate<Vector>>(
+            ErrorCode::NonFiniteResult,
+            "a positive relative precision is not representable");
+      }
+      precisionMass.add(relativePrecision);
+      const Scalar scaledValue =
+          valueScale == 0.0 ? 0.0 : sample.rows.at(row, column) / valueScale;
+      weightedValue.add(relativePrecision * scaledValue);
+    }
+    const Scalar scaledMass = precisionMass.total();
+    if (!(scaledMass > 0.0) || !std::isfinite(scaledMass)) {
+      return fail<Estimate<Vector>>(
+          ErrorCode::NonFiniteResult,
+          "normalized precision mass is not representable");
+    }
+    const Scalar normalizedMean =
+        std::clamp(weightedValue.total() / scaledMass, -1.0, 1.0);
+    const Scalar coordinateMean = valueScale * normalizedMean;
+    if (!std::isfinite(coordinateMean)) {
+      return fail<Estimate<Vector>>(
+          ErrorCode::NonFiniteResult,
+          "precision-weighted mean is outside the finite range");
+    }
+    const Scalar varianceOfMean = minimumVariance / scaledMass;
+    if (!(varianceOfMean > 0.0) || !std::isfinite(varianceOfMean)) {
+      return fail<Estimate<Vector>>(ErrorCode::NonFiniteResult,
+                                    "precision-weighted mean variance is "
+                                    "outside the representable range");
+    }
+    mean.at(column) = coordinateMean;
+    errorCovariance.at(column, column) = varianceOfMean;
+    coordinateSupports.push_back(Support{.input = rows,
+                                         .valid = validCount,
+                                         .positive = validCount,
+                                         .frequency_mass = std::nullopt,
+                                         .weight_mass = std::nullopt,
+                                         .normalized_weight_powers = {},
+                                         .effective_count = std::nullopt,
+                                         .degrees_of_freedom = std::nullopt,
+                                         .squared_weight_mass = std::nullopt});
+  }
+
+  auto supports = makeSupports(coordinateSupports, limits);
+  if (!supports) {
+    return fail<Estimate<Vector>>(supports.status().code(),
+                                  std::string(supports.status().message()));
+  }
+  Support global{.input = rows,
+                 .valid = rowsWithAnyCell,
+                 .positive = rowsWithAnyCell,
+                 .frequency_mass = std::nullopt,
+                 .weight_mass = std::nullopt,
+                 .normalized_weight_powers = {},
+                 .effective_count = std::nullopt,
+                 .degrees_of_freedom = std::nullopt,
+                 .squared_weight_mass = std::nullopt};
+  auto diagnostics = diagnosticsFor(
+      WeightRule::precision, global, std::move(supports).value(),
+      "minimum-scaled compensated inverse-variance weighted coordinate mean",
+      "componentwise common mean with mutually independent zero-mean errors "
+      "and supplied positive known variances; no residual degrees of freedom");
+  diagnostics.estimand = Estimand::estimate;
+  return Result<Estimate<Vector>>::success(
+      Estimate<Vector>{.value = std::move(mean),
+                       .diagnostics = std::move(diagnostics),
+                       .error_covariance = std::move(errorCovariance)});
+}
+
 Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
                                                      const WeightSpec& weights,
                                                      Limits limits) {

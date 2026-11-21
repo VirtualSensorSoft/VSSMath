@@ -658,10 +658,15 @@ int main() {
   const auto frequencySpread = statistics::frequencyWeightedCovariance(
       weightedSample, frequencyCounts, statistics::VarianceMode::iid_sample,
       Limits{16U, 1024U, 0U});
+  Matrix knownVariances(2U, 1U);
+  knownVariances.at(0U, 0U) = 1.0;
+  knownVariances.at(1U, 0U) = 3.0;
+  const auto precisionAverage = statistics::precisionWeightedMean(
+      weightedSample, knownVariances.view(), Limits{16U, 1024U, 0U});
   if (!require(
           weightedAverage.hasValue() && weightedSpread.hasValue() &&
               unbiasedSpread.hasValue() && meanSpread.hasValue() &&
-              frequencySpread.hasValue() &&
+              frequencySpread.hasValue() && precisionAverage.hasValue() &&
               weightedAverage.value().value.at(0U) == 2.0 &&
               weightedSpread.value().value.at(0U, 0U) == 2.0 &&
               std::abs(unbiasedSpread.value().value.at(0U, 0U) - 4.5) <
@@ -669,7 +674,12 @@ int main() {
               std::abs(meanSpread.value().value.at(0U, 0U) - 2.5) < 1.0e-12 &&
               std::abs(frequencySpread.value().value.at(0U, 0U) - 3.0) <
                   1.0e-12 &&
-              frequencySpread.value().diagnostics.global.frequency_mass == 3U,
+              frequencySpread.value().diagnostics.global.frequency_mass == 3U &&
+              std::abs(precisionAverage.value().value.at(0U) - 0.75) <
+                  1.0e-12 &&
+              precisionAverage.value().error_covariance.has_value() &&
+              std::abs(precisionAverage.value().error_covariance->at(0U, 0U) -
+                       0.75) < 1.0e-12,
           "installed weighted-population APIs failed")) {
     return 1;
   }

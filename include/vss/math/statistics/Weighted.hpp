@@ -109,6 +109,28 @@ frequencyWeightedCovariance(const SampleView& sample,
                             std::span<const std::uint64_t> counts,
                             VarianceMode mode, Limits limits);
 
+/// @brief Estimates a componentwise mean from known independent measurement
+///        variances.
+/// @param sample Rows of observations and optional cell-validity mask.
+/// @param variances Positive known variances aligned with sample rows and
+///        coordinates; the view is borrowed only for this call.
+/// @param limits Maximum output and simultaneously required workspace storage.
+/// @return The precision-weighted component means and diagonal sampling
+///         covariance under the supplied independent-error model.
+/// @details For each coordinate, uses normalized inverse-variance weights
+///          without forming reciprocals, so representable subnormal variances
+///          are supported. Invalid sample cells are omitted independently by
+///          coordinate; variance entries must nevertheless all be finite and
+///          positive. The model assumes a common component mean and mutually
+///          independent zero-mean measurement errors. Per-coordinate support
+///          is authoritative; global support counts rows with at least one
+///          admitted coordinate. Generic weight-mass, effective-count and
+///          residual-degree-of-freedom diagnostics are not defined here.
+///          Complexity is O(Nd); owned output and workspace are O(d).
+[[nodiscard]] Result<Estimate<Vector>>
+precisionWeightedMean(const SampleView& sample, ConstMatrixView variances,
+                      Limits limits);
+
 /// @brief Propagates a supplied joint covariance through a linear estimate map.
 /// @param map Finite k-by-j linear map from source coordinates to estimates.
 /// @param jointCovariance Finite symmetric positive-semidefinite j-by-j joint
