@@ -1,0 +1,623 @@
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <detail/CompensatedSum.hpp>
+#include <limits>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/statistics/Population.hpp>
+#include <vss/math/statistics/Weighted.hpp>
+
+namespace vss::math::statistics {
+namespace {
+
+template <class T> Result<T> fail(ErrorCode code, std::string message) {
+  return Result<T>::failure(code, std::move(message));
+}
+
+Result<Extent> validateSample(const SampleView& sample) {
+  const Extent rows = sample.rows.rows();
+  const Extent columns = sample.rows.columns();
+  if (rows == 0U || columns == 0U) {
+    return fail<Extent>(
+        ErrorCode::InvalidExtent,
+        "weighted population must have nonempty rows and coordinates");
+  }
+  if (sample.observation_shape.empty()) {
+    if (columns != 1U) {
+      return fail<Extent>(ErrorCode::DimensionMismatch,
+                          "scalar population must have exactly one coordinate");
+    }
+  } else {
+    Extent product = 1U;
+    for (const Extent extent : sample.observation_shape) {
+      if (extent == 0U) {
+        return fail<Extent>(ErrorCode::InvalidExtent,
+                            "observation shape extents must be positive");
+      }
+      if (product > std::numeric_limits<Extent>::max() / extent) {
+        return fail<Extent>(ErrorCode::SizeOverflow,
+                            "observation shape product overflows");
+      }
+      product *= extent;
+    }
+    if (product != columns) {
+      return fail<Extent>(ErrorCode::DimensionMismatch,
+                          "observation shape does not match sample columns");
+    }
+  }
+  if (rows > std::numeric_limits<Extent>::max() / columns) {
+    return fail<Extent>(ErrorCode::SizeOverflow, "sample cell count overflows");
+  }
+  if (!sample.valid.empty() && sample.valid.size() != rows * columns) {
+    return fail<Extent>(ErrorCode::DimensionMismatch,
+                        "validity mask must contain one byte per sample cell");
+  }
+  for (const std::uint8_t byte : sample.valid) {
+    if (byte > 1U) {
+      return fail<Extent>(ErrorCode::InvalidDomain,
+                          "validity mask bytes must be zero or one");
+    }
+  }
+  return Result<Extent>::success(columns);
+}
+
+bool validCell(const SampleView& sample, Index row, Index column) {
+  return sample.valid.empty() ||
+         sample.valid[(row * sample.rows.columns()) + column] != 0U;
+}
+
+bool completeRow(const SampleView& sample, Index row) {
+  for (Index column = 0U; column < sample.rows.columns(); ++column) {
+    if (!validCell(sample, row, column)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+Status validateWeightSpec(const WeightSpec& weights, const SampleView& sample,
+                          bool covariance) {
+  if (weights.rule == WeightRule::empirical && weights.rowWeights.has_value() &&
+      !weights.componentWeights.has_value() &&
+      weights.frequencyCounts.empty()) {
+    if (weights.rowWeights->size() != sample.rows.rows()) {
+      return Status::failure(ErrorCode::DimensionMismatch,
+                             "row weights must match the observation count");
+    }
+    return Status::success();
+  }
+  if (!covariance && weights.rule == WeightRule::componentwise &&
+      !weights.rowWeights.has_value() && weights.componentWeights.has_value() &&
+      weights.frequencyCounts.empty()) {
+    if (weights.componentWeights->rows() != sample.rows.rows() ||
+        weights.componentWeights->columns() != sample.rows.columns()) {
+      return Status::failure(
+          ErrorCode::DimensionMismatch,
+          "component weights must match sample rows and coordinates");
+    }
+    return Status::success();
+  }
+  return Status::failure(
+      ErrorCode::InvalidDomain,
+      covariance
+          ? "weighted empirical covariance requires empirical row weights"
+          : "weighted mean requires empirical row weights or componentwise "
+            "weights");
+}
+
+Scalar rowWeightAt(const WeightSpec& weights, Index row) {
+  if (weights.rowWeights.has_value()) {
+    return weights.rowWeights.value().at(row);
+  }
+  throw std::logic_error("validated row weights are unexpectedly absent");
+}
+
+Scalar componentWeightAt(const WeightSpec& weights, Index row, Index column) {
+  if (weights.componentWeights.has_value()) {
+    return weights.componentWeights.value().at(row, column);
+  }
+  throw std::logic_error("validated component weights are unexpectedly absent");
+}
+
+Scalar weightAt(const WeightSpec& weights, Index row, Index column) {
+  if (weights.rule == WeightRule::empirical) {
+    return rowWeightAt(weights, row);
+  }
+  return componentWeightAt(weights, row, column);
+}
+
+Status validateWeightValues(const SampleView& sample,
+                            const WeightSpec& weights) {
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    for (Index column = 0U; column < sample.rows.columns(); ++column) {
+      if (weights.rule == WeightRule::componentwise &&
+          !validCell(sample, row, column)) {
+        continue;
+      }
+      const Scalar weight = weightAt(weights, row, column);
+      if (!std::isfinite(weight)) {
+        return Status::failure(ErrorCode::NonFiniteInput,
+                               "weight input contains a non-finite value");
+      }
+      if (weight < 0.0) {
+        return Status::failure(ErrorCode::InvalidDomain,
+                               "weights must be nonnegative");
+      }
+      if (weights.rule == WeightRule::empirical) {
+        break;
+      }
+    }
+  }
+  return Status::success();
+}
+
+bool withinLimits(Extent outputElements, Extent workspaceElements,
+                  Extent outputBytes, Extent workspaceBytes, Limits limits) {
+  return outputElements <= limits.elements &&
+         workspaceElements <= limits.elements - outputElements &&
+         outputBytes <= limits.bytes &&
+         workspaceBytes <= limits.bytes - outputBytes;
+}
+
+Result<Array<Support>> makeSupports(const std::vector<Support>& supports,
+                                    Limits limits) {
+  return Array<Support>::copy(supports, limits);
+}
+
+Support supportFor(Index input, Index valid, Index positive, Scalar maximum,
+                   Scalar scaledMass, Scalar power2, Scalar power3) {
+  std::optional<Scalar> mass;
+  const Scalar actualMass = maximum * scaledMass;
+  if (std::isfinite(actualMass)) {
+    mass = actualMass;
+  }
+  const Scalar effective = power2 > 0.0 ? 1.0 / power2 : 0.0;
+  return Support{.input = input,
+                 .valid = valid,
+                 .positive = positive,
+                 .frequency_mass = std::nullopt,
+                 .weight_mass = mass,
+                 .normalized_weight_powers = {1.0, power2, power3},
+                 .effective_count = effective,
+                 .degrees_of_freedom = std::nullopt,
+                 .squared_weight_mass = std::nullopt};
+}
+
+EstimatorDiagnostics diagnosticsFor(WeightRule weightRule, Support support,
+                                    Array<Support> coordinateSupport,
+                                    const char* algorithm,
+                                    const char* premises) {
+  return EstimatorDiagnostics{.estimand = Estimand::observed,
+                              .weight = weightRule,
+                              .center = CenterRule::estimated,
+                              .approximation = Approximation::exact,
+                              .global = support,
+                              .coordinate_support =
+                                  std::move(coordinateSupport),
+                              .tuple_support = {},
+                              .reciprocal_condition = std::nullopt,
+                              .numerical_error = std::nullopt,
+                              .sampling_error = std::nullopt,
+                              .rank = std::nullopt,
+                              .algorithm = algorithm,
+                              .premises = premises,
+                              .warnings = {}};
+}
+
+Scalar scaledProduct(Scalar left, Scalar right, Scalar factor) {
+  if (left == 0.0 || right == 0.0 || factor == 0.0) {
+    return 0.0;
+  }
+  int leftExponent = 0;
+  int rightExponent = 0;
+  int factorExponent = 0;
+  const Scalar leftMantissa = std::frexp(left, &leftExponent);
+  const Scalar rightMantissa = std::frexp(right, &rightExponent);
+  const Scalar factorMantissa = std::frexp(factor, &factorExponent);
+  const Scalar mantissa = leftMantissa * rightMantissa * factorMantissa;
+  return std::scalbn(mantissa, leftExponent + rightExponent + factorExponent);
+}
+
+} // namespace
+
+Result<Estimate<Vector>> weightedMean(const SampleView& sample,
+                                      const WeightSpec& weights,
+                                      Limits limits) {
+  const auto dimension = validateSample(sample);
+  if (!dimension) {
+    return fail<Estimate<Vector>>(dimension.status().code(),
+                                  std::string(dimension.status().message()));
+  }
+  const auto weightStatus = validateWeightSpec(weights, sample, false);
+  if (!weightStatus.ok()) {
+    return fail<Estimate<Vector>>(weightStatus.code(),
+                                  std::string(weightStatus.message()));
+  }
+  const auto valuesStatus = validateWeightValues(sample, weights);
+  if (!valuesStatus.ok()) {
+    return fail<Estimate<Vector>>(valuesStatus.code(),
+                                  std::string(valuesStatus.message()));
+  }
+
+  const Extent columns = dimension.value();
+  constexpr Extent scalarWorkspaceCount = 3U;
+  constexpr Extent totalScalarCount = 4U;
+  if (columns > std::numeric_limits<Extent>::max() / totalScalarCount) {
+    return fail<Estimate<Vector>>(ErrorCode::SizeOverflow,
+                                  "weighted mean workspace extent overflows");
+  }
+  const Extent workspaceElements = columns * scalarWorkspaceCount;
+  if (columns > std::numeric_limits<Extent>::max() / sizeof(Scalar) ||
+      workspaceElements > std::numeric_limits<Extent>::max() / sizeof(Scalar) ||
+      columns > std::numeric_limits<Extent>::max() / sizeof(Support)) {
+    return fail<Estimate<Vector>>(ErrorCode::SizeOverflow,
+                                  "weighted mean workspace bytes overflow");
+  }
+  if (columns > std::numeric_limits<Extent>::max() / (2U * sizeof(Support))) {
+    return fail<Estimate<Vector>>(ErrorCode::SizeOverflow,
+                                  "weighted mean support bytes overflow");
+  }
+  const Extent supportBytes = 2U * columns * sizeof(Support);
+  const Extent scalarBytes = workspaceElements * sizeof(Scalar);
+  if (supportBytes > std::numeric_limits<Extent>::max() - scalarBytes ||
+      !withinLimits(columns, workspaceElements, columns * sizeof(Scalar),
+                    scalarBytes + supportBytes, limits)) {
+    return fail<Estimate<Vector>>(ErrorCode::ResourceLimit,
+                                  "weighted mean exceeds configured limits");
+  }
+
+  Vector mean(columns);
+  std::vector<Support> coordinateSupports;
+  coordinateSupports.reserve(columns);
+  Index maximumCoordinatePositive = 0U;
+
+  for (Index column = 0U; column < columns; ++column) {
+    Scalar maximumWeight = 0.0;
+    Index validCount = 0U;
+    Index positiveCount = 0U;
+    Scalar valueScale = 0.0;
+    for (Index row = 0U; row < sample.rows.rows(); ++row) {
+      if (!validCell(sample, row, column)) {
+        continue;
+      }
+      const Scalar value = sample.rows.at(row, column);
+      if (!std::isfinite(value)) {
+        return fail<Estimate<Vector>>(
+            ErrorCode::NonFiniteInput,
+            "a valid sample coordinate is non-finite");
+      }
+      const Scalar weight = weightAt(weights, row, column);
+      ++validCount;
+      if (weight > 0.0) {
+        ++positiveCount;
+        maximumWeight = std::max(maximumWeight, weight);
+        valueScale = std::max(valueScale, std::abs(value));
+      }
+    }
+    if (positiveCount == 0U) {
+      return fail<Estimate<Vector>>(
+          ErrorCode::InsufficientSamples,
+          "each mean coordinate requires positive weight");
+    }
+
+    detail::CompensatedSum mass;
+    detail::CompensatedSum power2;
+    detail::CompensatedSum power3;
+    detail::CompensatedSum weightedValue;
+    for (Index row = 0U; row < sample.rows.rows(); ++row) {
+      if (!validCell(sample, row, column)) {
+        continue;
+      }
+      const Scalar weight = weightAt(weights, row, column);
+      if (weight == 0.0) {
+        continue;
+      }
+      const Scalar scaledWeight = weight / maximumWeight;
+      mass.add(scaledWeight);
+      power2.add(scaledWeight * scaledWeight);
+      power3.add(scaledWeight * scaledWeight * scaledWeight);
+      const Scalar scaledValue =
+          valueScale == 0.0 ? 0.0 : sample.rows.at(row, column) / valueScale;
+      weightedValue.add(scaledWeight * scaledValue);
+    }
+    const Scalar scaledMass = mass.total();
+    if (!(scaledMass > 0.0) || !std::isfinite(scaledMass)) {
+      return fail<Estimate<Vector>>(ErrorCode::NonFiniteResult,
+                                    "scaled weight mass is not representable");
+    }
+    const Scalar normalizedMean = weightedValue.total() / scaledMass;
+    const Scalar estimate = valueScale * normalizedMean;
+    if (!std::isfinite(estimate)) {
+      return fail<Estimate<Vector>>(ErrorCode::NonFiniteResult,
+                                    "weighted mean is non-finite");
+    }
+    mean.at(column) = estimate;
+    maximumCoordinatePositive =
+        std::max(maximumCoordinatePositive, positiveCount);
+    coordinateSupports.push_back(
+        supportFor(sample.rows.rows(), validCount, positiveCount, maximumWeight,
+                   scaledMass, power2.total() / (scaledMass * scaledMass),
+                   power3.total() / (scaledMass * scaledMass * scaledMass)));
+  }
+
+  auto supports = makeSupports(coordinateSupports, limits);
+  if (!supports) {
+    return fail<Estimate<Vector>>(supports.status().code(),
+                                  std::string(supports.status().message()));
+  }
+  Index completeValid = 0U;
+  Index completePositive = 0U;
+  Scalar globalMaximum = 0.0;
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (!completeRow(sample, row)) {
+      continue;
+    }
+    ++completeValid;
+    if (weights.rule == WeightRule::empirical) {
+      const Scalar weight = rowWeightAt(weights, row);
+      if (weight > 0.0) {
+        ++completePositive;
+        globalMaximum = std::max(globalMaximum, weight);
+      }
+    }
+  }
+  Support global{.input = sample.rows.rows(),
+                 .valid = completeValid,
+                 .positive = weights.rule == WeightRule::empirical
+                                 ? completePositive
+                                 : maximumCoordinatePositive,
+                 .frequency_mass = std::nullopt,
+                 .weight_mass = std::nullopt,
+                 .normalized_weight_powers = {},
+                 .effective_count = std::nullopt,
+                 .degrees_of_freedom = std::nullopt,
+                 .squared_weight_mass = std::nullopt};
+  if (weights.rule == WeightRule::empirical && completePositive > 0U) {
+    detail::CompensatedSum mass;
+    detail::CompensatedSum power2;
+    detail::CompensatedSum power3;
+    for (Index row = 0U; row < sample.rows.rows(); ++row) {
+      if (completeRow(sample, row)) {
+        const Scalar scaled = rowWeightAt(weights, row) / globalMaximum;
+        mass.add(scaled);
+        power2.add(scaled * scaled);
+        power3.add(scaled * scaled * scaled);
+      }
+    }
+    const Scalar total = mass.total();
+    global = supportFor(sample.rows.rows(), completeValid, completePositive,
+                        globalMaximum, total, power2.total() / (total * total),
+                        power3.total() / (total * total * total));
+  }
+  auto diagnostics = diagnosticsFor(
+      weights.rule, global, std::move(supports).value(),
+      "maximum-scaled compensated weighted coordinate mean",
+      "valid coordinates with positive nonnegative empirical weights");
+  return Result<Estimate<Vector>>::success(
+      Estimate<Vector>{.value = std::move(mean),
+                       .diagnostics = std::move(diagnostics),
+                       .error_covariance = std::nullopt});
+}
+
+Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
+                                                     const WeightSpec& weights,
+                                                     Limits limits) {
+  const auto dimension = validateSample(sample);
+  if (!dimension) {
+    return fail<Estimate<Matrix>>(dimension.status().code(),
+                                  std::string(dimension.status().message()));
+  }
+  const auto weightStatus = validateWeightSpec(weights, sample, true);
+  if (!weightStatus.ok()) {
+    return fail<Estimate<Matrix>>(weightStatus.code(),
+                                  std::string(weightStatus.message()));
+  }
+  const auto valuesStatus = validateWeightValues(sample, weights);
+  if (!valuesStatus.ok()) {
+    return fail<Estimate<Matrix>>(valuesStatus.code(),
+                                  std::string(valuesStatus.message()));
+  }
+
+  const Extent columns = dimension.value();
+  if (columns > std::numeric_limits<Extent>::max() / columns) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::SizeOverflow, "weighted covariance output extent overflows");
+  }
+  const Extent outputElements = columns * columns;
+  constexpr Extent vectorWorkspaceCount = 3U;
+  if (columns > std::numeric_limits<Extent>::max() / vectorWorkspaceCount ||
+      outputElements > std::numeric_limits<Extent>::max() -
+                           (columns * vectorWorkspaceCount)) {
+    return fail<Estimate<Matrix>>(ErrorCode::SizeOverflow,
+                                  "weighted covariance workspace overflows");
+  }
+  const Extent vectorElements = columns * vectorWorkspaceCount;
+  if (outputElements > std::numeric_limits<Extent>::max() - vectorElements) {
+    return fail<Estimate<Matrix>>(ErrorCode::SizeOverflow,
+                                  "weighted covariance workspace overflows");
+  }
+  const Extent workspaceElements = outputElements + vectorElements;
+  if (outputElements >
+          std::numeric_limits<Extent>::max() / sizeof(detail::CompensatedSum) ||
+      vectorElements > std::numeric_limits<Extent>::max() / sizeof(Scalar) ||
+      columns > std::numeric_limits<Extent>::max() / sizeof(Support)) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::SizeOverflow,
+        "weighted covariance workspace bytes overflow");
+  }
+  const Extent outputBytes = outputElements * sizeof(Scalar);
+  const Extent supportBytes = columns * sizeof(Support);
+  const Extent accumulatorBytes =
+      outputElements * sizeof(detail::CompensatedSum);
+  const Extent vectorWorkspaceBytes = vectorElements * sizeof(Scalar);
+  if (accumulatorBytes >
+          std::numeric_limits<Extent>::max() - vectorWorkspaceBytes ||
+      accumulatorBytes + vectorWorkspaceBytes >
+          std::numeric_limits<Extent>::max() - supportBytes) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::SizeOverflow,
+        "weighted covariance workspace bytes overflow");
+  }
+  const Extent workspaceBytes =
+      accumulatorBytes + vectorWorkspaceBytes + supportBytes;
+  if (workspaceBytes > std::numeric_limits<Extent>::max() - outputBytes ||
+      !withinLimits(outputElements, workspaceElements, outputBytes,
+                    workspaceBytes, limits)) {
+    return fail<Estimate<Matrix>>(
+        ErrorCode::ResourceLimit,
+        "weighted covariance exceeds configured limits");
+  }
+
+  Index validCount = 0U;
+  Index positiveCount = 0U;
+  Scalar maximumWeight = 0.0;
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (!completeRow(sample, row)) {
+      continue;
+    }
+    ++validCount;
+    for (Index column = 0U; column < columns; ++column) {
+      if (!std::isfinite(sample.rows.at(row, column))) {
+        return fail<Estimate<Matrix>>(
+            ErrorCode::NonFiniteInput,
+            "a complete sample row contains a non-finite coordinate");
+      }
+    }
+    const Scalar weight = rowWeightAt(weights, row);
+    if (weight > 0.0) {
+      ++positiveCount;
+      maximumWeight = std::max(maximumWeight, weight);
+    }
+  }
+  if (positiveCount == 0U) {
+    return fail<Estimate<Matrix>>(ErrorCode::InsufficientSamples,
+                                  "covariance requires positive row weight");
+  }
+
+  detail::CompensatedSum mass;
+  detail::CompensatedSum power2;
+  detail::CompensatedSum power3;
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (!completeRow(sample, row)) {
+      continue;
+    }
+    const Scalar weight = rowWeightAt(weights, row);
+    if (weight == 0.0) {
+      continue;
+    }
+    const Scalar scaled = weight / maximumWeight;
+    mass.add(scaled);
+    power2.add(scaled * scaled);
+    power3.add(scaled * scaled * scaled);
+  }
+  const Scalar scaledMass = mass.total();
+  if (!(scaledMass > 0.0) || !std::isfinite(scaledMass)) {
+    return fail<Estimate<Matrix>>(ErrorCode::NonFiniteResult,
+                                  "scaled weight mass is not representable");
+  }
+
+  Vector scales(columns, 0.0);
+  Vector normalizedCenter(columns, 0.0);
+  for (Index column = 0U; column < columns; ++column) {
+    for (Index row = 0U; row < sample.rows.rows(); ++row) {
+      if (completeRow(sample, row) && rowWeightAt(weights, row) > 0.0) {
+        scales.at(column) =
+            std::max(scales.at(column), std::abs(sample.rows.at(row, column)));
+      }
+    }
+    if (scales.at(column) == 0.0) {
+      continue;
+    }
+    detail::CompensatedSum weightedCoordinate;
+    for (Index row = 0U; row < sample.rows.rows(); ++row) {
+      if (!completeRow(sample, row)) {
+        continue;
+      }
+      const Scalar weight = rowWeightAt(weights, row);
+      if (weight > 0.0) {
+        weightedCoordinate.add(
+            (weight / maximumWeight) *
+            (sample.rows.at(row, column) / scales.at(column)));
+      }
+    }
+    normalizedCenter.at(column) = weightedCoordinate.total() / scaledMass;
+  }
+
+  std::vector<detail::CompensatedSum> products(outputElements);
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    if (!completeRow(sample, row)) {
+      continue;
+    }
+    const Scalar weight = rowWeightAt(weights, row);
+    if (weight == 0.0) {
+      continue;
+    }
+    for (Index left = 0U; left < columns; ++left) {
+      const Scalar leftDelta =
+          scales.at(left) == 0.0
+              ? 0.0
+              : (sample.rows.at(row, left) / scales.at(left)) -
+                    normalizedCenter.at(left);
+      for (Index right = left; right < columns; ++right) {
+        const Scalar rightDelta =
+            scales.at(right) == 0.0
+                ? 0.0
+                : (sample.rows.at(row, right) / scales.at(right)) -
+                      normalizedCenter.at(right);
+        products[(left * columns) + right].add((weight / maximumWeight) *
+                                               leftDelta * rightDelta);
+      }
+    }
+  }
+
+  Matrix covariance(columns, columns, 0.0);
+  for (Index left = 0U; left < columns; ++left) {
+    for (Index right = left; right < columns; ++right) {
+      const Scalar normalized =
+          products[(left * columns) + right].total() / scaledMass;
+      const Scalar value =
+          scaledProduct(scales.at(left), scales.at(right), normalized);
+      if (!std::isfinite(value)) {
+        return fail<Estimate<Matrix>>(
+            ErrorCode::NonFiniteResult,
+            "weighted covariance is outside the finite scalar range");
+      }
+      covariance.at(left, right) = value;
+      covariance.at(right, left) = value;
+    }
+  }
+
+  const Support global =
+      supportFor(sample.rows.rows(), validCount, positiveCount, maximumWeight,
+                 scaledMass, power2.total() / (scaledMass * scaledMass),
+                 power3.total() / (scaledMass * scaledMass * scaledMass));
+  auto supports = makeSupports(std::vector<Support>{}, limits);
+  if (!supports) {
+    return fail<Estimate<Matrix>>(supports.status().code(),
+                                  std::string(supports.status().message()));
+  }
+  auto diagnostics = diagnosticsFor(
+      weights.rule, global, std::move(supports).value(),
+      "maximum-scaled compensated weighted centered outer products",
+      "complete rows with nonnegative empirical weights; descriptive empirical "
+      "covariance");
+  return Result<Estimate<Matrix>>::success(
+      Estimate<Matrix>{.value = std::move(covariance),
+                       .diagnostics = std::move(diagnostics),
+                       .error_covariance = std::nullopt});
+}
+
+} // namespace vss::math::statistics
