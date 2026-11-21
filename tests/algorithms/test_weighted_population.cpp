@@ -447,8 +447,12 @@ void precisionWeightedMeanUsesKnownVariances() {
       precisionWeightedMean(sample(values), variances.view(), limits());
   VSS_CHECK(estimate);
   close(estimate.value().value.at(0U), 1.5);
-  VSS_CHECK(estimate.value().error_covariance.has_value());
-  close(estimate.value().error_covariance->at(0U, 0U), 0.75);
+  const auto& covariance = estimate.value().error_covariance;
+  VSS_CHECK(covariance.has_value());
+  if (!covariance.has_value()) {
+    return;
+  }
+  close(covariance->at(0U, 0U), 0.75);
   VSS_CHECK(estimate.value().diagnostics.weight == WeightRule::precision);
   VSS_CHECK(estimate.value().diagnostics.estimand == Estimand::estimate);
   VSS_CHECK(estimate.value().diagnostics.global.effective_count ==
@@ -470,10 +474,14 @@ void precisionWeightedMeanHandlesHeterogeneousComponentsAndSubnormals() {
   VSS_CHECK(estimate);
   close(estimate.value().value.at(0U), 2.0);
   close(estimate.value().value.at(1U), 5.0);
-  VSS_CHECK(estimate.value().error_covariance.has_value());
-  close(estimate.value().error_covariance->at(0U, 0U) / tinyVariance, 0.5);
-  close(estimate.value().error_covariance->at(1U, 1U), 0.75);
-  close(estimate.value().error_covariance->at(0U, 1U), 0.0);
+  const auto& covariance = estimate.value().error_covariance;
+  VSS_CHECK(covariance.has_value());
+  if (!covariance.has_value()) {
+    return;
+  }
+  close(covariance->at(0U, 0U) / tinyVariance, 0.5);
+  close(covariance->at(1U, 1U), 0.75);
+  close(covariance->at(0U, 1U), 0.0);
 }
 
 void precisionWeightedMeanHonorsComponentMasks() {
