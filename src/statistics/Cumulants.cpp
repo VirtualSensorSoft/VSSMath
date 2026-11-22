@@ -234,13 +234,15 @@ private:
       std::uint64_t carry = 0U;
       for (Index j = 0U; j < 2U; ++j) {
         const std::uint64_t current =
-            static_cast<std::uint64_t>(a.at(i)) * b.at(j) + result.at(i + j) + carry;
+            static_cast<std::uint64_t>(a.at(i)) * b.at(j) + result.at(i + j) +
+            carry;
         result.at(i + j) = static_cast<std::uint32_t>(current);
         carry = current >> 32U;
       }
       Index position = i + 2U;
       while (carry != 0U && position < result.size()) {
-        const auto current = static_cast<std::uint64_t>(result.at(position)) + carry;
+        const auto current =
+            static_cast<std::uint64_t>(result.at(position)) + carry;
         result.at(position) = static_cast<std::uint32_t>(current);
         ++position;
         carry = current >> 32U;
@@ -301,8 +303,8 @@ private:
   [[nodiscard]] static Index highestBit(const Big& value) {
     for (Index word = limbCount; word > 0U; --word) {
       if (value.at(word - 1U) != 0U) {
-        return (word - 1U) * 32U +
-               (31U - static_cast<Index>(std::countl_zero(value.at(word - 1U))));
+        return (word - 1U) * 32U + (31U - static_cast<Index>(std::countl_zero(
+                                              value.at(word - 1U))));
       }
     }
     return noBit;
@@ -830,9 +832,10 @@ private:
           const auto certificate =
               detail::certifyMoment(result, value, absoluteError);
           if (certificate != MomentCertificate::accepted) {
-            if (!exactFourth(sourceTerm->value, leftValues.at(0U), leftValues.at(1U),
-                             leftValues.at(2U), rightValues.at(0U), rightValues.at(1U),
-                             rightValues.at(2U), forward, value, absoluteError)) {
+            if (!exactFourth(
+                    sourceTerm->value, leftValues.at(0U), leftValues.at(1U),
+                    leftValues.at(2U), rightValues.at(0U), rightValues.at(1U),
+                    rightValues.at(2U), forward, value, absoluteError)) {
               return failure(ErrorCode::NonFiniteResult,
                              "exact cumulant conversion is not representable");
             }
