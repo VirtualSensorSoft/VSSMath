@@ -124,17 +124,18 @@ struct MomentInterval final {
   }
 
   friend MomentInterval operator*(MomentInterval a, MomentInterval b) {
-    const std::array lower{productBound(a.lower, b.lower, Bound::lower),
-                           productBound(a.lower, b.upper, Bound::lower),
-                           productBound(a.upper, b.lower, Bound::lower),
-                           productBound(a.upper, b.upper, Bound::lower)};
-    const std::array upper{productBound(a.lower, b.lower, Bound::upper),
-                           productBound(a.lower, b.upper, Bound::upper),
-                           productBound(a.upper, b.lower, Bound::upper),
-                           productBound(a.upper, b.upper, Bound::upper)};
-    return {
-        *std::ranges::min_element(lower, [](auto x, auto y) { return x < y; }),
-        *std::ranges::max_element(upper, [](auto x, auto y) { return x < y; })};
+    const std::array lowerBounds{productBound(a.lower, b.lower, Bound::lower),
+                                 productBound(a.lower, b.upper, Bound::lower),
+                                 productBound(a.upper, b.lower, Bound::lower),
+                                 productBound(a.upper, b.upper, Bound::lower)};
+    const std::array upperBounds{productBound(a.lower, b.lower, Bound::upper),
+                                 productBound(a.lower, b.upper, Bound::upper),
+                                 productBound(a.upper, b.lower, Bound::upper),
+                                 productBound(a.upper, b.upper, Bound::upper)};
+    return {*std::ranges::min_element(lowerBounds,
+                                      [](auto x, auto y) { return x < y; }),
+            *std::ranges::max_element(upperBounds,
+                                      [](auto x, auto y) { return x < y; })};
   }
 
   // Precondition: zero < denominator.lower.
