@@ -1714,7 +1714,7 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedFourth(
   const Extent outputRecords = 2U;
   Extent workspaceValues = 0U;
   Extent workspaceIndices = tupleItems;
-  Extent workspaceRecords = 1U;
+  const Extent workspaceRecords = 1U;
   if (!checkedMultiply(count, 2U, outputValues) ||
       !checkedAdd(outputValues, outD, outputValues) ||
       !checkedAdd(shapeItems, selectedItems, outputIndices) ||
@@ -1828,10 +1828,10 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedFourth(
         "fourth-moment correction matrix is uncertifiable");
   }
   const auto scale = MomentInterval::point(matrixScale);
-  MomentInterval scaledA = a.divideByPositive(scale);
-  MomentInterval scaledB = b.divideByPositive(scale);
-  MomentInterval scaledC = c.divideByPositive(scale);
-  MomentInterval scaledD = e.divideByPositive(scale);
+  const MomentInterval scaledA = a.divideByPositive(scale);
+  const MomentInterval scaledB = b.divideByPositive(scale);
+  const MomentInterval scaledC = c.divideByPositive(scale);
+  const MomentInterval scaledD = e.divideByPositive(scale);
   const auto determinant = scaledA * scaledD - scaledB * scaledC;
   const auto determinantMagnitude = magnitudeLower(determinant);
   if (!determinantMagnitude.has_value()) {
@@ -1973,9 +1973,9 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedFourth(
     }
     const auto sampleFourth = fourthNumerator.divideByPositive(mass);
     std::array<MomentInterval, 6U> samplePairs{};
-    for (Index pair = 0U; pair < samplePairs.size(); ++pair) {
-      samplePairs[pair] = pairNumerators[pair].divideByPositive(mass);
-    }
+    std::ranges::transform(
+        pairNumerators, samplePairs.begin(),
+        [mass](MomentInterval pair) { return pair.divideByPositive(mass); });
     const auto q =
         (samplePairs[0U] * samplePairs[5U] + samplePairs[1U] * samplePairs[4U] +
          samplePairs[2U] * samplePairs[3U])
