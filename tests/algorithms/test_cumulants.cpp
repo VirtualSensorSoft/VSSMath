@@ -427,7 +427,8 @@ void weightedSumContractionAndSelectedFourth() {
   VSS_CHECK(zeroProjection.value().population_mean.has_value());
   close(zeroProjection.value().population_mean.value_or(Vector{}).at(0U), 0.0);
 
-  MomentRequest missingMap = request(0x02U, MomentRepresentation::contraction);
+  const MomentRequest missingMap =
+      request(0x02U, MomentRepresentation::contraction);
   const auto rejectedMap = cumulantsOfIndependentSum(
       inputs, coefficientVector.view(), missingMap, ample());
   VSS_CHECK(!rejectedMap &&
