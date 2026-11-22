@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <numeric>
+#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -890,6 +891,909 @@ private:
   return Result<MomentEstimate>::success(std::move(output));
 }
 
+class ExactProductSum final {
+public:
+  static constexpr Index maximumFactors = 9U;
+
+  [[nodiscard]] bool add(std::span<const Scalar> factors) {
+    if (factors.empty() || factors.size() > maximumFactors) {
+      return false;
+    }
+    std::array<std::uint32_t, 16U> product{};
+    product.at(0U) = 1U;
+    Index used = 1U;
+    int exponent = 0;
+    bool negative = false;
+    for (const Scalar factor : factors) {
+      if (!std::isfinite(factor)) {
+        return false;
+      }
+      const auto decoded = decode(factor);
+      if (decoded.significand == 0U) {
+        return true;
+      }
+      exponent += decoded.exponent;
+      negative = negative != decoded.negative;
+      const std::array<std::uint32_t, 2U> multiplier{
+          static_cast<std::uint32_t>(decoded.significand),
+          static_cast<std::uint32_t>(decoded.significand >> 32U)};
+      std::array<std::uint32_t, 16U> next{};
+      for (Index left = 0U; left < used; ++left) {
+        std::uint64_t carry = 0U;
+        for (Index right = 0U; right < multiplier.size(); ++right) {
+          const Index position = left + right;
+          const std::uint64_t current =
+              static_cast<std::uint64_t>(product.at(left)) *
+                  multiplier.at(right) +
+              next.at(position) + carry;
+          next.at(position) = static_cast<std::uint32_t>(current);
+          carry = current >> 32U;
+        }
+        Index position = left + multiplier.size();
+        while (carry != 0U) {
+          if (position >= next.size()) {
+            return false;
+          }
+          const std::uint64_t current = next.at(position) + carry;
+          next.at(position) = static_cast<std::uint32_t>(current);
+          carry = current >> 32U;
+          ++position;
+        }
+      }
+      product = next;
+      used = std::min<Index>(used + 2U, product.size());
+      while (used > 1U && product.at(used - 1U) == 0U) {
+        --used;
+      }
+    }
+    return addInteger(product, used, exponent, negative);
+  }
+
+  [[nodiscard]] bool rounded(Scalar& value) const {
+    const bool negative = less(positive_, negative_);
+    const Big& larger = negative ? negative_ : positive_;
+    const Big& smaller = negative ? positive_ : negative_;
+    const Big magnitude = subtract(larger, smaller);
+    const Index top = highestBit(magnitude);
+    if (top == noBit) {
+      value = 0.0;
+      return true;
+    }
+    constexpr Index subnormalShift = 9666U - 1074U;
+    const Index shift = std::max(top > 52U ? top - 52U : 0U, subnormalShift);
+    std::uint64_t significand = shiftedLow(magnitude, shift);
+    if (shift != 0U && testBit(magnitude, shift - 1U) &&
+        (anyBelow(magnitude, shift - 1U) || (significand & 1U) != 0U)) {
+      ++significand;
+    }
+    const Scalar roundedMagnitude = std::scalbn(
+        static_cast<Scalar>(significand), static_cast<int>(shift) - 9666);
+    if (!std::isfinite(roundedMagnitude)) {
+      return false;
+    }
+    value = negative ? -roundedMagnitude : roundedMagnitude;
+    return true;
+  }
+
+private:
+  static constexpr int minimumExponent = -9666;
+  static constexpr Index limbCount = 600U;
+  static constexpr Index noBit = std::numeric_limits<Index>::max();
+  using Big = std::array<std::uint32_t, limbCount>;
+  struct Binary final {
+    std::uint64_t significand;
+    int exponent;
+    bool negative;
+  };
+
+  [[nodiscard]] static Binary decode(Scalar value) {
+    const auto bits = std::bit_cast<std::uint64_t>(value);
+    const auto exponentBits = static_cast<unsigned>((bits >> 52U) & 0x7ffU);
+    const auto fraction = bits & ((std::uint64_t{1U} << 52U) - 1U);
+    if (exponentBits == 0U) {
+      return {fraction, -1074, (bits >> 63U) != 0U};
+    }
+    return {fraction | (std::uint64_t{1U} << 52U),
+            static_cast<int>(exponentBits) - 1075, (bits >> 63U) != 0U};
+  }
+
+  [[nodiscard]] bool addInteger(const std::array<std::uint32_t, 16U>& value,
+                                Index size, int exponent, bool negative) {
+    if (exponent < minimumExponent) {
+      return false;
+    }
+    Big& destination = negative ? negative_ : positive_;
+    const Index bitOffset = static_cast<Index>(exponent - minimumExponent);
+    const Index wordOffset = bitOffset / 32U;
+    const unsigned bitShift = static_cast<unsigned>(bitOffset % 32U);
+    const auto addWord = [&destination](Index position, std::uint32_t addend) {
+      while (addend != 0U) {
+        if (position >= destination.size()) {
+          return false;
+        }
+        const std::uint64_t sum =
+            static_cast<std::uint64_t>(destination.at(position)) + addend;
+        destination.at(position) = static_cast<std::uint32_t>(sum);
+        addend = static_cast<std::uint32_t>(sum >> 32U);
+        ++position;
+      }
+      return true;
+    };
+    for (Index index = 0U; index < size; ++index) {
+      const Index position = wordOffset + index;
+      if (bitShift == 0U) {
+        if (!addWord(position, value.at(index))) {
+          return false;
+        }
+        continue;
+      }
+      const auto low = static_cast<std::uint32_t>(
+          static_cast<std::uint64_t>(value.at(index)) << bitShift);
+      const auto high =
+          static_cast<std::uint32_t>(value.at(index) >> (32U - bitShift));
+      if (!addWord(position, low) || !addWord(position + 1U, high)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] static bool less(const Big& left, const Big& right) {
+    for (Index index = limbCount; index > 0U; --index) {
+      if (left.at(index - 1U) != right.at(index - 1U)) {
+        return left.at(index - 1U) < right.at(index - 1U);
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] static Big subtract(const Big& left, const Big& right) {
+    Big result{};
+    std::uint64_t borrow = 0U;
+    for (Index index = 0U; index < limbCount; ++index) {
+      const std::uint64_t subtrahend =
+          static_cast<std::uint64_t>(right.at(index)) + borrow;
+      const std::uint64_t minuend = left.at(index);
+      result.at(index) = static_cast<std::uint32_t>(minuend - subtrahend);
+      borrow = minuend < subtrahend ? 1U : 0U;
+    }
+    return result;
+  }
+
+  [[nodiscard]] static Index highestBit(const Big& value) {
+    for (Index word = limbCount; word > 0U; --word) {
+      const auto current = value.at(word - 1U);
+      if (current != 0U) {
+        return (word - 1U) * 32U +
+               (31U - static_cast<Index>(std::countl_zero(current)));
+      }
+    }
+    return noBit;
+  }
+
+  [[nodiscard]] static bool testBit(const Big& value, Index bit) {
+    return ((value.at(bit / 32U) >> (bit % 32U)) & 1U) != 0U;
+  }
+
+  [[nodiscard]] static bool anyBelow(const Big& value, Index limit) {
+    for (Index bit = 0U; bit < limit; ++bit) {
+      if (testBit(value, bit)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] static std::uint64_t shiftedLow(const Big& value, Index shift) {
+    std::uint64_t result = 0U;
+    for (Index bit = 0U; bit < 64U && shift + bit < limbCount * 32U; ++bit) {
+      if (testBit(value, shift + bit)) {
+        result |= std::uint64_t{1U} << bit;
+      }
+    }
+    return result;
+  }
+
+  Big positive_{};
+  Big negative_{};
+};
+
+[[nodiscard]] bool validIndependentRequest(const MomentRequest& request,
+                                           Extent inputDimension,
+                                           Extent outputDimension) {
+  if (request.orders == 0U || (request.orders & 0xf0U) != 0U) {
+    return false;
+  }
+  if (request.representation == MomentRepresentation::contraction) {
+    return request.contraction.has_value() && request.selected.empty() &&
+           request.contraction->rows() == outputDimension &&
+           request.contraction->columns() == inputDimension;
+  }
+  if (request.contraction.has_value()) {
+    return false;
+  }
+  if (request.representation == MomentRepresentation::selected) {
+    if (request.selected.empty()) {
+      return false;
+    }
+    Index selectedOrder = 0U;
+    for (Index order = 1U; order <= 4U; ++order) {
+      if ((request.orders & (1U << (order - 1U))) != 0U) {
+        if (selectedOrder != 0U) {
+          return false;
+        }
+        selectedOrder = order;
+      }
+    }
+    for (const auto tuple : request.selected) {
+      if (tuple.size() != selectedOrder) {
+        return false;
+      }
+      for (const Index coordinate : tuple) {
+        if (coordinate >= outputDimension) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+  return request.selected.empty() &&
+         (request.representation == MomentRepresentation::component ||
+          request.representation == MomentRepresentation::packed ||
+          request.representation == MomentRepresentation::dense);
+}
+
+[[nodiscard]] bool sameShape(const MomentEstimate& left,
+                             const MomentEstimate& right) {
+  const auto a = left.observation_shape.view();
+  const auto b = right.observation_shape.view();
+  return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
+}
+
+[[nodiscard]] bool addPopulationMeanEntries(const MomentEstimate& input,
+                                            Extent dimension,
+                                            std::vector<Entry>& entries) {
+  if (!input.population_mean.has_value()) {
+    return true;
+  }
+  if (input.population_mean->size() != dimension) {
+    return false;
+  }
+  for (Index coordinate = 0U; coordinate < dimension; ++coordinate) {
+    const Scalar mean = input.population_mean->at(coordinate);
+    if (!std::isfinite(mean)) {
+      return false;
+    }
+    const std::array<Index, 4U> key{coordinate, 0U, 0U, 0U};
+    const Entry* existing = findEntry(entries, 1U, key);
+    if (existing != nullptr && existing->value != mean) {
+      return false;
+    }
+    if (existing == nullptr) {
+      entries.push_back(Entry{.order = 1U, .coordinates = key, .value = mean});
+    }
+  }
+  std::sort(entries.begin(), entries.end(),
+            [](const Entry& left, const Entry& right) {
+              if (left.order != right.order) {
+                return left.order < right.order;
+              }
+              if (left.coordinates != right.coordinates) {
+                return left.coordinates < right.coordinates;
+              }
+              return left.value < right.value;
+            });
+  return true;
+}
+
+[[nodiscard]] Result<MomentEstimate>
+independentCumulantSum(std::span<const MomentEstimate> inputs,
+                       ConstVectorView coefficients,
+                       const MomentRequest& request, Limits limits) {
+  if (inputs.empty()) {
+    return failure(ErrorCode::InsufficientSamples,
+                   "independent sum requires at least one input");
+  }
+  if (inputs.size() != coefficients.size()) {
+    return failure(ErrorCode::DimensionMismatch,
+                   "input and coefficient counts differ");
+  }
+  Extent dimension = 0U;
+  if (!shapeDimension(inputs.front(), dimension)) {
+    return failure(ErrorCode::InvalidDomain,
+                   "independent sum input shape is invalid");
+  }
+  const bool contracted =
+      request.representation == MomentRepresentation::contraction;
+  if (contracted && !request.contraction.has_value()) {
+    return failure(ErrorCode::InvalidDomain,
+                   "independent sum contraction is missing");
+  }
+  const Extent outputDimension =
+      contracted ? request.contraction->rows() : dimension;
+  if (!validIndependentRequest(request, dimension, outputDimension)) {
+    return failure(ErrorCode::InvalidDomain,
+                   "independent sum request is malformed");
+  }
+  if (contracted && outputDimension == 0U) {
+    return failure(ErrorCode::InvalidExtent,
+                   "contraction output dimension must be positive");
+  }
+  for (Index row = 0U; row < outputDimension && contracted; ++row) {
+    for (Index column = 0U; column < dimension; ++column) {
+      if (!std::isfinite(request.contraction->at(row, column))) {
+        return failure(ErrorCode::NonFiniteInput,
+                       "contraction map contains a non-finite value");
+      }
+    }
+  }
+  for (Index input = 0U; input < inputs.size(); ++input) {
+    if (!sameShape(inputs.front(), inputs[input])) {
+      return failure(ErrorCode::DimensionMismatch,
+                     "independent sum input shapes differ");
+    }
+    if (!std::isfinite(coefficients.at(input))) {
+      return failure(ErrorCode::NonFiniteInput,
+                     "independent sum coefficient is non-finite");
+    }
+  }
+
+  Index conventionIndex = inputs.size();
+  Extent inputValues = 0U;
+  Extent meanElements = 0U;
+  std::vector<Extent> perInputValues(inputs.size(), 0U);
+  for (Index input = 0U; input < inputs.size(); ++input) {
+    if (coefficients.at(input) == 0.0) {
+      continue;
+    }
+    if (conventionIndex == inputs.size()) {
+      conventionIndex = input;
+    } else if (inputs[input].diagnostics.center !=
+               inputs[conventionIndex].diagnostics.center) {
+      return failure(ErrorCode::InvalidDomain,
+                     "independent inputs use incompatible center conventions");
+    }
+    if (!addSize(meanElements, dimension, meanElements)) {
+      return failure(ErrorCode::SizeOverflow,
+                     "independent sum mean workspace overflows");
+    }
+    for (const auto& term : inputs[input].terms.view()) {
+      if (!addSize(inputValues, term.values.size(), inputValues) ||
+          !addSize(perInputValues.at(input), term.values.size(),
+                   perInputValues.at(input))) {
+        return failure(ErrorCode::SizeOverflow,
+                       "independent sum input size overflows");
+      }
+    }
+    if (inputs[input].population_mean.has_value() &&
+        (!addSize(inputValues, dimension, inputValues) ||
+         !addSize(perInputValues.at(input), dimension,
+                  perInputValues.at(input)))) {
+      return failure(ErrorCode::SizeOverflow,
+                     "independent sum mean size overflows");
+    }
+  }
+
+  Extent outputValues = 0U;
+  Extent outputIndexValues = 0U;
+  Index outputTermCount = 0U;
+  for (Index order = 1U; order <= 4U; ++order) {
+    if ((request.orders & (1U << (order - 1U))) == 0U) {
+      continue;
+    }
+    Extent count = request.representation == MomentRepresentation::selected
+                       ? request.selected.size()
+                       : 0U;
+    const MomentRepresentation countLayout =
+        contracted ? MomentRepresentation::dense : request.representation;
+    if (request.representation != MomentRepresentation::selected &&
+        !tupleCount(outputDimension, order, countLayout, count)) {
+      return failure(ErrorCode::SizeOverflow,
+                     "independent sum output size overflows");
+    }
+    if (!addSize(outputValues, count, outputValues)) {
+      return failure(ErrorCode::SizeOverflow,
+                     "independent sum output count overflows");
+    }
+    if (request.representation == MomentRepresentation::selected) {
+      Extent tupleSize = 0U;
+      if (!multiplySize(order, request.selected.size(), tupleSize) ||
+          !addSize(outputIndexValues, tupleSize, outputIndexValues)) {
+        return failure(ErrorCode::SizeOverflow,
+                       "independent sum selected index size overflows");
+      }
+    }
+    ++outputTermCount;
+  }
+  if (outputValues > limits.elements || outputIndexValues > limits.elements) {
+    return failure(ErrorCode::ResourceLimit,
+                   "independent sum output exceeds element limits");
+  }
+  const Extent outputShapeSize =
+      contracted ? 1U : inputs.front().observation_shape.view().size();
+  Extent peakBytes = 0U;
+  if (!addStorage(inputValues, sizeof(Entry), peakBytes) ||
+      !addStorage(inputs.size(), sizeof(std::vector<Entry>), peakBytes) ||
+      !addStorage(inputs.size(), sizeof(std::vector<Scalar>) + sizeof(Extent),
+                  peakBytes) ||
+      !addStorage(meanElements, sizeof(Scalar), peakBytes) ||
+      !addStorage(outputValues, 3U * sizeof(Scalar), peakBytes) ||
+      !addStorage(outputIndexValues, 3U * sizeof(Index), peakBytes) ||
+      !addStorage(outputTermCount, 3U * sizeof(MomentTerm), peakBytes) ||
+      !addSize(peakBytes, sizeof(ExactProductSum), peakBytes) ||
+      !addStorage(outputDimension, 2U * sizeof(Scalar), peakBytes) ||
+      !addStorage(outputShapeSize, 2U * sizeof(Index), peakBytes) ||
+      !addSize(peakBytes, 256U, peakBytes) || peakBytes > limits.bytes) {
+    return failure(ErrorCode::ResourceLimit,
+                   "independent sum workspace exceeds byte limits");
+  }
+
+  std::vector<std::vector<Entry>> indexedInputs(inputs.size());
+  std::vector<std::vector<Scalar>> means(inputs.size());
+  bool meansComplete = true;
+  bool allZero = true;
+  for (Index input = 0U; input < inputs.size(); ++input) {
+    const Scalar coefficient = coefficients.at(input);
+    if (coefficient == 0.0) {
+      continue;
+    }
+    allZero = false;
+    auto& entries = indexedInputs.at(input);
+    entries.reserve(perInputValues.at(input));
+    if (!collectEntries(inputs[input], dimension, entries) ||
+        !addPopulationMeanEntries(inputs[input], dimension, entries)) {
+      return failure(ErrorCode::InvalidDomain,
+                     "independent sum input terms or mean are malformed");
+    }
+    auto& inputMean = means.at(input);
+    inputMean.resize(dimension);
+    bool complete = true;
+    for (Index coordinate = 0U; coordinate < dimension; ++coordinate) {
+      const std::array<Index, 4U> key{coordinate, 0U, 0U, 0U};
+      const Entry* mean = findEntry(entries, 1U, key);
+      if (mean == nullptr) {
+        complete = false;
+        break;
+      }
+      inputMean.at(coordinate) = mean->value;
+    }
+    if (!complete) {
+      inputMean.clear();
+      meansComplete = false;
+    }
+  }
+  if (allZero) {
+    meansComplete = true;
+  }
+
+  std::vector<Index> outputShape;
+  if (contracted) {
+    outputShape.push_back(outputDimension);
+  } else {
+    const auto shape = inputs.front().observation_shape.view();
+    outputShape.assign(shape.begin(), shape.end());
+  }
+  auto copiedShape = Array<Index>::copy(outputShape, limits);
+  if (!copiedShape) {
+    return failure(ErrorCode::ResourceLimit,
+                   "independent sum output shape exceeds limits");
+  }
+  const auto& convention = conventionIndex == inputs.size()
+                               ? inputs.front().diagnostics
+                               : inputs[conventionIndex].diagnostics;
+  const Support noSupport{.input = 0U,
+                          .valid = 0U,
+                          .positive = 0U,
+                          .frequency_mass = std::nullopt,
+                          .weight_mass = std::nullopt,
+                          .normalized_weight_powers = {},
+                          .effective_count = std::nullopt,
+                          .degrees_of_freedom = std::nullopt,
+                          .squared_weight_mass = std::nullopt};
+  EstimatorDiagnostics diagnostics{
+      .estimand = convention.estimand,
+      .weight = WeightRule::unweighted,
+      .center = conventionIndex == inputs.size() ? CenterRule::estimated
+                                                 : convention.center,
+      .approximation = Approximation::exact,
+      .global = noSupport,
+      .coordinate_support = {},
+      .tuple_support = {},
+      .reciprocal_condition = std::nullopt,
+      .numerical_error = std::nullopt,
+      .sampling_error = std::nullopt,
+      .rank = std::nullopt,
+      .algorithm = "independent-cumulant-sum",
+      .premises =
+          "input records are mutually independent; operand supports and "
+          "sampling diagnostics are not combined",
+      .warnings = {}};
+  MomentEstimate output{.observation_shape = std::move(copiedShape).value(),
+                        .terms = {},
+                        .diagnostics = std::move(diagnostics),
+                        .population_mean = std::nullopt};
+
+  Scalar maximumNumericalError = 0.0;
+  const auto recordRoundingBound = [&maximumNumericalError](Scalar value) {
+    const Scalar bound =
+        value == 0.0 ? std::numeric_limits<Scalar>::denorm_min()
+                     : std::max(std::numeric_limits<Scalar>::denorm_min(),
+                                std::nextafter(
+                                    std::abs(value) *
+                                        std::numeric_limits<Scalar>::epsilon(),
+                                    std::numeric_limits<Scalar>::infinity()));
+    maximumNumericalError = std::max(maximumNumericalError, bound);
+  };
+  std::vector<Scalar> outputMean(outputDimension, 0.0);
+  bool outputMeanComplete = contracted || meansComplete;
+  for (Index outputCoordinate = 0U; outputCoordinate < outputDimension;
+       ++outputCoordinate) {
+    ExactProductSum sum;
+    bool coordinateComplete = true;
+    for (Index input = 0U; input < inputs.size(); ++input) {
+      const Scalar coefficient = coefficients.at(input);
+      if (coefficient == 0.0) {
+        continue;
+      }
+      for (Index coordinate = 0U; coordinate < dimension; ++coordinate) {
+        Scalar mapCoefficient = 1.0;
+        if (contracted) {
+          mapCoefficient =
+              request.contraction->at(outputCoordinate, coordinate);
+        } else if (coordinate != outputCoordinate) {
+          continue;
+        }
+        if (mapCoefficient == 0.0) {
+          continue;
+        }
+        if (means.at(input).empty()) {
+          coordinateComplete = false;
+          break;
+        }
+        const std::array<Scalar, 3U> factors{coefficient, mapCoefficient,
+                                             means.at(input).at(coordinate)};
+        if (!sum.add(factors)) {
+          return failure(ErrorCode::NonFiniteResult,
+                         "independent sum mean exceeds exact range");
+        }
+      }
+      if (!coordinateComplete) {
+        break;
+      }
+    }
+    if (!coordinateComplete) {
+      outputMeanComplete = false;
+      continue;
+    }
+    if (!sum.rounded(outputMean.at(outputCoordinate))) {
+      return failure(ErrorCode::NonFiniteResult,
+                     "independent sum mean is not representable");
+    }
+    recordRoundingBound(outputMean.at(outputCoordinate));
+  }
+  if (outputMeanComplete) {
+    output.population_mean.emplace(outputMean);
+  }
+
+  std::vector<MomentTerm> outputTerms;
+  outputTerms.reserve(outputTermCount);
+  for (Index order = 1U; order <= 4U; ++order) {
+    if ((request.orders & (1U << (order - 1U))) == 0U) {
+      continue;
+    }
+    const MomentRepresentation outputLayout =
+        contracted ? MomentRepresentation::dense : request.representation;
+    Extent count = request.representation == MomentRepresentation::selected
+                       ? request.selected.size()
+                       : 0U;
+    if (request.representation != MomentRepresentation::selected &&
+        !tupleCount(outputDimension, order, outputLayout, count)) {
+      return failure(ErrorCode::SizeOverflow,
+                     "independent sum output size overflows");
+    }
+    std::vector<Scalar> values;
+    values.reserve(count);
+    for (Index outputIndex = 0U; outputIndex < count; ++outputIndex) {
+      std::array<Index, 4U> outputTuple{};
+      if (request.representation == MomentRepresentation::selected) {
+        const auto selected = request.selected[outputIndex];
+        std::copy(selected.begin(), selected.end(), outputTuple.begin());
+      } else {
+        outputTuple =
+            tupleFor(outputIndex, order, outputDimension, outputLayout);
+      }
+      ExactProductSum sum;
+      if (contracted) {
+        Extent sourceTupleCount = 0U;
+        if (!tupleCount(dimension, order, MomentRepresentation::dense,
+                        sourceTupleCount)) {
+          return failure(ErrorCode::SizeOverflow,
+                         "contraction source tuple count overflows");
+        }
+        for (Index sourceOrdinal = 0U; sourceOrdinal < sourceTupleCount;
+             ++sourceOrdinal) {
+          const auto sourceTuple = tupleFor(sourceOrdinal, order, dimension,
+                                            MomentRepresentation::dense);
+          std::array<Scalar, 4U> mapCoefficients{};
+          bool structuralZero = false;
+          for (Index axis = 0U; axis < order; ++axis) {
+            mapCoefficients.at(axis) = request.contraction->at(
+                outputTuple.at(axis), sourceTuple.at(axis));
+            structuralZero = structuralZero || mapCoefficients.at(axis) == 0.0;
+          }
+          if (structuralZero) {
+            continue;
+          }
+          for (Index input = 0U; input < inputs.size(); ++input) {
+            const Scalar coefficient = coefficients.at(input);
+            if (coefficient == 0.0) {
+              continue;
+            }
+            const Entry* term =
+                findEntry(indexedInputs.at(input), order, sourceTuple);
+            if (term == nullptr || !compatibleSupport(inputs[input].diagnostics,
+                                                      sourceTuple, order)) {
+              return failure(ErrorCode::InvalidDomain,
+                             "a contracted independent-sum dependency is "
+                             "missing or incompatible");
+            }
+            std::array<Scalar, ExactProductSum::maximumFactors> factors{};
+            Index factorCount = 0U;
+            for (Index power = 0U; power < order; ++power) {
+              factors.at(factorCount++) = coefficient;
+            }
+            for (Index axis = 0U; axis < order; ++axis) {
+              factors.at(factorCount++) = mapCoefficients.at(axis);
+            }
+            factors.at(factorCount++) = term->value;
+            if (!sum.add(std::span<const Scalar>(factors).first(factorCount))) {
+              return failure(ErrorCode::NonFiniteResult,
+                             "contracted independent sum exceeds exact range");
+            }
+          }
+        }
+      } else {
+        for (Index input = 0U; input < inputs.size(); ++input) {
+          const Scalar coefficient = coefficients.at(input);
+          if (coefficient == 0.0) {
+            continue;
+          }
+          const Entry* term =
+              findEntry(indexedInputs.at(input), order, outputTuple);
+          if (term == nullptr || !compatibleSupport(inputs[input].diagnostics,
+                                                    outputTuple, order)) {
+            return failure(ErrorCode::InvalidDomain,
+                           "an independent-sum moment dependency is missing "
+                           "or incompatible");
+          }
+          std::array<Scalar, ExactProductSum::maximumFactors> factors{};
+          Index factorCount = 0U;
+          for (Index power = 0U; power < order; ++power) {
+            factors.at(factorCount++) = coefficient;
+          }
+          factors.at(factorCount++) = term->value;
+          if (!sum.add(std::span<const Scalar>(factors).first(factorCount))) {
+            return failure(ErrorCode::NonFiniteResult,
+                           "independent cumulant sum exceeds exact range");
+          }
+        }
+      }
+      Scalar value = 0.0;
+      if (!sum.rounded(value) || !std::isfinite(value)) {
+        return failure(ErrorCode::NonFiniteResult,
+                       "independent cumulant sum is not representable");
+      }
+      recordRoundingBound(value);
+      values.push_back(value);
+    }
+    MomentTerm term{.order = order,
+                    .layout = outputLayout,
+                    .flattened_tuples = {},
+                    .values = Vector(values)};
+    if (request.representation == MomentRepresentation::selected) {
+      std::vector<Index> flattened;
+      flattened.reserve(order * request.selected.size());
+      for (const auto tuple : request.selected) {
+        flattened.insert(flattened.end(), tuple.begin(), tuple.end());
+      }
+      auto tupleArray = Array<Index>::copy(flattened, limits);
+      if (!tupleArray) {
+        return failure(ErrorCode::ResourceLimit,
+                       "selected tuple metadata exceeds limits");
+      }
+      term.flattened_tuples = std::move(tupleArray).value();
+    }
+    outputTerms.push_back(std::move(term));
+  }
+  auto copiedTerms = Array<MomentTerm>::copy(outputTerms, limits);
+  if (!copiedTerms) {
+    return failure(ErrorCode::ResourceLimit,
+                   "independent sum term metadata exceeds limits");
+  }
+  output.terms = std::move(copiedTerms).value();
+  if (maximumNumericalError > 0.0) {
+    output.diagnostics.numerical_error = maximumNumericalError;
+  }
+  return Result<MomentEstimate>::success(std::move(output));
+}
+
+using SelectedTupleList = std::vector<std::vector<Index>>;
+
+[[nodiscard]] Result<SelectedTupleList>
+contractionDependencies(const MomentRequest& request, Index order,
+                        Extent inputDimension, Limits limits) {
+  if (!request.contraction.has_value()) {
+    return Result<SelectedTupleList>::failure(ErrorCode::InvalidDomain,
+                                              "contraction map is missing");
+  }
+  const auto& map = request.contraction.value();
+  Extent outputCount = 0U;
+  Extent sourceCount = 0U;
+  if (!tupleCount(map.rows(), order, MomentRepresentation::dense,
+                  outputCount) ||
+      !tupleCount(inputDimension, order, MomentRepresentation::dense,
+                  sourceCount)) {
+    return Result<SelectedTupleList>::failure(
+        ErrorCode::SizeOverflow, "contraction tuple count overflows");
+  }
+  if (outputCount > limits.elements) {
+    return Result<SelectedTupleList>::failure(
+        ErrorCode::ResourceLimit, "contraction output exceeds element limits");
+  }
+
+  std::set<std::array<Index, 4U>> unique;
+  const auto maximumTuples =
+      limits.bytes / (sizeof(std::array<Index, 4U>) + 3U * sizeof(void*) + 32U);
+  for (Index outputOrdinal = 0U; outputOrdinal < outputCount; ++outputOrdinal) {
+    const auto outputTuple =
+        tupleFor(outputOrdinal, order, map.rows(), MomentRepresentation::dense);
+    for (Index sourceOrdinal = 0U; sourceOrdinal < sourceCount;
+         ++sourceOrdinal) {
+      auto sourceTuple = tupleFor(sourceOrdinal, order, inputDimension,
+                                  MomentRepresentation::dense);
+      bool needed = true;
+      for (Index axis = 0U; axis < order; ++axis) {
+        if (map.at(outputTuple.at(axis), sourceTuple.at(axis)) == 0.0) {
+          needed = false;
+          break;
+        }
+      }
+      if (!needed) {
+        continue;
+      }
+      canonicalize(sourceTuple, order);
+      unique.insert(sourceTuple);
+      if (unique.size() > limits.elements || unique.size() > maximumTuples) {
+        return Result<SelectedTupleList>::failure(
+            ErrorCode::ResourceLimit,
+            "contraction dependency tuples exceed configured limits");
+      }
+    }
+  }
+  SelectedTupleList result;
+  result.reserve(unique.size());
+  for (const auto& tuple : unique) {
+    result.emplace_back(tuple.begin(), tuple.begin() + order);
+  }
+  Extent tupleElements = 0U;
+  Extent vectorBytes = 0U;
+  Extent setBytes = 0U;
+  Extent totalBytes = 0U;
+  if (!multiplySize(result.size(), order, tupleElements) ||
+      !multiplySize(result.size(),
+                    sizeof(std::vector<Index>) + order * sizeof(Index),
+                    vectorBytes) ||
+      !multiplySize(unique.size(),
+                    sizeof(std::array<Index, 4U>) + 3U * sizeof(void*) + 32U,
+                    setBytes) ||
+      !addSize(vectorBytes, setBytes, totalBytes) ||
+      tupleElements > limits.elements || totalBytes > limits.bytes) {
+    return Result<SelectedTupleList>::failure(
+        ErrorCode::ResourceLimit,
+        "contraction dependency storage exceeds configured limits");
+  }
+  return Result<SelectedTupleList>::success(std::move(result));
+}
+
+[[nodiscard]] SelectedTupleList
+fourthOrderPairTuples(std::span<const std::span<const Index>> fourthTuples) {
+  std::set<std::array<Index, 2U>> unique;
+  for (const auto tuple : fourthTuples) {
+    if (tuple.size() != 4U) {
+      continue;
+    }
+    unique.insert(
+        {std::min(tuple[0U], tuple[1U]), std::max(tuple[0U], tuple[1U])});
+    unique.insert(
+        {std::min(tuple[0U], tuple[2U]), std::max(tuple[0U], tuple[2U])});
+    unique.insert(
+        {std::min(tuple[0U], tuple[3U]), std::max(tuple[0U], tuple[3U])});
+  }
+  SelectedTupleList result;
+  result.reserve(unique.size());
+  for (const auto& tuple : unique) {
+    result.emplace_back(tuple.begin(), tuple.end());
+  }
+  return result;
+}
+
+[[nodiscard]] Result<MomentEstimate>
+convertCentralOrder(const MomentEstimate& input, const MomentRequest& base,
+                    Index order, Extent inputDimension, bool contracted,
+                    Limits limits, SelectedTupleList* selectedStorage) {
+  MomentRequest conversionRequest = base;
+  conversionRequest.orders = static_cast<std::uint8_t>(1U << (order - 1U));
+  std::vector<std::span<const Index>> selectedViews;
+  if (contracted) {
+    auto dependencies =
+        contractionDependencies(base, order, inputDimension, limits);
+    if (!dependencies) {
+      return Result<MomentEstimate>::failure(
+          dependencies.status().code(),
+          std::string(dependencies.status().message()));
+    }
+    *selectedStorage = std::move(dependencies).value();
+  } else if (base.representation == MomentRepresentation::selected &&
+             order == 2U && (base.orders & 0x08U) != 0U) {
+    *selectedStorage = fourthOrderPairTuples(base.selected);
+  } else if (base.representation == MomentRepresentation::selected) {
+    conversionRequest.selected = base.selected;
+  }
+  if (contracted || (base.representation == MomentRepresentation::selected &&
+                     order == 2U && (base.orders & 0x08U) != 0U)) {
+    selectedViews.reserve(selectedStorage->size());
+    for (const auto& tuple : *selectedStorage) {
+      selectedViews.emplace_back(tuple);
+    }
+    if (selectedViews.empty()) {
+      MomentEstimate empty{.observation_shape = input.observation_shape,
+                           .terms = {},
+                           .diagnostics = input.diagnostics,
+                           .population_mean = input.population_mean};
+      return Result<MomentEstimate>::success(std::move(empty));
+    }
+    conversionRequest.representation = MomentRepresentation::selected;
+    conversionRequest.selected = selectedViews;
+    conversionRequest.contraction = std::nullopt;
+  }
+  return centralMomentsToCumulants(input, conversionRequest, limits);
+}
+
+[[nodiscard]] Result<MomentEstimate>
+mergeMomentEstimates(const MomentEstimate& first, const MomentEstimate& second,
+                     Limits limits) {
+  std::vector<MomentTerm> terms;
+  const auto firstTerms = first.terms.view();
+  const auto secondTerms = second.terms.view();
+  Extent termCount = 0U;
+  if (!addSize(firstTerms.size(), secondTerms.size(), termCount) ||
+      termCount > limits.elements ||
+      termCount > limits.bytes / sizeof(MomentTerm)) {
+    return failure(ErrorCode::ResourceLimit,
+                   "merged moment terms exceed configured limits");
+  }
+  terms.reserve(termCount);
+  terms.insert(terms.end(), firstTerms.begin(), firstTerms.end());
+  terms.insert(terms.end(), secondTerms.begin(), secondTerms.end());
+  auto ownedTerms = Array<MomentTerm>::copy(terms, limits);
+  if (!ownedTerms) {
+    return failure(ErrorCode::ResourceLimit,
+                   "merged moment terms exceed configured limits");
+  }
+  MomentEstimate result{.observation_shape = first.observation_shape,
+                        .terms = std::move(ownedTerms).value(),
+                        .diagnostics = first.diagnostics,
+                        .population_mean = first.population_mean};
+  if (second.diagnostics.numerical_error.has_value()) {
+    const Scalar secondError = second.diagnostics.numerical_error.value();
+    result.diagnostics.numerical_error =
+        result.diagnostics.numerical_error.has_value()
+            ? std::max(result.diagnostics.numerical_error.value(), secondError)
+            : secondError;
+  }
+  return Result<MomentEstimate>::success(std::move(result));
+}
+
 } // namespace
 
 Result<MomentEstimate> centralMomentsToCumulants(const MomentEstimate& moments,
@@ -902,6 +1806,158 @@ Result<MomentEstimate>
 cumulantsToCentralMoments(const MomentEstimate& cumulants,
                           const MomentRequest& request, Limits limits) {
   return convert(cumulants, request, limits, false);
+}
+
+Result<MomentEstimate>
+cumulantsOfIndependentSum(std::span<const MomentEstimate> inputs,
+                          ConstVectorView coefficients,
+                          const MomentRequest& request, Limits limits) {
+  return independentCumulantSum(inputs, coefficients, request, limits);
+}
+
+Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
+                                   std::span<const MomentEstimate> inputs,
+                                   const MomentRequest& request,
+                                   Limits limits) {
+  if (inputs.empty()) {
+    return failure(ErrorCode::InsufficientSamples,
+                   "weighted sum requires at least one input");
+  }
+  if (inputs.size() != coefficients.size()) {
+    return failure(ErrorCode::DimensionMismatch,
+                   "input and coefficient counts differ");
+  }
+  Extent inputDimension = 0U;
+  if (!shapeDimension(inputs.front(), inputDimension)) {
+    return failure(ErrorCode::InvalidDomain,
+                   "weighted sum input shape is invalid");
+  }
+  const bool contracted =
+      request.representation == MomentRepresentation::contraction;
+  if (contracted && !request.contraction.has_value()) {
+    return failure(ErrorCode::InvalidDomain,
+                   "weighted sum contraction is missing");
+  }
+  const Extent outputDimension =
+      contracted ? request.contraction->rows() : inputDimension;
+  if (!validIndependentRequest(request, inputDimension, outputDimension)) {
+    return failure(ErrorCode::InvalidDomain,
+                   "weighted sum request is malformed");
+  }
+  bool allZero = true;
+  for (Index input = 0U; input < inputs.size(); ++input) {
+    if (!sameShape(inputs.front(), inputs[input])) {
+      return failure(ErrorCode::DimensionMismatch,
+                     "weighted sum input shapes differ");
+    }
+    if (!std::isfinite(coefficients.at(input))) {
+      return failure(ErrorCode::NonFiniteInput,
+                     "weighted sum coefficient is non-finite");
+    }
+    allZero = allZero && coefficients.at(input) == 0.0;
+  }
+
+  MomentRequest internalRequest = request;
+  const bool selectedFourth =
+      request.representation == MomentRepresentation::selected &&
+      (request.orders & 0x08U) != 0U;
+  if (!selectedFourth &&
+      request.representation != MomentRepresentation::selected &&
+      (request.orders & 0x08U) != 0U) {
+    internalRequest.orders = static_cast<std::uint8_t>(request.orders | 0x02U);
+  }
+  std::vector<MomentEstimate> cumulantInputs;
+  cumulantInputs.reserve(inputs.size());
+  const std::uint8_t conversionOrders = static_cast<std::uint8_t>(
+      internalRequest.orders | (selectedFourth ? 0x02U : 0U));
+  for (Index inputIndex = 0U; inputIndex < inputs.size(); ++inputIndex) {
+    if (coefficients.at(inputIndex) == 0.0 || allZero) {
+      MomentEstimate empty{.observation_shape =
+                               inputs[inputIndex].observation_shape,
+                           .terms = {},
+                           .diagnostics = inputs[inputIndex].diagnostics,
+                           .population_mean = std::nullopt};
+      cumulantInputs.push_back(std::move(empty));
+      continue;
+    }
+
+    std::optional<MomentEstimate> converted;
+    for (Index order = 1U; order <= 4U; ++order) {
+      if ((conversionOrders & (1U << (order - 1U))) == 0U) {
+        continue;
+      }
+      SelectedTupleList selectedStorage;
+      auto orderResult = convertCentralOrder(inputs[inputIndex], request, order,
+                                             inputDimension, contracted, limits,
+                                             &selectedStorage);
+      if (!orderResult) {
+        return Result<MomentEstimate>::failure(
+            orderResult.status().code(),
+            std::string(orderResult.status().message()));
+      }
+      if (!converted.has_value()) {
+        converted.emplace(std::move(orderResult).value());
+      } else {
+        auto merged = mergeMomentEstimates(converted.value(),
+                                           orderResult.value(), limits);
+        if (!merged) {
+          return merged;
+        }
+        converted.emplace(std::move(merged).value());
+      }
+    }
+    if (converted.has_value()) {
+      cumulantInputs.push_back(std::move(converted).value());
+    } else {
+      return failure(ErrorCode::InvalidDomain,
+                     "weighted sum has no requested cumulant orders");
+    }
+  }
+
+  std::optional<MomentEstimate> summedCumulants;
+  if (selectedFourth) {
+    MomentRequest pairRequest = request;
+    pairRequest.orders = 0x02U;
+    SelectedTupleList pairTuples = fourthOrderPairTuples(request.selected);
+    std::vector<std::span<const Index>> pairViews;
+    pairViews.reserve(pairTuples.size());
+    for (const auto& tuple : pairTuples) {
+      pairViews.emplace_back(tuple);
+    }
+    pairRequest.selected = pairViews;
+    auto secondOrder = independentCumulantSum(cumulantInputs, coefficients,
+                                              pairRequest, limits);
+    if (!secondOrder) {
+      return secondOrder;
+    }
+    auto fourthOrder =
+        independentCumulantSum(cumulantInputs, coefficients, request, limits);
+    if (!fourthOrder) {
+      return fourthOrder;
+    }
+    auto combined =
+        mergeMomentEstimates(secondOrder.value(), fourthOrder.value(), limits);
+    if (!combined) {
+      return combined;
+    }
+    summedCumulants.emplace(std::move(combined).value());
+  } else {
+    auto sum = independentCumulantSum(cumulantInputs, coefficients,
+                                      internalRequest, limits);
+    if (!sum) {
+      return sum;
+    }
+    summedCumulants.emplace(std::move(sum).value());
+  }
+
+  MomentRequest outputRequest = request;
+  if (contracted) {
+    outputRequest.representation = MomentRepresentation::dense;
+    outputRequest.selected = {};
+    outputRequest.contraction = std::nullopt;
+  }
+  return cumulantsToCentralMoments(summedCumulants.value(), outputRequest,
+                                   limits);
 }
 
 } // namespace vss::math::statistics

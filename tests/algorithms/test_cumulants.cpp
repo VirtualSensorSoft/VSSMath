@@ -81,8 +81,11 @@ void close(Scalar actual, Scalar expected) {
 
 MomentEstimate central(const Matrix& values, std::uint8_t orders,
                        MomentRepresentation representation) {
+  const std::array<Index, 1U> vectorShape{values.columns()};
+  const SampleView input =
+      values.columns() == 1U ? sample(values) : sample(values, vectorShape);
   const auto result =
-      estimateCentralMoments(sample(values), unweighted(), CenterSpec{},
+      estimateCentralMoments(input, unweighted(), CenterSpec{},
                              request(orders, representation), ample());
   VSS_CHECK(result);
   return result.value();
@@ -257,6 +260,180 @@ void exactFallbackResolvesLargeCancellation() {
   close(inverse.value().terms.view()[0U].values.at(0U), 0.0);
 }
 
+void independentCumulantAndCentralMomentSums() {
+  const Matrix rademacher = matrix({{-1.0}, {1.0}});
+  const auto rademacherMoments =
+      central(rademacher, 0x0fU, MomentRepresentation::dense);
+  const auto rademacherCumulants = centralMomentsToCumulants(
+      rademacherMoments, request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(rademacherCumulants);
+  const std::array<MomentEstimate, 2U> symmetricInputs{
+      rademacherCumulants.value(), rademacherCumulants.value()};
+  const std::array<Scalar, 2U> coefficients{1.0, -2.0};
+  const Vector coefficientVector(coefficients);
+  const auto summedCumulants = cumulantsOfIndependentSum(
+      symmetricInputs, coefficientVector.view(),
+      request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(summedCumulants);
+  const auto terms = summedCumulants.value().terms.view();
+  close(terms[0U].values.at(0U), 0.0);
+  close(terms[1U].values.at(0U), 5.0);
+  close(terms[2U].values.at(0U), 0.0);
+  close(terms[3U].values.at(0U), -34.0);
+
+  const std::array<MomentEstimate, 2U> symmetricCentralInputs{
+      rademacherMoments, rademacherMoments};
+  const auto summedMoments =
+      weightedSum(coefficientVector.view(), symmetricCentralInputs,
+                  request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(summedMoments);
+  close(summedMoments.value().terms.view()[1U].values.at(0U), 5.0);
+  close(summedMoments.value().terms.view()[3U].values.at(0U), 41.0);
+
+  const Matrix skewed = matrix({{-1.0}, {-1.0}, {2.0}});
+  const auto skewedMoments =
+      central(skewed, 0x0fU, MomentRepresentation::dense);
+  const auto skewedCumulants = centralMomentsToCumulants(
+      skewedMoments, request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(skewedCumulants);
+  const std::array<MomentEstimate, 2U> skewedInputs{skewedCumulants.value(),
+                                                    skewedCumulants.value()};
+  const std::array<Scalar, 2U> signedCoefficients{2.0, -1.0};
+  const Vector signedCoefficientVector(signedCoefficients);
+  const auto signedSum = cumulantsOfIndependentSum(
+      skewedInputs, signedCoefficientVector.view(),
+      request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(signedSum);
+  close(signedSum.value().terms.view()[1U].values.at(0U), 10.0);
+  close(signedSum.value().terms.view()[2U].values.at(0U), 14.0);
+  close(signedSum.value().terms.view()[3U].values.at(0U), -102.0);
+
+  const std::array<MomentEstimate, 2U> skewedCentralInputs{skewedMoments,
+                                                           skewedMoments};
+  const auto signedCentralSum =
+      weightedSum(signedCoefficientVector.view(), skewedCentralInputs,
+                  request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(signedCentralSum);
+  close(signedCentralSum.value().terms.view()[2U].values.at(0U), 14.0);
+  close(signedCentralSum.value().terms.view()[3U].values.at(0U), 198.0);
+
+  const std::array<Scalar, 2U> zeroCoefficients{0.0, -0.0};
+  const Vector zeroCoefficientVector(zeroCoefficients);
+  const auto zeroSum =
+      weightedSum(zeroCoefficientVector.view(), skewedCentralInputs,
+                  request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(zeroSum);
+  for (const auto& term : zeroSum.value().terms.view()) {
+    for (Index index = 0U; index < term.values.size(); ++index) {
+      close(term.values.at(index), 0.0);
+    }
+  }
+  VSS_CHECK(zeroSum.value().population_mean.has_value());
+  close(zeroSum.value().population_mean.value_or(Vector{}).at(0U), 0.0);
+
+  auto missingTerms = skewedCumulants.value();
+  missingTerms.terms = Array<MomentTerm>{};
+  missingTerms.population_mean.reset();
+  const std::array<MomentEstimate, 2U> partiallyMissing{skewedCumulants.value(),
+                                                        missingTerms};
+  const std::array<Scalar, 2U> keepFirst{1.0, 0.0};
+  const Vector keepFirstVector(keepFirst);
+  const auto ignoresZeroOperand = cumulantsOfIndependentSum(
+      partiallyMissing, keepFirstVector.view(),
+      request(0x08U, MomentRepresentation::dense), ample());
+  VSS_CHECK(ignoresZeroOperand);
+  close(ignoresZeroOperand.value().terms.view()[0U].values.at(0U),
+        skewedCumulants.value().terms.view()[3U].values.at(0U));
+
+  auto differentlyShapedRecord = skewedCumulants.value();
+  const std::array<Index, 1U> wrongShape{2U};
+  auto wrongShapeCopy = Array<Index>::copy(wrongShape, ample());
+  VSS_CHECK(wrongShapeCopy);
+  differentlyShapedRecord.observation_shape = std::move(wrongShapeCopy).value();
+  const std::array<MomentEstimate, 2U> differentlyShaped{
+      skewedCumulants.value(), differentlyShapedRecord};
+  const auto shapeMismatch = cumulantsOfIndependentSum(
+      differentlyShaped, coefficientVector.view(),
+      request(0x02U, MomentRepresentation::dense), ample());
+  VSS_CHECK(!shapeMismatch &&
+            shapeMismatch.status().code() == ErrorCode::DimensionMismatch);
+
+  const auto mismatch = cumulantsOfIndependentSum(
+      symmetricInputs, Vector(1U, 1.0).view(),
+      request(0x02U, MomentRepresentation::dense), ample());
+  VSS_CHECK(!mismatch &&
+            mismatch.status().code() == ErrorCode::DimensionMismatch);
+}
+
+void weightedSumContractionAndSelectedFourth() {
+  const Matrix observations = matrix({{-1.0, 0.0}, {1.0, 0.0}, {0.0, 2.0}});
+  const auto moments =
+      central(observations, 0x0fU, MomentRepresentation::dense);
+  const std::array<MomentEstimate, 2U> inputs{moments, moments};
+  const std::array<Scalar, 2U> coefficients{1.0, 1.0};
+  const Vector coefficientVector(coefficients);
+  const auto vectorCumulants = centralMomentsToCumulants(
+      moments, request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(vectorCumulants);
+  const std::array<MomentEstimate, 2U> independentVectorInputs{
+      vectorCumulants.value(), vectorCumulants.value()};
+  const std::array<Scalar, 2U> cancellingCoefficients{1.0, -1.0};
+  const Vector cancellingCoefficientVector(cancellingCoefficients);
+  const auto exactCancellation = cumulantsOfIndependentSum(
+      independentVectorInputs, cancellingCoefficientVector.view(),
+      request(0x01U, MomentRepresentation::dense), ample());
+  VSS_CHECK(exactCancellation);
+  for (Index index = 0U;
+       index < exactCancellation.value().terms.view()[0U].values.size();
+       ++index) {
+    close(exactCancellation.value().terms.view()[0U].values.at(index), 0.0);
+  }
+
+  Matrix projection = matrix({{1.0, 0.0}});
+  MomentRequest contracted = request(0x08U, MomentRepresentation::contraction);
+  contracted.contraction = projection.view();
+  const auto contractedFourth =
+      weightedSum(coefficientVector.view(), inputs, contracted, ample());
+  VSS_CHECK(contractedFourth);
+  VSS_CHECK(contractedFourth.value().observation_shape.view().size() == 1U);
+  VSS_CHECK(contractedFourth.value().observation_shape.view()[0U] == 1U);
+  VSS_CHECK(contractedFourth.value().terms.view().size() == 1U);
+  close(contractedFourth.value().terms.view()[0U].values.at(0U), 4.0);
+
+  const std::array<Index, 4U> selectedTuple{0U, 0U, 0U, 0U};
+  const std::array<std::span<const Index>, 1U> selectedTuples{
+      std::span<const Index>(selectedTuple)};
+  MomentRequest selected = request(0x08U, MomentRepresentation::selected);
+  selected.selected = selectedTuples;
+  const auto selectedFourth =
+      weightedSum(coefficientVector.view(), inputs, selected, ample());
+  VSS_CHECK(selectedFourth);
+  VSS_CHECK(selectedFourth.value().terms.view().size() == 1U);
+  VSS_CHECK(selectedFourth.value().terms.view()[0U].layout ==
+            MomentRepresentation::selected);
+  close(selectedFourth.value().terms.view()[0U].values.at(0U), 4.0);
+
+  auto unavailable = moments;
+  unavailable.terms = Array<MomentTerm>{};
+  unavailable.population_mean.reset();
+  const std::array<MomentEstimate, 2U> unavailableInputs{unavailable,
+                                                         unavailable};
+  Matrix zeroMap = matrix({{0.0, 0.0}});
+  contracted.contraction = zeroMap.view();
+  const auto zeroProjection = weightedSum(
+      coefficientVector.view(), unavailableInputs, contracted, ample());
+  VSS_CHECK(zeroProjection);
+  close(zeroProjection.value().terms.view()[0U].values.at(0U), 0.0);
+  VSS_CHECK(zeroProjection.value().population_mean.has_value());
+  close(zeroProjection.value().population_mean.value_or(Vector{}).at(0U), 0.0);
+
+  MomentRequest missingMap = request(0x02U, MomentRepresentation::contraction);
+  const auto rejectedMap = cumulantsOfIndependentSum(
+      inputs, coefficientVector.view(), missingMap, ample());
+  VSS_CHECK(!rejectedMap &&
+            rejectedMap.status().code() == ErrorCode::InvalidDomain);
+}
+
 } // namespace
 
 int main() try {
@@ -264,6 +441,8 @@ int main() try {
   asymmetricMixedFourthPairingsAndPackedSource();
   missingMeanDependencyAndValidation();
   exactFallbackResolvesLargeCancellation();
+  independentCumulantAndCentralMomentSums();
+  weightedSumContractionAndSelectedFourth();
   return 0;
 } catch (const std::exception& error) {
   std::cerr << error.what() << '\n';
