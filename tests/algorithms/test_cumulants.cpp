@@ -3,11 +3,15 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <exception>
+#include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <optional>
 #include <span>
+#include <utility>
+#include <vss/math/Array.hpp>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
@@ -106,7 +110,7 @@ void symmetricTwoPointRoundTrip() {
   close(recoveredTerms[2U].values.at(0U), 0.0);
   close(recoveredTerms[3U].values.at(0U), 1.0);
   VSS_CHECK(recovered.value().population_mean.has_value());
-  close(recovered.value().population_mean->at(0U), 4.0);
+  close(recovered.value().population_mean.value().at(0U), 4.0);
 
   auto cumulantsWithoutMean = cumulants.value();
   cumulantsWithoutMean.population_mean.reset();
@@ -114,10 +118,10 @@ void symmetricTwoPointRoundTrip() {
       cumulantsWithoutMean, request(0x0fU, MomentRepresentation::dense),
       ample());
   VSS_CHECK(recoveredMean && recoveredMean.value().population_mean.has_value());
-  close(recoveredMean.value().population_mean->at(0U), 4.0);
+  close(recoveredMean.value().population_mean.value().at(0U), 4.0);
 
   auto conflicting = cumulants.value();
-  conflicting.population_mean->at(0U) = 4.5;
+  conflicting.population_mean.value().at(0U) = 4.5;
   const auto mismatch = cumulantsToCentralMoments(
       conflicting, request(0x0fU, MomentRepresentation::dense), ample());
   VSS_CHECK(!mismatch && mismatch.status().code() == ErrorCode::InvalidDomain);
