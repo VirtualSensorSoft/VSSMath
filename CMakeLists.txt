@@ -63,9 +63,11 @@ add_library(vss_math STATIC
   src/probability/ChiSquare.cpp
   src/statistics/Descriptive.cpp
   src/statistics/Order.cpp
+  src/statistics/Summary.cpp
   src/statistics/Population.cpp
   src/statistics/Weighted.cpp
   src/statistics/Moments.cpp
+  src/statistics/MomentTransforms.cpp
   src/statistics/Cumulants.cpp
   src/statistics/MomentInterval.hpp
   include/vss/math/statistics/Population.hpp

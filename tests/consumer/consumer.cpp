@@ -618,6 +618,86 @@ int main() {
     return 1;
   }
 
+  Matrix summaryRows(3U, 1U);
+  summaryRows.at(0U, 0U) = 1.0;
+  summaryRows.at(1U, 0U) = 2.0;
+  summaryRows.at(2U, 0U) = 4.0;
+  const SampleView summarySample{summaryRows.view(), {}, {}};
+  const std::array<Scalar, 3U> summaryProbabilities{0.25, 0.5, 0.75};
+  const statistics::WeightSpec noSummaryWeights{.rule = WeightRule::unweighted,
+                                                .rowWeights = std::nullopt,
+                                                .componentWeights =
+                                                    std::nullopt,
+                                                .frequencyCounts = {}};
+  const auto installedSummary = statistics::descriptiveSummary(
+      summarySample, noSummaryWeights,
+      {.quantile_probabilities = summaryProbabilities,
+       .variance_mode = statistics::VarianceMode::empirical},
+      limits);
+  if (!require(installedSummary.hasValue() &&
+                   installedSummary.value().sum.at(0U) == 7.0 &&
+                   installedSummary.value().range.at(0U) == 3.0 &&
+                   std::abs(installedSummary.value().mean.at(0U) - 7.0 / 3.0) <
+                       1.0e-12 &&
+                   installedSummary.value().quantiles.at(0U, 1U) == 2.0,
+               "installed weighted descriptive summary API failed")) {
+    return 1;
+  }
+
+  Matrix transformRows(3U, 2U);
+  transformRows.at(0U, 0U) = 0.0;
+  transformRows.at(0U, 1U) = 5.0;
+  transformRows.at(1U, 0U) = 1.0;
+  transformRows.at(1U, 1U) = 5.0;
+  transformRows.at(2U, 0U) = 2.0;
+  transformRows.at(2U, 1U) = 5.0;
+  const std::array<Index, 1U> transformShape{2U};
+  const SampleView transformSample{transformRows.view(), transformShape, {}};
+  constexpr Limits transformLimits{65536U, 16U * 1024U * 1024U, 64U};
+  const statistics::MomentRequest transformSourceRequest{
+      .orders = 0x0aU,
+      .representation = statistics::MomentRepresentation::dense,
+      .selected = {},
+      .contraction = std::nullopt};
+  const auto transformSource = statistics::estimateCentralMoments(
+      transformSample, noSummaryWeights, statistics::CenterSpec{},
+      transformSourceRequest, transformLimits);
+  if (!transformSource.hasValue()) {
+    std::cerr << "math_consumer: source moment code="
+              << static_cast<int>(transformSource.status().code()) << ", "
+              << transformSource.status().message() << '\n';
+  }
+  if (!require(transformSource.hasValue(),
+               "installed source moment estimate API failed")) {
+    return 1;
+  }
+  const std::array<Index, 1U> selectedCoordinate{0U};
+  const auto installedMarginal =
+      statistics::marginalMoments(transformSource.value(), selectedCoordinate,
+                                  transformSourceRequest, transformLimits);
+  const std::array<Index, 4U> selectedFourthTuple{0U, 0U, 0U, 0U};
+  const std::array<std::span<const Index>, 1U> selectedFourthTuples{
+      std::span<const Index>{selectedFourthTuple}};
+  const statistics::MomentRequest selectedFourthRequest{
+      .orders = 0x08U,
+      .representation = statistics::MomentRepresentation::selected,
+      .selected = selectedFourthTuples,
+      .contraction = std::nullopt};
+  const auto installedStandardized = statistics::standardizedMoments(
+      transformSource.value(), selectedFourthRequest, transformLimits);
+  if (!require(
+          installedMarginal.hasValue() && installedStandardized.hasValue() &&
+              installedMarginal.value().observation_shape.view()[0U] == 1U &&
+              std::abs(
+                  installedMarginal.value().terms.view()[0U].values.at(0U) -
+                  2.0 / 3.0) < 1.0e-12 &&
+              std::abs(
+                  installedStandardized.value().terms.view()[0U].values.at(0U) -
+                  1.5) < 1.0e-12,
+          "installed marginal/standardized moment APIs failed")) {
+    return 1;
+  }
+
   Matrix populationRows(3U, 1U);
   populationRows.at(0U, 0U) = -1.0;
   populationRows.at(1U, 0U) = 0.0;
