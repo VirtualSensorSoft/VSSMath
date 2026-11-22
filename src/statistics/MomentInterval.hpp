@@ -172,8 +172,8 @@ public:
   }
 
 private:
-  BinaryEndpoint lower_{};
-  BinaryEndpoint upper_{};
+  BinaryEndpoint lower_;
+  BinaryEndpoint upper_;
 };
 
 enum class MomentCertificate : std::uint8_t {
