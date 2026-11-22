@@ -37,6 +37,7 @@
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/Sparse.hpp>
 #include <vss/math/linear/Structured.hpp>
+#include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Order.hpp>
 #include <vss/math/statistics/Population.hpp>
@@ -655,6 +656,54 @@ int main() {
   const auto installedMoments =
       statistics::estimateRawMoments(weightedSample, empiricalWeights,
                                      rawMomentRequest, Limits{128U, 4096U, 0U});
+  Matrix cumulantRows(2U, 1U);
+  cumulantRows.at(0U, 0U) = 3.0;
+  cumulantRows.at(1U, 0U) = 5.0;
+  const SampleView cumulantSample{cumulantRows.view(), {}, {}};
+  const statistics::MomentRequest cumulantRequest{
+      .orders = 0x0fU,
+      .representation = statistics::MomentRepresentation::dense,
+      .selected = {},
+      .contraction = std::nullopt};
+  const statistics::WeightSpec unweightedSpec{.rule = WeightRule::unweighted,
+                                              .rowWeights = std::nullopt,
+                                              .componentWeights = std::nullopt,
+                                              .frequencyCounts = {}};
+  const auto centralMoments = statistics::estimateCentralMoments(
+      cumulantSample, unweightedSpec, statistics::CenterSpec{}, cumulantRequest,
+      Limits{128U, 4096U, 0U});
+  if (!require(centralMoments.hasValue(),
+               "installed central-moment API failed")) {
+    return 1;
+  }
+  const auto installedCumulants = statistics::centralMomentsToCumulants(
+      centralMoments.value(), cumulantRequest, Limits{128U, 4096U, 0U});
+  if (!require(
+          installedCumulants.hasValue() &&
+              installedCumulants.value().terms.view().size() == 4U &&
+              std::abs(
+                  installedCumulants.value().terms.view()[0U].values.at(0U) -
+                  4.0) < 1.0e-12 &&
+              std::abs(
+                  installedCumulants.value().terms.view()[3U].values.at(0U) +
+                  2.0) < 1.0e-12,
+          "installed cumulant conversion failed")) {
+    return 1;
+  }
+  const auto recoveredCentralMoments = statistics::cumulantsToCentralMoments(
+      installedCumulants.value(), cumulantRequest, Limits{128U, 4096U, 0U});
+  if (!require(
+          recoveredCentralMoments.hasValue() &&
+              std::abs(
+                  recoveredCentralMoments.value().terms.view()[0U].values.at(
+                      0U)) < 1.0e-12 &&
+              std::abs(
+                  recoveredCentralMoments.value().terms.view()[3U].values.at(
+                      0U) -
+                  1.0) < 1.0e-12,
+          "installed inverse cumulant conversion failed")) {
+    return 1;
+  }
   const auto weightedAverage = statistics::weightedMean(
       weightedSample, empiricalWeights, Limits{16U, 1024U, 0U});
   const auto weightedSpread = statistics::weightedEmpiricalCovariance(
