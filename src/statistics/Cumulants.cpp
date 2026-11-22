@@ -12,7 +12,10 @@
 #include <utility>
 #include <vector>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Moments.hpp>
@@ -133,13 +136,13 @@ struct Entry final {
 
 void canonicalize(std::array<Index, 4U>& coordinates, Index order) {
   for (Index index = 1U; index < order; ++index) {
-    const Index value = coordinates[index];
+    const Index value = coordinates.at(index);
     Index position = index;
-    while (position > 0U && coordinates[position - 1U] > value) {
-      coordinates[position] = coordinates[position - 1U];
+    while (position > 0U && coordinates.at(position - 1U) > value) {
+      coordinates.at(position) = coordinates.at(position - 1U);
       --position;
     }
-    coordinates[position] = value;
+    coordinates.at(position) = value;
   }
 }
 
@@ -209,7 +212,7 @@ private:
   };
 
   [[nodiscard]] static Binary decode(double value) {
-    const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+    const auto bits = std::bit_cast<std::uint64_t>(value);
     const auto exponentBits = static_cast<unsigned>((bits >> 52U) & 0x7ffU);
     const auto fraction = bits & ((std::uint64_t{1U} << 52U) - 1U);
     if (exponentBits == 0U) {
@@ -231,14 +234,15 @@ private:
       std::uint64_t carry = 0U;
       for (Index j = 0U; j < 2U; ++j) {
         const std::uint64_t current =
-            static_cast<std::uint64_t>(a[i]) * b[j] + result[i + j] + carry;
-        result[i + j] = static_cast<std::uint32_t>(current);
+            static_cast<std::uint64_t>(a.at(i)) * b.at(j) + result.at(i + j) + carry;
+        result.at(i + j) = static_cast<std::uint32_t>(current);
         carry = current >> 32U;
       }
       Index position = i + 2U;
       while (carry != 0U && position < result.size()) {
-        const std::uint64_t current = result[position] + carry;
-        result[position++] = static_cast<std::uint32_t>(current);
+        const auto current = static_cast<std::uint64_t>(result.at(position)) + carry;
+        result.at(position) = static_cast<std::uint32_t>(current);
+        ++position;
         carry = current >> 32U;
       }
     }
@@ -251,21 +255,21 @@ private:
       return;
     }
     Big& destination = negative ? negative_ : positive_;
-    const Index offset = static_cast<Index>(exponent + 2148);
+    const Index offset = static_cast<Index>(exponent) + 2148U;
     for (Index limb = 0U; limb < Size; ++limb) {
       for (Index bit = 0U; bit < 32U; ++bit) {
-        if (((value[limb] >> bit) & 1U) == 0U) {
+        if (((value.at(limb) >> bit) & 1U) == 0U) {
           continue;
         }
         Index position = offset + limb * 32U + bit;
         while (position < limbCount * 32U) {
           const Index word = position / 32U;
           const auto mask = std::uint32_t{1U} << (position % 32U);
-          if ((destination[word] & mask) == 0U) {
-            destination[word] |= mask;
+          if ((destination.at(word) & mask) == 0U) {
+            destination.at(word) |= mask;
             break;
           }
-          destination[word] &= ~mask;
+          destination.at(word) &= ~mask;
           ++position;
         }
       }
@@ -274,8 +278,8 @@ private:
 
   [[nodiscard]] static bool less(const Big& left, const Big& right) {
     for (Index index = limbCount; index > 0U; --index) {
-      if (left[index - 1U] != right[index - 1U]) {
-        return left[index - 1U] < right[index - 1U];
+      if (left.at(index - 1U) != right.at(index - 1U)) {
+        return left.at(index - 1U) < right.at(index - 1U);
       }
     }
     return false;
@@ -286,9 +290,9 @@ private:
     std::uint64_t borrow = 0U;
     for (Index index = 0U; index < limbCount; ++index) {
       const std::uint64_t subtrahend =
-          static_cast<std::uint64_t>(right[index]) + borrow;
-      const std::uint64_t minuend = left[index];
-      result[index] = static_cast<std::uint32_t>(minuend - subtrahend);
+          static_cast<std::uint64_t>(right.at(index)) + borrow;
+      const std::uint64_t minuend = left.at(index);
+      result.at(index) = static_cast<std::uint32_t>(minuend - subtrahend);
       borrow = minuend < subtrahend ? 1U : 0U;
     }
     return result;
@@ -296,16 +300,16 @@ private:
 
   [[nodiscard]] static Index highestBit(const Big& value) {
     for (Index word = limbCount; word > 0U; --word) {
-      if (value[word - 1U] != 0U) {
+      if (value.at(word - 1U) != 0U) {
         return (word - 1U) * 32U +
-               (31U - static_cast<Index>(std::countl_zero(value[word - 1U])));
+               (31U - static_cast<Index>(std::countl_zero(value.at(word - 1U))));
       }
     }
     return noBit;
   }
 
   [[nodiscard]] static bool testBit(const Big& value, Index bit) {
-    return ((value[bit / 32U] >> (bit % 32U)) & 1U) != 0U;
+    return ((value.at(bit / 32U) >> (bit % 32U)) & 1U) != 0U;
   }
 
   [[nodiscard]] static bool anyBelow(const Big& value, Index limit) {
@@ -379,12 +383,12 @@ private:
   const auto coordinateSupports = diagnostics.coordinate_support.view();
   const auto tupleSupports = diagnostics.tuple_support.view();
   if (!coordinateSupports.empty()) {
-    if (tuple[0U] >= coordinateSupports.size()) {
+    if (tuple.at(0U) >= coordinateSupports.size()) {
       return false;
     }
     for (Index axis = 1U; axis < order; ++axis) {
       if (tuple.at(axis) >= coordinateSupports.size() ||
-          !supportEqual(coordinateSupports[tuple[0U]],
+          !supportEqual(coordinateSupports[tuple.at(0U)],
                         coordinateSupports[tuple.at(axis)])) {
         return false;
       }
@@ -410,7 +414,7 @@ private:
     }
   }
   if (first != nullptr && !coordinateSupports.empty()) {
-    return supportEqual(*first, coordinateSupports[tuple[0U]]);
+    return supportEqual(*first, coordinateSupports[tuple.at(0U)]);
   }
   return true;
 }
@@ -781,7 +785,7 @@ private:
           return failure(ErrorCode::InvalidDomain,
                          "first cumulant requires the population mean");
         }
-        value = source.population_mean->at(tuple[0U]);
+        value = source.population_mean->at(tuple.at(0U));
       } else {
         const auto* sourceTerm = findEntry(entries, order, tuple);
         if (sourceTerm == nullptr) {
@@ -797,14 +801,14 @@ private:
             std::array<Index, 4U> leftPair{};
             std::array<Index, 4U> rightPair{};
             if (firstPair == 0U) {
-              leftPair = {tuple[0U], tuple[1U], 0U, 0U};
-              rightPair = {tuple[2U], tuple[3U], 0U, 0U};
+              leftPair = {tuple.at(0U), tuple.at(1U), 0U, 0U};
+              rightPair = {tuple.at(2U), tuple.at(3U), 0U, 0U};
             } else if (firstPair == 1U) {
-              leftPair = {tuple[0U], tuple[2U], 0U, 0U};
-              rightPair = {tuple[1U], tuple[3U], 0U, 0U};
+              leftPair = {tuple.at(0U), tuple.at(2U), 0U, 0U};
+              rightPair = {tuple.at(1U), tuple.at(3U), 0U, 0U};
             } else {
-              leftPair = {tuple[0U], tuple[3U], 0U, 0U};
-              rightPair = {tuple[1U], tuple[2U], 0U, 0U};
+              leftPair = {tuple.at(0U), tuple.at(3U), 0U, 0U};
+              rightPair = {tuple.at(1U), tuple.at(2U), 0U, 0U};
             }
             const auto* left = findEntry(entries, 2U, leftPair);
             const auto* right = findEntry(entries, 2U, rightPair);
@@ -826,9 +830,9 @@ private:
           const auto certificate =
               detail::certifyMoment(result, value, absoluteError);
           if (certificate != MomentCertificate::accepted) {
-            if (!exactFourth(sourceTerm->value, leftValues[0U], leftValues[1U],
-                             leftValues[2U], rightValues[0U], rightValues[1U],
-                             rightValues[2U], forward, value, absoluteError)) {
+            if (!exactFourth(sourceTerm->value, leftValues.at(0U), leftValues.at(1U),
+                             leftValues.at(2U), rightValues.at(0U), rightValues.at(1U),
+                             rightValues.at(2U), forward, value, absoluteError)) {
               return failure(ErrorCode::NonFiniteResult,
                              "exact cumulant conversion is not representable");
             }
