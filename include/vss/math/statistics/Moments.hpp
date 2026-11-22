@@ -102,6 +102,34 @@ estimateCentralMoments(const SampleView& sample, const WeightSpec& weights,
                        const CenterSpec& center, const MomentRequest& request,
                        Limits limits);
 
+/// @brief Selects and remaps unique flattened coordinates of an estimate.
+/// @param source Existing raw or central moment terms and their support data.
+/// @param components Ordered, unique source-coordinate indices.
+/// @param request Requested output orders and representation.
+/// @param limits Maximum owned result and workspace storage.
+/// @return An owned estimate over the selected coordinates with unchanged
+///         support, normalization, and estimand semantics.
+/// @retval ErrorCode::IndexOutOfRange A selected coordinate is outside the
+///         source dimension.
+/// @retval ErrorCode::InvalidDomain A coordinate is repeated or the request
+///         is inconsistent with the source representation.
+/// @retval ErrorCode::InsufficientSamples A requested source tuple is absent.
+[[nodiscard]] Result<MomentEstimate>
+marginalMoments(const MomentEstimate& source, std::span<const Index> components,
+                const MomentRequest& request, Limits limits);
+
+/// @brief Standardizes requested central moment entries by component scales.
+/// @param source Moment estimate with the required center and lower orders.
+/// @param request Requested standardized orders and output representation.
+/// @param limits Maximum owned result and workspace storage.
+/// @return Standardized moment entries, or a typed validation/numerical error.
+/// @retval ErrorCode::InsufficientSamples A required source moment or center
+///         is unavailable.
+/// @retval ErrorCode::InvalidDomain A requested component has zero variance.
+[[nodiscard]] Result<MomentEstimate>
+standardizedMoments(const MomentEstimate& source, const MomentRequest& request,
+                    Limits limits);
+
 /// @brief Estimates an unbiased order-three central moment tensor using fixed
 ///        row weights independent of IID observations.
 /// @param sample Complete finite observations, one observation per row.
