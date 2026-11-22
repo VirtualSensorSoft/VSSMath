@@ -11,7 +11,9 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
@@ -210,8 +212,10 @@ void marginalAndStandardizedTransforms() {
           all.value().terms.view()[0].values.at(0U));
     VSS_CHECK(contracted.value().population_mean.has_value());
     if (contracted.value().population_mean.has_value()) {
-      close(contracted.value().population_mean->at(0U),
-            all.value().population_mean->at(0U));
+      const auto contractedMean =
+          contracted.value().population_mean.value_or(Vector{});
+      const auto allMean = all.value().population_mean.value_or(Vector{});
+      close(contractedMean.at(0U), allMean.at(0U));
     }
   }
 
@@ -238,7 +242,7 @@ void marginalAndStandardizedTransforms() {
   VSS_CHECK(emptyMarginal);
   if (emptyMarginal) {
     VSS_CHECK(emptyMarginal.value().observation_shape.view()[0U] == 0U);
-    VSS_CHECK(emptyMarginal.value().terms.view()[0U].values.size() == 0U);
+    VSS_CHECK(emptyMarginal.value().terms.view()[0U].values.empty());
   }
 
   const auto standardized = standardizedMoments(
@@ -354,10 +358,10 @@ void marginalAndStandardizedTransforms() {
       .algorithm = "empirical_central_moments",
       .premises = "standard normal reference contract",
       .warnings = {}};
-  MomentEstimate normal{.observation_shape = {},
-                        .terms = std::move(ownedNormalTerms).value(),
-                        .diagnostics = std::move(normalDiagnostics),
-                        .population_mean = Vector(1U, 0.0)};
+  const MomentEstimate normal{.observation_shape = {},
+                              .terms = std::move(ownedNormalTerms).value(),
+                              .diagnostics = std::move(normalDiagnostics),
+                              .population_mean = Vector(1U, 0.0)};
   const auto standardizedNormal = standardizedMoments(
       normal, request(0x0fU, MomentRepresentation::dense), ampleLimits());
   VSS_CHECK(standardizedNormal);
@@ -407,7 +411,7 @@ void marginalAndStandardizedTransforms() {
         incompatibleSource.diagnostics.global,
         incompatibleSource.diagnostics.global};
     ++incompatibleSupports[1U].positive;
-    const auto supportCopy =
+    auto supportCopy =
         Array<Support>::copy(incompatibleSupports, ampleLimits());
     VSS_CHECK(supportCopy);
     if (supportCopy) {
