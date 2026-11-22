@@ -1897,15 +1897,15 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
             orderResult.status().code(),
             std::string(orderResult.status().message()));
       }
-      if (!converted.has_value()) {
-        converted.emplace(std::move(orderResult).value());
-      } else {
-        auto merged =
-            mergeMomentEstimates(*converted, orderResult.value(), limits);
+      if (converted.has_value()) {
+        auto merged = mergeMomentEstimates(converted.value(),
+                                           orderResult.value(), limits);
         if (!merged) {
           return merged;
         }
         converted.emplace(std::move(merged).value());
+      } else {
+        converted.emplace(std::move(orderResult).value());
       }
     }
     if (converted.has_value()) {
@@ -1959,7 +1959,12 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
     outputRequest.selected = {};
     outputRequest.contraction = std::nullopt;
   }
-  return cumulantsToCentralMoments(*summedCumulants, outputRequest, limits);
+  if (!summedCumulants.has_value()) {
+    return failure(ErrorCode::InvalidDomain,
+                   "weighted sum produced no cumulants");
+  }
+  return cumulantsToCentralMoments(summedCumulants.value(), outputRequest,
+                                   limits);
 }
 
 } // namespace vss::math::statistics
