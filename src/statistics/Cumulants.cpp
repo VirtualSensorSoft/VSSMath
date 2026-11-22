@@ -127,6 +127,18 @@ struct Entry final {
   Scalar value;
 };
 
+void canonicalize(std::array<Index, 4U>& coordinates, Index order) {
+  for (Index index = 1U; index < order; ++index) {
+    const Index value = coordinates[index];
+    Index position = index;
+    while (position > 0U && coordinates[position - 1U] > value) {
+      coordinates[position] = coordinates[position - 1U];
+      --position;
+    }
+    coordinates[position] = value;
+  }
+}
+
 [[nodiscard]] bool closeEnough(Scalar left, Scalar right) {
   return std::abs(left - right) <=
          1.0e-12 + 1.0e-10 * std::max(std::abs(left), std::abs(right));
@@ -508,9 +520,7 @@ private:
         return false;
       }
       entry.value = term.values.at(ordinal);
-      std::sort(entry.coordinates.begin(),
-                entry.coordinates.begin() +
-                    static_cast<std::ptrdiff_t>(term.order));
+      canonicalize(entry.coordinates, term.order);
       entries.push_back(entry);
     }
   }
@@ -537,8 +547,7 @@ private:
 [[nodiscard]] const Entry* findEntry(const std::vector<Entry>& entries,
                                      Index order,
                                      std::array<Index, 4U> coordinates) {
-  std::sort(coordinates.begin(),
-            coordinates.begin() + static_cast<std::ptrdiff_t>(order));
+  canonicalize(coordinates, order);
   const auto found = std::lower_bound(entries.begin(), entries.end(),
                                       std::pair{order, coordinates},
                                       [](const Entry& entry, const auto& key) {
