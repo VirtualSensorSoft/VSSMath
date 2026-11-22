@@ -81,12 +81,41 @@ public:
   componentStandardDeviation(Index component) const;
 
   /// @brief Calculates standardized component skewness.
-  /// @details Requires an available mean, second central moment, and third
-  ///          central moment. Zero variance is outside the standardized domain.
+  /// @details Computes the third central moment divided by the component's
+  ///          standard deviation cubed. Requires an available mean, second
+  ///          central moment, and third central moment. Zero variance is
+  ///          outside the standardized domain; each intermediate ratio and
+  ///          final result must be finite.
+  /// @param component Zero-based component index.
+  /// @return The standardized third central moment.
+  /// @retval ErrorCode::IndexOutOfRange The component is outside the dimension.
+  /// @retval ErrorCode::InvalidDomain A required moment is absent, or variance
+  ///         is negative or zero.
+  /// @retval ErrorCode::NonFiniteResult An intermediate or final ratio is not
+  ///         finite.
   [[nodiscard]] Result<Scalar> componentSkewness(Index component) const;
   /// @brief Calculates ordinary component kurtosis (not excess kurtosis).
+  /// @details Computes the fourth central moment divided by the component
+  ///          variance squared. Requires an available mean, second central
+  ///          moment, and fourth central moment. Zero variance is outside the
+  ///          standardized domain; each intermediate ratio and final result
+  ///          must be finite.
+  /// @param component Zero-based component index.
+  /// @return The ordinary standardized fourth central moment.
+  /// @retval ErrorCode::IndexOutOfRange The component is outside the dimension.
+  /// @retval ErrorCode::InvalidDomain A required moment is absent, or variance
+  ///         is negative or zero.
+  /// @retval ErrorCode::NonFiniteResult An intermediate or final ratio is not
+  ///         finite.
   [[nodiscard]] Result<Scalar> componentKurtosis(Index component) const;
   /// @brief Calculates component excess kurtosis as ordinary kurtosis minus 3.
+  /// @param component Zero-based component index.
+  /// @return Ordinary component kurtosis minus the Gaussian reference value 3.
+  /// @retval ErrorCode::IndexOutOfRange The component is outside the dimension.
+  /// @retval ErrorCode::InvalidDomain A required moment is absent, or variance
+  ///         is negative or zero.
+  /// @retval ErrorCode::NonFiniteResult An intermediate or final result is not
+  ///         finite.
   [[nodiscard]] Result<Scalar> componentExcessKurtosis(Index component) const;
 
 private:

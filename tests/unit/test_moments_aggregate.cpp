@@ -65,6 +65,10 @@ int main() try {
               ErrorCode::InvalidDomain);
   expectError(aggregate.componentStandardDeviation(1U),
               ErrorCode::IndexOutOfRange);
+  expectError(aggregate.componentSkewness(1U), ErrorCode::IndexOutOfRange);
+  expectError(aggregate.componentKurtosis(1U), ErrorCode::IndexOutOfRange);
+  expectError(aggregate.componentExcessKurtosis(1U),
+              ErrorCode::IndexOutOfRange);
 
   auto variance = SecondMoment::create(makeTensor<2, 1>({1U, 1U}, {4.0}));
   auto third = ThirdMoment::create(makeTensor<3, 1>({1U, 1U, 1U}, {0.0}));
@@ -91,6 +95,14 @@ int main() try {
   VSS_CHECK(skewness && skewness.value() == 0.0);
   VSS_CHECK(kurtosis && kurtosis.value() == 3.0);
   VSS_CHECK(excess && excess.value() == 0.0);
+
+  aggregate.clearThirdMoment();
+  expectError(aggregate.componentSkewness(0U), ErrorCode::InvalidDomain);
+  VSS_CHECK(aggregate.setThirdMoment(third.value()).ok());
+  aggregate.clearFourthMoment();
+  expectError(aggregate.componentKurtosis(0U), ErrorCode::InvalidDomain);
+  expectError(aggregate.componentExcessKurtosis(0U), ErrorCode::InvalidDomain);
+  VSS_CHECK(aggregate.setFourthMoment(fourth.value()).ok());
 
   auto two_component_mean =
       FirstMoment::create(makeTensor<1, 2>({2U}, {1.0, 2.0}));
@@ -135,6 +147,49 @@ int main() try {
   VSS_CHECK(large_aggregate.setFourthMoment(large_fourth.value()).ok());
   VSS_CHECK(large_aggregate.componentSkewness(0U).value() > 0.0);
   VSS_CHECK(large_aggregate.componentKurtosis(0U).value() > 0.0);
+
+  auto range_aggregate_result = MultivariateMoments::create(1U);
+  VSS_CHECK(range_aggregate_result.hasValue());
+  auto range_mean = FirstMoment::create(makeTensor<1, 1>({1U}, {0.0}));
+  auto range_variance =
+      SecondMoment::create(makeTensor<2, 1>({1U, 1U}, {1.0e-200}));
+  auto range_third =
+      ThirdMoment::create(makeTensor<3, 1>({1U, 1U, 1U}, {1.0e300}));
+  auto range_fourth =
+      FourthMoment::create(makeTensor<4, 1>({1U, 1U, 1U, 1U}, {1.0e300}));
+  VSS_CHECK(range_mean && range_variance && range_third && range_fourth);
+  auto& range_aggregate = range_aggregate_result.value();
+  VSS_CHECK(range_aggregate.setFirstMoment(range_mean.value()).ok());
+  VSS_CHECK(range_aggregate.setSecondMoment(range_variance.value()).ok());
+  VSS_CHECK(range_aggregate.setThirdMoment(range_third.value()).ok());
+  VSS_CHECK(range_aggregate.setFourthMoment(range_fourth.value()).ok());
+  expectError(range_aggregate.componentSkewness(0U),
+              ErrorCode::NonFiniteResult);
+  expectError(range_aggregate.componentKurtosis(0U),
+              ErrorCode::NonFiniteResult);
+  expectError(range_aggregate.componentExcessKurtosis(0U),
+              ErrorCode::NonFiniteResult);
+
+  auto final_range_aggregate_result = MultivariateMoments::create(1U);
+  VSS_CHECK(final_range_aggregate_result.hasValue());
+  auto final_range_third =
+      ThirdMoment::create(makeTensor<3, 1>({1U, 1U, 1U}, {1.0e100}));
+  auto final_range_fourth =
+      FourthMoment::create(makeTensor<4, 1>({1U, 1U, 1U, 1U}, {1.0e100}));
+  VSS_CHECK(final_range_third && final_range_fourth);
+  auto& final_range_aggregate = final_range_aggregate_result.value();
+  VSS_CHECK(final_range_aggregate.setFirstMoment(range_mean.value()).ok());
+  VSS_CHECK(final_range_aggregate.setSecondMoment(range_variance.value()).ok());
+  VSS_CHECK(
+      final_range_aggregate.setThirdMoment(final_range_third.value()).ok());
+  VSS_CHECK(
+      final_range_aggregate.setFourthMoment(final_range_fourth.value()).ok());
+  expectError(final_range_aggregate.componentSkewness(0U),
+              ErrorCode::NonFiniteResult);
+  expectError(final_range_aggregate.componentKurtosis(0U),
+              ErrorCode::NonFiniteResult);
+  expectError(final_range_aggregate.componentExcessKurtosis(0U),
+              ErrorCode::NonFiniteResult);
 } catch (const std::exception& exception) {
   std::cerr << "Unexpected exception: " << exception.what() << '\n';
   return 1;
