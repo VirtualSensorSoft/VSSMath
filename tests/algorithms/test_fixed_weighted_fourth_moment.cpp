@@ -4,9 +4,11 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <span>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
@@ -14,6 +16,7 @@
 #include <vss/math/Matrix.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Weighted.hpp>
 
@@ -22,52 +25,58 @@ using namespace vss::math::statistics;
 
 namespace {
 
-struct Fraction final {
-  std::int64_t numerator{0};
-  std::int64_t denominator{1};
+class Fraction final {
+  std::int64_t numerator_{0};
+  std::int64_t denominator_{1};
 
+public:
   Fraction() = default;
-  Fraction(std::int64_t n, std::int64_t d = 1) : numerator(n), denominator(d) {
+  Fraction(std::int64_t n, std::int64_t d = 1)
+      : numerator_(n), denominator_(d) {
     VSS_CHECK(d != 0);
-    if (denominator < 0) {
-      numerator = -numerator;
-      denominator = -denominator;
+    if (denominator_ < 0) {
+      numerator_ = -numerator_;
+      denominator_ = -denominator_;
     }
     const auto divisor =
-        std::gcd(numerator < 0 ? -numerator : numerator, denominator);
-    numerator /= divisor;
-    denominator /= divisor;
+        std::gcd(numerator_ < 0 ? -numerator_ : numerator_, denominator_);
+    numerator_ /= divisor;
+    denominator_ /= divisor;
   }
 
+  [[nodiscard]] std::int64_t numerator() const noexcept { return numerator_; }
+  [[nodiscard]] std::int64_t denominator() const noexcept {
+    return denominator_;
+  }
   [[nodiscard]] long double value() const {
-    return static_cast<long double>(numerator) /
-           static_cast<long double>(denominator);
+    return static_cast<long double>(numerator_) /
+           static_cast<long double>(denominator_);
   }
 };
 
 Fraction operator+(Fraction a, Fraction b) {
-  const auto common = std::gcd(a.denominator, b.denominator);
-  return {a.numerator * (b.denominator / common) +
-              b.numerator * (a.denominator / common),
-          a.denominator * (b.denominator / common)};
+  const auto common = std::gcd(a.denominator(), b.denominator());
+  return {a.numerator() * (b.denominator() / common) +
+              b.numerator() * (a.denominator() / common),
+          a.denominator() * (b.denominator() / common)};
 }
 
 Fraction operator-(Fraction a, Fraction b) {
-  return a + Fraction{-b.numerator, b.denominator};
+  return a + Fraction{-b.numerator(), b.denominator()};
 }
 
 Fraction operator*(Fraction a, Fraction b) {
-  const auto left =
-      std::gcd(a.numerator < 0 ? -a.numerator : a.numerator, b.denominator);
-  const auto right =
-      std::gcd(b.numerator < 0 ? -b.numerator : b.numerator, a.denominator);
-  return {(a.numerator / left) * (b.numerator / right),
-          (a.denominator / right) * (b.denominator / left)};
+  const auto left = std::gcd(a.numerator() < 0 ? -a.numerator() : a.numerator(),
+                             b.denominator());
+  const auto right = std::gcd(
+      b.numerator() < 0 ? -b.numerator() : b.numerator(), a.denominator());
+  return {(a.numerator() / left) * (b.numerator() / right),
+          (a.denominator() / right) * (b.denominator() / left)};
 }
 
 Fraction operator/(Fraction a, Fraction b) {
-  VSS_CHECK(b.numerator != 0);
-  return a * Fraction{b.denominator, b.numerator};
+  VSS_CHECK(b.numerator() != 0);
+  return a * Fraction{b.denominator(), b.numerator()};
 }
 
 using Row = std::array<Fraction, 2U>;
@@ -88,30 +97,31 @@ Fraction exactFourthReference(std::span<const Row> rows,
   std::array<Fraction, 2U> mean{};
   for (Index coordinate = 0U; coordinate < 2U; ++coordinate) {
     for (Index row = 0U; row < rows.size(); ++row) {
-      mean[coordinate] =
-          mean[coordinate] + rawWeights[row] * rows[row][coordinate] / mass;
+      mean.at(coordinate) = mean.at(coordinate) +
+                            rawWeights[row] * rows[row].at(coordinate) / mass;
     }
   }
   std::array<Row, 8U> centered{};
   VSS_CHECK(rows.size() <= centered.size());
   for (Index row = 0U; row < rows.size(); ++row) {
     for (Index coordinate = 0U; coordinate < 2U; ++coordinate) {
-      centered[row][coordinate] = rows[row][coordinate] - mean[coordinate];
+      centered.at(row).at(coordinate) =
+          rows[row].at(coordinate) - mean.at(coordinate);
     }
   }
   Fraction m4{};
   for (Index row = 0U; row < rows.size(); ++row) {
     auto product = rawWeights[row] / mass;
     for (const Index coordinate : tuple) {
-      product = product * centered[row][coordinate];
+      product = product * centered.at(row).at(coordinate);
     }
     m4 = m4 + product;
   }
   auto m2 = [&](Index a, Index b) {
     Fraction value{};
     for (Index row = 0U; row < rows.size(); ++row) {
-      value =
-          value + rawWeights[row] / mass * centered[row][a] * centered[row][b];
+      value = value + rawWeights[row] / mass * centered.at(row).at(a) *
+                          centered.at(row).at(b);
     }
     return value;
   };
@@ -120,7 +130,9 @@ Fraction exactFourthReference(std::span<const Row> rows,
       (m2(a, b) * m2(c, d) + m2(a, c) * m2(b, d) + m2(a, d) * m2(b, c)) /
       Fraction{3};
 
-  Fraction s2{}, s3{}, s4{};
+  Fraction s2{};
+  Fraction s3{};
+  Fraction s4{};
   for (const auto raw : rawWeights) {
     const auto p = raw / mass;
     s2 = s2 + p * p;
@@ -140,8 +152,8 @@ Fraction exactFourthReference(std::span<const Row> rows,
 Matrix matrix(std::span<const Row> rows) {
   Matrix result(rows.size(), 2U);
   for (Index row = 0U; row < rows.size(); ++row) {
-    result.at(row, 0U) = static_cast<Scalar>(rows[row][0U].value());
-    result.at(row, 1U) = static_cast<Scalar>(rows[row][1U].value());
+    result.at(row, 0U) = static_cast<Scalar>(rows[row].at(0U).value());
+    result.at(row, 1U) = static_cast<Scalar>(rows[row].at(1U).value());
   }
   return result;
 }
@@ -189,16 +201,16 @@ void close(Scalar actual, long double expected) {
 
 Scalar at(const MomentEstimate& result, Tuple tuple, Extent dimension = 2U) {
   const Extent index =
-      (((tuple[0U] * dimension + tuple[1U]) * dimension + tuple[2U]) *
+      (((tuple.at(0U) * dimension + tuple.at(1U)) * dimension + tuple.at(2U)) *
            dimension +
-       tuple[3U]);
+       tuple.at(3U));
   return result.terms.view()[0U].values.at(index);
 }
 
 void unequalWeightExactEnumeration() {
   const std::array<Fraction, 4U> weights{Fraction{1}, Fraction{2}, Fraction{3},
                                          Fraction{4}};
-  Vector vectorWeights(std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0});
+  const Vector vectorWeights(std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0});
   const std::array<Row, 3U> atoms{Row{Fraction{-1}, Fraction{1}},
                                   Row{Fraction{0}, Fraction{0}},
                                   Row{Fraction{2}, Fraction{4}}};
@@ -208,8 +220,8 @@ void unequalWeightExactEnumeration() {
   for (Index encoded = 0U; encoded < 81U; ++encoded) {
     Index state = encoded;
     std::array<Row, 4U> rows{};
-    for (Index row = 0U; row < rows.size(); ++row) {
-      rows[row] = atoms[state % 3U];
+    for (auto& row : rows) {
+      row = atoms.at(state % 3U);
       state /= 3U;
     }
     const Matrix observations = matrix(rows);
@@ -218,9 +230,10 @@ void unequalWeightExactEnumeration() {
     VSS_CHECK(result);
     for (Index checked = 0U; checked < checkedTuples.size(); ++checked) {
       const auto exact =
-          exactFourthReference(rows, weights, checkedTuples[checked]);
-      close(at(result.value(), checkedTuples[checked]), exact.value());
-      expectedSums[checked] = expectedSums[checked] + exact / Fraction{81};
+          exactFourthReference(rows, weights, checkedTuples.at(checked));
+      close(at(result.value(), checkedTuples.at(checked)), exact.value());
+      expectedSums.at(checked) =
+          expectedSums.at(checked) + exact / Fraction{81};
     }
   }
   close(static_cast<Scalar>(expectedSums[0U].value()), 112.0L / 27.0L);
@@ -236,17 +249,17 @@ void fullRankUnequalLawEnumeration() {
   const std::array<Row, 3U> atoms{Row{Fraction{0}, Fraction{0}},
                                   Row{Fraction{1}, Fraction{0}},
                                   Row{Fraction{0}, Fraction{2}}};
-  Vector vectorWeights(std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0});
+  const Vector vectorWeights(std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0});
   Fraction expected{};
   for (Index encoded = 0U; encoded < 81U; ++encoded) {
     Index state = encoded;
     std::array<Row, 4U> rows{};
     Fraction probability{1};
-    for (Index row = 0U; row < rows.size(); ++row) {
+    for (auto& row : rows) {
       const Index atom = state % 3U;
       state /= 3U;
-      rows[row] = atoms[atom];
-      probability = probability * probabilities[atom];
+      row = atoms.at(atom);
+      probability = probability * probabilities.at(atom);
     }
     const Matrix observations = matrix(rows);
     const auto result = unbiasedFixedWeightedFourthMoment(
@@ -264,17 +277,19 @@ void fullRankUnequalLawEnumeration() {
   std::array<Fraction, 2U> mean{};
   for (Index atom = 0U; atom < atoms.size(); ++atom) {
     for (Index coordinate = 0U; coordinate < 2U; ++coordinate) {
-      mean[coordinate] =
-          mean[coordinate] + probabilities[atom] * atoms[atom][coordinate];
+      mean.at(coordinate) =
+          mean.at(coordinate) +
+          probabilities.at(atom) * atoms.at(atom).at(coordinate);
     }
   }
   std::array<std::array<Fraction, 2U>, 2U> covariance{};
   for (Index atom = 0U; atom < atoms.size(); ++atom) {
     for (Index a = 0U; a < 2U; ++a) {
       for (Index b = 0U; b < 2U; ++b) {
-        covariance[a][b] = covariance[a][b] + probabilities[atom] *
-                                                  (atoms[atom][a] - mean[a]) *
-                                                  (atoms[atom][b] - mean[b]);
+        covariance.at(a).at(b) =
+            covariance.at(a).at(b) + probabilities.at(atom) *
+                                         (atoms.at(atom).at(a) - mean.at(a)) *
+                                         (atoms.at(atom).at(b) - mean.at(b));
       }
     }
   }
@@ -290,8 +305,8 @@ void equalWeightsAndRankOneMixedTuple() {
       Row{Fraction{1}, Fraction{2}}, Row{Fraction{2}, Fraction{4}},
       Row{Fraction{4}, Fraction{8}}, Row{Fraction{8}, Fraction{16}},
       Row{Fraction{16}, Fraction{32}}};
-  Matrix observations = matrix(rows);
-  Vector weights(std::array<Scalar, 5U>{1.0, 1.0, 1.0, 1.0, 1.0});
+  const Matrix observations = matrix(rows);
+  const Vector weights(std::array<Scalar, 5U>{1.0, 1.0, 1.0, 1.0, 1.0});
   const auto result = unbiasedFixedWeightedFourthMoment(
       sample(observations), fixed(weights), denseFourth(), ample());
   VSS_CHECK(result);
@@ -333,12 +348,13 @@ void validationAndWeightScale() {
   const auto limited = unbiasedFixedWeightedFourthMoment(
       sample(observations), fixed(weights), denseFourth(), Limits{1U, 8U, 0U});
   VSS_CHECK(!limited && limited.status().code() == ErrorCode::ResourceLimit);
-  Vector threePositive(std::array<Scalar, 4U>{1.0, 1.0, 1.0, 0.0});
+  const Vector threePositive(std::array<Scalar, 4U>{1.0, 1.0, 1.0, 0.0});
   const auto insufficient = unbiasedFixedWeightedFourthMoment(
       sample(observations), fixed(threePositive), denseFourth(), ample());
   VSS_CHECK(!insufficient &&
             insufficient.status().code() == ErrorCode::InsufficientSamples);
-  Vector nearlyDominant(std::array<Scalar, 4U>{1.0, 1.0e-12, 1.0e-12, 1.0e-12});
+  const Vector nearlyDominant(
+      std::array<Scalar, 4U>{1.0, 1.0e-12, 1.0e-12, 1.0e-12});
   const auto illConditioned = unbiasedFixedWeightedFourthMoment(
       sample(observations), fixed(nearlyDominant), denseFourth(), ample());
   VSS_CHECK(!illConditioned &&
@@ -350,7 +366,7 @@ void selectedComponentAndContractionLayouts() {
       Row{Fraction{0}, Fraction{2}}, Row{Fraction{1}, Fraction{-1}},
       Row{Fraction{3}, Fraction{4}}, Row{Fraction{5}, Fraction{1}}};
   const Matrix observations = matrix(rows);
-  Vector weights(std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0});
+  const Vector weights(std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0});
   const auto dense = unbiasedFixedWeightedFourthMoment(
       sample(observations), fixed(weights), denseFourth(), ample());
   VSS_CHECK(dense);
