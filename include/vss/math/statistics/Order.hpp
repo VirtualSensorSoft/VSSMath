@@ -63,11 +63,11 @@ struct Summary final {
   /// @brief Weight interpretation, support, estimand, and estimator premises.
   EstimatorDiagnostics diagnostics;
   /// @brief Maximum minus minimum; non-finite range fails the whole call.
-  Vector range{};
+  Vector range;
   /// @brief Square root of each available variance.
-  Vector standard_deviation{};
+  Vector standard_deviation;
   /// @brief ErrorCode::None or the per-coordinate variance-unavailable cause.
-  Array<ErrorCode> variance_status{};
+  Array<ErrorCode> variance_status;
 };
 
 /// @brief Evaluates an empirical quantile of finite observations.

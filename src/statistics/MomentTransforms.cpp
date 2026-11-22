@@ -11,11 +11,16 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Moments.hpp>
 
 namespace vss::math::statistics {
@@ -506,10 +511,10 @@ Result<MomentEstimate> buildTransform(const MomentEstimate& source,
           std::array<Scalar, 4U> coefficientFactors{};
           bool zeroCoefficient = false;
           for (Index axis = 0U; axis < order; ++axis) {
-            coefficientFactors[axis] =
+            coefficientFactors.at(axis) =
                 map.at(outputTuple[axis], inputTuple[axis]);
             zeroCoefficient =
-                zeroCoefficient || coefficientFactors[axis] == 0.0;
+                zeroCoefficient || coefficientFactors.at(axis) == 0.0;
           }
           if (zeroCoefficient) {
             continue;
@@ -542,7 +547,7 @@ Result<MomentEstimate> buildTransform(const MomentEstimate& source,
           }
           std::array<Scalar, 5U> factors{};
           std::copy_n(coefficientFactors.begin(), order, factors.begin());
-          factors[order] = value.value();
+          factors.at(order) = value.value();
           auto product = finiteProduct(
               std::span<const Scalar>{factors.data(), order + 1U});
           if (!product) {
@@ -841,7 +846,7 @@ Result<Scalar> rawToCentral(const MomentEstimate& source,
         return fail<Scalar>(ErrorCode::InsufficientSamples,
                             "raw-to-central conversion requires the mean");
       }
-      means[i] = m.value();
+      means.at(i) = m.value();
     }
     for (Index omitted = 0U; omitted < 3U; ++omitted) {
       const std::array<Index, 2U> pair{tuple[(omitted + 1U) % 3U],
@@ -863,8 +868,9 @@ Result<Scalar> rawToCentral(const MomentEstimate& source,
                             "raw-to-central conversion requires all lower "
                             "orders");
       }
-      second[omitted] = value.value();
-      central -= static_cast<long double>(means[omitted]) * second[omitted];
+      second.at(omitted) = value.value();
+      central -=
+          static_cast<long double>(means.at(omitted)) * second.at(omitted);
     }
     central += 2.0L * means[0] * means[1] * means[2];
   } else if (order == 4U) {
@@ -887,14 +893,14 @@ Result<Scalar> rawToCentral(const MomentEstimate& source,
         return fail<Scalar>(ErrorCode::InsufficientSamples,
                             "raw-to-central conversion requires the mean");
       }
-      means[i] = m.value();
+      means.at(i) = m.value();
     }
     for (Index omitted = 0U; omitted < 4U; ++omitted) {
       std::array<Index, 3U> triple{};
       Index position = 0U;
       for (Index i = 0U; i < 4U; ++i) {
         if (i != omitted) {
-          triple[position++] = tuple[i];
+          triple.at(position++) = tuple[i];
         }
       }
       const auto compatible = requireCompatibleSupport(triple);
@@ -914,7 +920,7 @@ Result<Scalar> rawToCentral(const MomentEstimate& source,
                             "raw-to-central conversion requires all lower "
                             "orders");
       }
-      central -= static_cast<long double>(means[omitted]) * value.value();
+      central -= static_cast<long double>(means.at(omitted)) * value.value();
     }
     constexpr std::array<std::array<Index, 2U>, 6U> pairs{{{{0U, 1U}},
                                                            {{0U, 2U}},
@@ -926,8 +932,8 @@ Result<Scalar> rawToCentral(const MomentEstimate& source,
       std::array<Index, 2U> remaining{};
       Index position = 0U;
       for (Index i = 0U; i < 4U; ++i) {
-        if (i != pair[0] && i != pair[1]) {
-          remaining[position++] = tuple[i];
+        if (i != pair.at(0U) && i != pair.at(1U)) {
+          remaining.at(position++) = tuple[i];
         }
       }
       const auto compatible = requireCompatibleSupport(remaining);
@@ -947,8 +953,8 @@ Result<Scalar> rawToCentral(const MomentEstimate& source,
                             "raw-to-central conversion requires all lower "
                             "orders");
       }
-      central += static_cast<long double>(means[pair[0]]) * means[pair[1]] *
-                 value.value();
+      central += static_cast<long double>(means.at(pair.at(0U))) *
+                 means.at(pair.at(1U)) * value.value();
     }
     central -= 3.0L * means[0] * means[1] * means[2] * means[3];
   }

@@ -1,19 +1,25 @@
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <detail/CompensatedSum.hpp>
 #include <initializer_list>
 #include <limits>
 #include <new>
-#include <numeric>
-#include <string>
+#include <optional>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Order.hpp>
+#include <vss/math/statistics/Population.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 namespace vss::math::statistics {
 namespace {
@@ -258,7 +264,7 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
       frequencyMass += count;
       weight = static_cast<Scalar>(count);
     } else if (weights.rule != WeightRule::unweighted) {
-      weight = weights.rowWeights->at(row);
+      weight = weights.rowWeights.value().at(row);
       if (!std::isfinite(weight)) {
         return fail<Summary>(ErrorCode::NonFiniteInput,
                              "row weight is non-finite");
@@ -346,7 +352,7 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
       if (weights.rule == WeightRule::frequency) {
         weight = static_cast<Scalar>(weights.frequencyCounts[row]);
       } else if (weights.rule != WeightRule::unweighted) {
-        weight = weights.rowWeights->at(row);
+        weight = weights.rowWeights.value().at(row);
       }
       if (weight > 0.0) {
         const Scalar normalized = weight / maximumWeight;
@@ -416,7 +422,7 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
           count = weights.frequencyCounts[row];
           weight = static_cast<Scalar>(count);
         } else if (weights.rule != WeightRule::unweighted) {
-          weight = weights.rowWeights->at(row);
+          weight = weights.rowWeights.value().at(row);
         }
         if (weight <= 0.0) {
           continue;
@@ -456,12 +462,20 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
         }
         return Result<Scalar>::success(maximum - minimum);
       }();
-      if (!meanValue || !rmsValue || !sumValue || !rangeValue) {
-        const auto* failed = !meanValue  ? &meanValue
-                             : !rmsValue ? &rmsValue
-                             : !sumValue ? &sumValue
-                                         : &rangeValue;
-        return fail<Summary>(failed->status().code(),
+      if (!meanValue) {
+        return fail<Summary>(meanValue.status().code(),
+                             "descriptive summary result is not representable");
+      }
+      if (!rmsValue) {
+        return fail<Summary>(rmsValue.status().code(),
+                             "descriptive summary result is not representable");
+      }
+      if (!sumValue) {
+        return fail<Summary>(sumValue.status().code(),
+                             "descriptive summary result is not representable");
+      }
+      if (!rangeValue) {
+        return fail<Summary>(rangeValue.status().code(),
                              "descriptive summary result is not representable");
       }
       means.at(coordinate) = meanValue.value();
@@ -478,10 +492,10 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
                               : (entry.value / valueScale) - meanNormalized;
         centered.add(entry.normalized_weight * normalized * normalized);
       }
-      std::sort(ordered.begin(), ordered.end(),
-                [](const WeightedValue& left, const WeightedValue& right) {
-                  return left.value < right.value;
-                });
+      std::ranges::sort(
+          ordered, [](const WeightedValue& left, const WeightedValue& right) {
+            return left.value < right.value;
+          });
       Scalar varianceDenominator = mass;
       ErrorCode unavailable = ErrorCode::None;
       if (spec.variance_mode == VarianceMode::iid_sample) {
