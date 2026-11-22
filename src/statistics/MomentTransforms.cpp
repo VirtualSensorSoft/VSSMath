@@ -255,19 +255,25 @@ enumerateTuples(Extent dimension, Index order, MomentRepresentation layout,
     } else {
       std::vector<Index> tuple(order, 0U);
       const bool packed = layout == MomentRepresentation::packed;
-      const auto generate = [&](auto&& self, Index axis,
-                                Index minimum) -> void {
-        if (axis == order) {
-          tuples.push_back(tuple);
-          return;
+      while (true) {
+        tuples.push_back(tuple);
+        bool advanced = false;
+        for (Index axis = order; axis > 0U;) {
+          --axis;
+          if (tuple[axis] + 1U < dimension) {
+            ++tuple[axis];
+            const Index next = packed ? tuple[axis] : 0U;
+            for (Index suffix = axis + 1U; suffix < order; ++suffix) {
+              tuple[suffix] = next;
+            }
+            advanced = true;
+            break;
+          }
         }
-        for (Index coordinate = packed ? minimum : 0U; coordinate < dimension;
-             ++coordinate) {
-          tuple[axis] = coordinate;
-          self(self, axis + 1U, packed ? coordinate : 0U);
+        if (!advanced) {
+          break;
         }
-      };
-      generate(generate, 0U, 0U);
+      }
     }
     return Result<std::vector<std::vector<Index>>>::success(std::move(tuples));
   } catch (const std::bad_alloc&) {
@@ -357,20 +363,24 @@ Result<Scalar> termValue(const MomentEstimate& source, Index order,
 Result<Support> supportForTuple(const MomentEstimate& source,
                                 std::span<const Index> tuple,
                                 Extent dimension) {
-  std::optional<Support> recorded;
+  Support recorded = source.diagnostics.global;
+  bool hasRecorded = false;
   for (const auto& item : source.diagnostics.tuple_support.view()) {
     const auto coordinates = item.coordinates.view();
     if (coordinates.size() == tuple.size() &&
         std::ranges::equal(coordinates, tuple)) {
-      if (recorded.has_value() && !supportEqual(*recorded, item.support)) {
+      if (hasRecorded && !supportEqual(recorded, item.support)) {
         return fail<Support>(ErrorCode::InvalidDomain,
                              "source tuple has conflicting support records");
       }
-      recorded = item.support;
+      if (!hasRecorded) {
+        recorded = item.support;
+        hasRecorded = true;
+      }
     }
   }
-  if (recorded.has_value()) {
-    return Result<Support>::success(*recorded);
+  if (hasRecorded) {
+    return Result<Support>::success(recorded);
   }
   const auto coordinateSupport = source.diagnostics.coordinate_support.view();
   if (coordinateSupport.empty()) {
@@ -380,20 +390,24 @@ Result<Support> supportForTuple(const MomentEstimate& source,
     return fail<Support>(ErrorCode::DimensionMismatch,
                          "source coordinate support has the wrong shape");
   }
-  std::optional<Support> common;
+  Support common = source.diagnostics.global;
+  bool hasCommon = false;
   for (const Index coordinate : tuple) {
     if (coordinate >= dimension) {
       return fail<Support>(ErrorCode::IndexOutOfRange,
                            "support tuple coordinate is outside its shape");
     }
     const Support& current = coordinateSupport[coordinate];
-    if (common.has_value() && !supportEqual(*common, current)) {
+    if (hasCommon && !supportEqual(common, current)) {
       return fail<Support>(ErrorCode::InvalidDomain,
                            "moment tuple combines different supports");
     }
-    common = current;
+    if (!hasCommon) {
+      common = current;
+      hasCommon = true;
+    }
   }
-  return Result<Support>::success(common.value_or(source.diagnostics.global));
+  return Result<Support>::success(common);
 }
 
 Result<MomentEstimate> buildTransform(const MomentEstimate& source,
