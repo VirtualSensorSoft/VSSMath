@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <span>
 #include <string>
@@ -17,6 +18,7 @@
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Moments.hpp>
@@ -1003,9 +1005,9 @@ private:
       return false;
     }
     Big& destination = negative ? negative_ : positive_;
-    const Index bitOffset = static_cast<Index>(exponent - minimumExponent);
+    const auto bitOffset = static_cast<Index>(exponent - minimumExponent);
     const Index wordOffset = bitOffset / 32U;
-    const unsigned bitShift = static_cast<unsigned>(bitOffset % 32U);
+    const auto bitShift = static_cast<unsigned>(bitOffset % 32U);
     const auto addWord = [&destination](Index position, std::uint32_t addend) {
       while (addend != 0U) {
         if (position >= destination.size()) {
@@ -1868,7 +1870,7 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
   }
   std::vector<MomentEstimate> cumulantInputs;
   cumulantInputs.reserve(inputs.size());
-  const std::uint8_t conversionOrders = static_cast<std::uint8_t>(
+  const auto conversionOrders = static_cast<std::uint8_t>(
       internalRequest.orders | (selectedFourth ? 0x02U : 0U));
   for (Index inputIndex = 0U; inputIndex < inputs.size(); ++inputIndex) {
     if (coefficients.at(inputIndex) == 0.0 || allZero) {
@@ -1898,8 +1900,8 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
       if (!converted.has_value()) {
         converted.emplace(std::move(orderResult).value());
       } else {
-        auto merged = mergeMomentEstimates(converted.value(),
-                                           orderResult.value(), limits);
+        auto merged =
+            mergeMomentEstimates(*converted, orderResult.value(), limits);
         if (!merged) {
           return merged;
         }
@@ -1918,7 +1920,8 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
   if (selectedFourth) {
     MomentRequest pairRequest = request;
     pairRequest.orders = 0x02U;
-    SelectedTupleList pairTuples = fourthOrderPairTuples(request.selected);
+    const SelectedTupleList pairTuples =
+        fourthOrderPairTuples(request.selected);
     std::vector<std::span<const Index>> pairViews;
     pairViews.reserve(pairTuples.size());
     for (const auto& tuple : pairTuples) {
@@ -1956,8 +1959,7 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
     outputRequest.selected = {};
     outputRequest.contraction = std::nullopt;
   }
-  return cumulantsToCentralMoments(summedCumulants.value(), outputRequest,
-                                   limits);
+  return cumulantsToCentralMoments(*summedCumulants, outputRequest, limits);
 }
 
 } // namespace vss::math::statistics
