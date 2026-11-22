@@ -4,20 +4,22 @@
 #include <array>
 #include <cfenv>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <initializer_list>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <span>
-#include <vector>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Moments.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 using namespace vss::math;
 using namespace vss::math::statistics;
@@ -87,30 +89,32 @@ ExactFraction referenceMixedThird(const std::array<Scalar, 4U>& x,
   std::int64_t weightedX = 0;
   std::int64_t weightedY = 0;
   for (Index i = 0U; i < 4U; ++i) {
-    const std::int64_t w = static_cast<std::int64_t>(weights[i]);
+    const auto w = static_cast<std::int64_t>(weights.at(i));
     mass += w;
-    weightedX += w * static_cast<std::int64_t>(x[i]);
-    weightedY += w * static_cast<std::int64_t>(y[i]);
+    weightedX += w * static_cast<std::int64_t>(x.at(i));
+    weightedY += w * static_cast<std::int64_t>(y.at(i));
   }
   std::int64_t numerator = 0;
   for (Index i = 0U; i < 4U; ++i) {
-    const std::int64_t w = static_cast<std::int64_t>(weights[i]);
-    const std::int64_t dx = 10 * static_cast<std::int64_t>(x[i]) - weightedX;
-    const std::int64_t dy = 10 * static_cast<std::int64_t>(y[i]) - weightedY;
+    const auto w = static_cast<std::int64_t>(weights.at(i));
+    const std::int64_t dx =
+        std::int64_t{10} * static_cast<std::int64_t>(x.at(i)) - weightedX;
+    const std::int64_t dy =
+        std::int64_t{10} * static_cast<std::int64_t>(y.at(i)) - weightedY;
     numerator += w * dx * dx * dy;
   }
   std::int64_t e3 = 0;
   for (Index i = 0U; i < 4U; ++i) {
     for (Index j = i + 1U; j < 4U; ++j) {
       for (Index k = j + 1U; k < 4U; ++k) {
-        e3 += static_cast<std::int64_t>(weights[i]) *
-              static_cast<std::int64_t>(weights[j]) *
-              static_cast<std::int64_t>(weights[k]);
+        e3 += static_cast<std::int64_t>(weights.at(i)) *
+              static_cast<std::int64_t>(weights.at(j)) *
+              static_cast<std::int64_t>(weights.at(k));
       }
     }
   }
   VSS_CHECK(mass == 10);
-  return {.numerator = numerator, .denominator = 60 * e3};
+  return {.numerator = numerator, .denominator = std::int64_t{60} * e3};
 }
 
 void exactFiniteLawEnumeration() {
@@ -118,17 +122,17 @@ void exactFiniteLawEnumeration() {
   const std::array<Scalar, 3U> atoms{-1.0, 0.0, 2.0};
   const std::array<Scalar, 4U> rawWeights{1.0, 2.0, 3.0, 4.0};
   std::int64_t numeratorSum = 0;
-  constexpr std::int64_t denominator = 60 * 50;
+  constexpr std::int64_t denominator = std::int64_t{60} * 50;
   for (Index a = 0U; a < 3U; ++a) {
     for (Index b = 0U; b < 3U; ++b) {
       for (Index c = 0U; c < 3U; ++c) {
         for (Index d = 0U; d < 3U; ++d) {
-          const std::array<Scalar, 4U> u{atoms[a], atoms[b], atoms[c],
-                                         atoms[d]};
+          const std::array<Scalar, 4U> u{atoms.at(a), atoms.at(b), atoms.at(c),
+                                         atoms.at(d)};
           Matrix rows(4U, 2U);
           for (Index i = 0U; i < 4U; ++i) {
-            rows.at(i, 0U) = u[i];
-            rows.at(i, 1U) = u[i] * u[i];
+            rows.at(i, 0U) = u.at(i);
+            rows.at(i, 1U) = u.at(i) * u.at(i);
           }
           const auto result = unbiasedFixedWeightedThirdMoment(
               sample(rows, std::array<Index, 1U>{2U}), fixed(weights),
@@ -150,7 +154,8 @@ void exactFiniteLawEnumeration() {
       }
     }
   }
-  VSS_CHECK(numeratorSum * 27 == 46 * 81 * denominator);
+  VSS_CHECK(numeratorSum * std::int64_t{27} ==
+            std::int64_t{46} * 81 * denominator);
 }
 
 void fullRankMixedFiniteLawEnumeration() {
@@ -158,7 +163,7 @@ void fullRankMixedFiniteLawEnumeration() {
   const std::array<std::array<Scalar, 2U>, 3U> atoms{
       std::array<Scalar, 2U>{0.0, 0.0}, {1.0, 0.0}, {0.0, 2.0}};
   std::int64_t weightedNumerator = 0;
-  constexpr std::int64_t denominator = 60 * 50;
+  constexpr std::int64_t denominator = std::int64_t{60} * 50;
   for (Index a = 0U; a < 3U; ++a) {
     for (Index b = 0U; b < 3U; ++b) {
       for (Index c = 0U; c < 3U; ++c) {
@@ -169,12 +174,16 @@ void fullRankMixedFiniteLawEnumeration() {
           Matrix rows(4U, 2U);
           std::int64_t probabilityNumerator = 1;
           for (Index i = 0U; i < 4U; ++i) {
-            x[i] = atoms[state[i]][0U];
-            y[i] = atoms[state[i]][1U];
-            rows.at(i, 0U) = x[i];
-            rows.at(i, 1U) = y[i];
-            probabilityNumerator *=
-                state[i] == 0U ? 3 : (state[i] == 1U ? 2 : 1);
+            const auto stateIndex = state.at(i);
+            x.at(i) = atoms.at(stateIndex).at(0U);
+            y.at(i) = atoms.at(stateIndex).at(1U);
+            rows.at(i, 0U) = x.at(i);
+            rows.at(i, 1U) = y.at(i);
+            if (stateIndex == 0U) {
+              probabilityNumerator *= 3;
+            } else if (stateIndex == 1U) {
+              probabilityNumerator *= 2;
+            }
           }
           const auto result = unbiasedFixedWeightedThirdMoment(
               sample(rows, std::array<Index, 1U>{2U}), fixed(weights),
@@ -193,7 +202,8 @@ void fullRankMixedFiniteLawEnumeration() {
       }
     }
   }
-  VSS_CHECK(weightedNumerator * 27 == -1296 * denominator);
+  VSS_CHECK(weightedNumerator * std::int64_t{27} ==
+            std::int64_t{-1296} * denominator);
 }
 
 void layoutsAndContraction() {
@@ -203,10 +213,10 @@ void layoutsAndContraction() {
   const std::array<Index, 3U> permuted{0U, 1U, 0U};
   const std::array<std::span<const Index>, 2U> selections{
       std::span<const Index>{mixed}, std::span<const Index>{permuted}};
-  MomentRequest selected{.orders = 0x04U,
-                         .representation = MomentRepresentation::selected,
-                         .selected = selections,
-                         .contraction = std::nullopt};
+  const MomentRequest selected{.orders = 0x04U,
+                               .representation = MomentRepresentation::selected,
+                               .selected = selections,
+                               .contraction = std::nullopt};
   const auto picked =
       unbiasedFixedWeightedThirdMoment(sample(rows, std::array<Index, 1U>{2U}),
                                        fixed(weights), selected, ample());
@@ -216,10 +226,11 @@ void layoutsAndContraction() {
   close(picked.value().terms.view()[0U].values.at(0U),
         picked.value().terms.view()[0U].values.at(1U));
   const Matrix map = matrix({{2.0, -1.0}});
-  MomentRequest contracted{.orders = 0x04U,
-                           .representation = MomentRepresentation::contraction,
-                           .selected = {},
-                           .contraction = map.view()};
+  const MomentRequest contracted{.orders = 0x04U,
+                                 .representation =
+                                     MomentRepresentation::contraction,
+                                 .selected = {},
+                                 .contraction = map.view()};
   const auto mapped =
       unbiasedFixedWeightedThirdMoment(sample(rows, std::array<Index, 1U>{2U}),
                                        fixed(weights), contracted, ample());
