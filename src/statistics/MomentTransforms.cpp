@@ -2,8 +2,6 @@
 #include <array>
 #include <bit>
 #include <cmath>
-#include <cstddef>
-#include <cstdint>
 #include <detail/CompensatedSum.hpp>
 #include <limits>
 #include <new>
@@ -63,9 +61,7 @@ bool tupleRequested(const MomentRequest& request, Index order,
     return true;
   }
   return std::ranges::any_of(request.selected, [&](auto selected) {
-    return selected.size() == order &&
-           std::equal(selected.begin(), selected.end(), tuple.begin(),
-                      tuple.end());
+    return selected.size() == order && std::ranges::equal(selected, tuple);
   });
 }
 
@@ -319,8 +315,7 @@ Result<Scalar> termValue(const MomentEstimate& source, Index order,
     }
     for (Index position = 0U; position < values.size(); ++position) {
       const auto stored = flattened.subspan(position * order, order);
-      if (std::equal(stored.begin(), stored.end(), tuple.begin(),
-                     tuple.end())) {
+      if (std::ranges::equal(stored, tuple)) {
         return Result<Scalar>::success(values.at(position));
       }
     }
@@ -366,8 +361,7 @@ Result<Support> supportForTuple(const MomentEstimate& source,
   for (const auto& item : source.diagnostics.tuple_support.view()) {
     const auto coordinates = item.coordinates.view();
     if (coordinates.size() == tuple.size() &&
-        std::equal(coordinates.begin(), coordinates.end(), tuple.begin(),
-                   tuple.end())) {
+        std::ranges::equal(coordinates, tuple)) {
       if (recorded.has_value() && !supportEqual(*recorded, item.support)) {
         return fail<Support>(ErrorCode::InvalidDomain,
                              "source tuple has conflicting support records");

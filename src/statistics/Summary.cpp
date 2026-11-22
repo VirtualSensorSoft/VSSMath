@@ -264,7 +264,11 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
       frequencyMass += count;
       weight = static_cast<Scalar>(count);
     } else if (weights.rule != WeightRule::unweighted) {
-      weight = weights.rowWeights.value().at(row);
+      if (!weights.rowWeights.has_value()) {
+        return fail<Summary>(ErrorCode::InvalidDomain,
+                             "row-weighted summary has no row weights");
+      }
+      weight = weights.rowWeights->at(row);
       if (!std::isfinite(weight)) {
         return fail<Summary>(ErrorCode::NonFiniteInput,
                              "row weight is non-finite");
@@ -352,7 +356,11 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
       if (weights.rule == WeightRule::frequency) {
         weight = static_cast<Scalar>(weights.frequencyCounts[row]);
       } else if (weights.rule != WeightRule::unweighted) {
-        weight = weights.rowWeights.value().at(row);
+        if (!weights.rowWeights.has_value()) {
+          return fail<Summary>(ErrorCode::InvalidDomain,
+                               "row-weighted summary has no row weights");
+        }
+        weight = weights.rowWeights->at(row);
       }
       if (weight > 0.0) {
         const Scalar normalized = weight / maximumWeight;
@@ -422,7 +430,11 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
           count = weights.frequencyCounts[row];
           weight = static_cast<Scalar>(count);
         } else if (weights.rule != WeightRule::unweighted) {
-          weight = weights.rowWeights.value().at(row);
+          if (!weights.rowWeights.has_value()) {
+            return fail<Summary>(ErrorCode::InvalidDomain,
+                                 "row-weighted summary has no row weights");
+          }
+          weight = weights.rowWeights->at(row);
         }
         if (weight <= 0.0) {
           continue;
