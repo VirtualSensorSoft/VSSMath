@@ -20,7 +20,10 @@
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Order.hpp>
+#include <vss/math/statistics/Population.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 namespace {
 
@@ -460,11 +463,11 @@ void descriptiveSummaryCases() {
     checkNear(replicated.value().variance.at(0U), 2.0);
     checkNear(replicated.value().quantiles.at(0U, 0U), 1.0);
     VSS_CHECK(replicated.value().diagnostics.global.frequency_mass == 3U);
-    checkNear(replicated.value().diagnostics.global.effective_count.value(),
-              3.0);
-    checkNear(replicated.value()
-                  .diagnostics.global.normalized_weight_powers[1U]
-                  .value(),
+    const auto& diagnostics = replicated.value().diagnostics.global;
+    VSS_CHECK(diagnostics.effective_count.has_value());
+    checkNear(diagnostics.effective_count.value_or(0.0), 3.0);
+    VSS_CHECK(diagnostics.normalized_weight_powers[1U].has_value());
+    checkNear(diagnostics.normalized_weight_powers[1U].value_or(0.0),
               1.0 / 3.0);
   }
   const auto frequencyIid = vss::math::statistics::descriptiveSummary(
