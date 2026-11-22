@@ -11,7 +11,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
+#include <vss/math/statistics/Moments.hpp>
 
 namespace vss::math::statistics {
 namespace {
@@ -334,10 +338,15 @@ private:
   ExactFourth exact;
   exact.add(fourth, false);
   for (Index pairing = 0U; pairing < 3U; ++pairing) {
-    const Scalar left = pairing == 0U ? left0 : pairing == 1U ? left1 : left2;
-    const Scalar right = pairing == 0U   ? right0
-                         : pairing == 1U ? right1
-                                         : right2;
+    Scalar left = left2;
+    Scalar right = right2;
+    if (pairing == 0U) {
+      left = left0;
+      right = right0;
+    } else if (pairing == 1U) {
+      left = left1;
+      right = right1;
+    }
     exact.addProduct(left, right, forward);
   }
   if (!exact.rounded(value)) {
@@ -374,9 +383,9 @@ private:
       return false;
     }
     for (Index axis = 1U; axis < order; ++axis) {
-      if (tuple[axis] >= coordinateSupports.size() ||
+      if (tuple.at(axis) >= coordinateSupports.size() ||
           !supportEqual(coordinateSupports[tuple[0U]],
-                        coordinateSupports[tuple[axis]])) {
+                        coordinateSupports[tuple.at(axis)])) {
         return false;
       }
     }
@@ -389,7 +398,7 @@ private:
     }
     bool matches = true;
     for (Index axis = 0U; axis < order; ++axis) {
-      matches = matches && coordinates[axis] == tuple[axis];
+      matches = matches && coordinates[axis] == tuple.at(axis);
     }
     if (!matches) {
       continue;
@@ -412,20 +421,20 @@ private:
   std::array<Index, 4U> tuple{};
   if (layout == MomentRepresentation::component) {
     for (Index axis = 0U; axis < order; ++axis) {
-      tuple[axis] = ordinal;
+      tuple.at(axis) = ordinal;
     }
     return tuple;
   }
   if (layout == MomentRepresentation::dense) {
     for (Index axis = order; axis > 0U; --axis) {
-      tuple[axis - 1U] = ordinal % dimension;
+      tuple.at(axis - 1U) = ordinal % dimension;
       ordinal /= dimension;
     }
     return tuple;
   }
   for (Index axis = 0U; axis < order; ++axis) {
     const Index remaining = order - axis - 1U;
-    Index coordinate = axis == 0U ? 0U : tuple[axis - 1U];
+    Index coordinate = axis == 0U ? 0U : tuple.at(axis - 1U);
     for (; coordinate < dimension; ++coordinate) {
       Extent suffix = 0U;
       if (!chooseCount(dimension - coordinate + remaining - 1U, remaining,
@@ -437,7 +446,7 @@ private:
       }
       ordinal -= suffix;
     }
-    tuple[axis] = coordinate;
+    tuple.at(axis) = coordinate;
   }
   return tuple;
 }
@@ -506,9 +515,9 @@ private:
       Entry entry{.order = term.order, .coordinates = {}, .value = 0.0};
       if (term.layout == MomentRepresentation::selected) {
         for (Index axis = 0U; axis < term.order; ++axis) {
-          entry.coordinates[axis] =
+          entry.coordinates.at(axis) =
               term.flattened_tuples.view()[ordinal * term.order + axis];
-          if (entry.coordinates[axis] >= dimension) {
+          if (entry.coordinates.at(axis) >= dimension) {
             return false;
           }
         }
@@ -592,7 +601,7 @@ private:
                    "first cumulant requires the population mean");
   }
 
-  Extent shapeCount = source.observation_shape.view().size();
+  const Extent shapeCount = source.observation_shape.view().size();
   Extent estimatedBytes = 0U;
   if (!multiplySize(shapeCount, sizeof(Index), estimatedBytes) ||
       estimatedBytes > limits.bytes) {
@@ -768,6 +777,10 @@ private:
       if (order == 1U && !forward) {
         value = 0.0;
       } else if (forward && order == 1U) {
+        if (!source.population_mean.has_value()) {
+          return failure(ErrorCode::InvalidDomain,
+                         "first cumulant requires the population mean");
+        }
         value = source.population_mean->at(tuple[0U]);
       } else {
         const auto* sourceTerm = findEntry(entries, order, tuple);
@@ -803,8 +816,8 @@ private:
                              "a fourth-order pairing dependency is missing or "
                              "incompatible");
             }
-            leftValues[firstPair] = left->value;
-            rightValues[firstPair] = right->value;
+            leftValues.at(firstPair) = left->value;
+            rightValues.at(firstPair) = right->value;
             const auto product = MomentInterval::point(left->value) *
                                  MomentInterval::point(right->value);
             result = forward ? result - product : result + product;
