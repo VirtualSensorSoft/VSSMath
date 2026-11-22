@@ -113,7 +113,9 @@ void symmetricTwoPointRoundTrip() {
     VSS_CHECK(false);
     return;
   }
-  close(recovered.value().population_mean->at(0U), 4.0);
+  const auto recoveredPopulationMean =
+      recovered.value().population_mean.value_or(Vector{});
+  close(recoveredPopulationMean.at(0U), 4.0);
 
   auto cumulantsWithoutMean = cumulants.value();
   cumulantsWithoutMean.population_mean.reset();
@@ -125,14 +127,14 @@ void symmetricTwoPointRoundTrip() {
     VSS_CHECK(false);
     return;
   }
-  close(recoveredMean.value().population_mean->at(0U), 4.0);
+  const auto reconstructedMean =
+      recoveredMean.value().population_mean.value_or(Vector{});
+  close(reconstructedMean.at(0U), 4.0);
 
   auto conflicting = cumulants.value();
-  if (!conflicting.population_mean.has_value()) {
-    VSS_CHECK(false);
-    return;
-  }
-  conflicting.population_mean->at(0U) = 4.5;
+  VSS_CHECK(conflicting.population_mean.has_value());
+  const std::array<Scalar, 1U> conflictingMean{4.5};
+  conflicting.population_mean = Vector(conflictingMean);
   const auto mismatch = cumulantsToCentralMoments(
       conflicting, request(0x0fU, MomentRepresentation::dense), ample());
   VSS_CHECK(!mismatch && mismatch.status().code() == ErrorCode::InvalidDomain);
