@@ -1164,8 +1164,8 @@ bool checkedStorage(Extent outputValues, Extent outputIndices,
 }
 
 bool intervalCandidate(MomentInterval range, Scalar& value) {
-  const Scalar lower = range.lower.rounded();
-  const Scalar upper = range.upper.rounded();
+  const Scalar lower = range.lower().rounded();
+  const Scalar upper = range.upper().rounded();
   if (!std::isfinite(lower) || !std::isfinite(upper)) {
     return false;
   }
@@ -1240,7 +1240,7 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedThird(
   const Extent shapeItems = contracted ? 1U : sample.observation_shape.size();
   Extent outputValues = 0U;
   Extent outputIndices = 0U;
-  Extent outputRecords = 2U;
+  const Extent outputRecords = 2U;
   Extent workspaceValues = 0U;
   Extent workspaceRecords = 0U;
   Extent workspaceIndices = tupleItems;
@@ -1339,7 +1339,7 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedThird(
       shiftedSums[coordinate] = shiftedSums[coordinate] + w * shifted;
     }
   }
-  if (!(zero < mass.lower) || !(zero < e3.lower)) {
+  if (!(zero < mass.lower()) || !(zero < e3.lower())) {
     return fail<MomentEstimate>(
         ErrorCode::IllConditioned,
         "cannot certify a positive third-moment correction");
@@ -1369,20 +1369,20 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedThird(
         continue;
       }
       Index axis = 3U;
-      while (axis > 0U && tuple[axis - 1U] + 1U >= d) {
+      while (axis > 0U && tuple.at(axis - 1U) + 1U >= d) {
         --axis;
       }
       --axis;
-      ++tuple[axis];
+      ++tuple.at(axis);
       std::ranges::fill(std::span<Index>{tuple}.subspan(axis + 1U),
-                        tuple[axis]);
+                        tuple.at(axis));
     }
   } else {
     const Extent tupleDimension = contracted ? outD : d;
     for (Extent term = 0U; term < count; ++term) {
       Extent value = term;
       for (Index axis = 3U; axis > 0U; --axis) {
-        tuples[(term * 3U) + axis - 1U] = value % tupleDimension;
+        tuples.at((term * 3U) + axis - 1U) = value % tupleDimension;
         value /= tupleDimension;
       }
     }
@@ -1415,10 +1415,9 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedThird(
     }
     const MomentInterval w = MomentInterval::point(weight);
     for (Extent term = 0U; term < count; ++term) {
-      const Index* tuple = tuples.data() + (term * 3U);
       MomentInterval product = MomentInterval::point(1.0);
       for (Index axis = 0U; axis < 3U; ++axis) {
-        const Index coordinate = tuple[axis];
+        const Index coordinate = tuples.at((term * 3U) + axis);
         product =
             product * (contracted ? mapped[coordinate] : centered[coordinate]);
       }
