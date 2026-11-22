@@ -1584,6 +1584,578 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedThird(
                      .population_mean = std::move(populationMean)});
 }
 
+MomentInterval negateInterval(MomentInterval value) {
+  return {value.upper().negated(), value.lower().negated()};
+}
+
+std::optional<MomentInterval> divideByNonzero(MomentInterval numerator,
+                                              MomentInterval denominator) {
+  const BinaryEndpoint zero{};
+  if (zero < denominator.lower()) {
+    return numerator.divideByPositive(denominator);
+  }
+  if (denominator.upper() < zero) {
+    return negateInterval(numerator).divideByPositive(
+        negateInterval(denominator));
+  }
+  return std::nullopt;
+}
+
+Scalar magnitudeUpper(MomentInterval value) {
+  const Scalar lower = value.lower().rounded();
+  const Scalar upper = value.upper().rounded();
+  if (!std::isfinite(lower) || !std::isfinite(upper)) {
+    return std::numeric_limits<Scalar>::infinity();
+  }
+  const Scalar magnitude = std::max(std::abs(lower), std::abs(upper));
+  return magnitude == 0.0
+             ? 0.0
+             : std::nextafter(magnitude,
+                              std::numeric_limits<Scalar>::infinity());
+}
+
+Scalar addUpper(Scalar left, Scalar right) {
+  const Scalar sum = left + right;
+  return std::isfinite(sum)
+             ? std::nextafter(sum, std::numeric_limits<Scalar>::infinity())
+             : sum;
+}
+
+Scalar divideUpper(Scalar numerator, Scalar denominator) {
+  const Scalar quotient = numerator / denominator;
+  return std::isfinite(quotient)
+             ? std::nextafter(quotient, std::numeric_limits<Scalar>::infinity())
+             : quotient;
+}
+
+std::optional<Scalar> magnitudeLower(MomentInterval value) {
+  const BinaryEndpoint zero{};
+  Scalar magnitude = 0.0;
+  if (zero < value.lower()) {
+    magnitude = value.lower().rounded();
+  } else if (value.upper() < zero) {
+    magnitude = -value.upper().rounded();
+  } else {
+    return std::nullopt;
+  }
+  if (!std::isfinite(magnitude) || magnitude <= 0.0) {
+    return std::nullopt;
+  }
+  return std::nextafter(magnitude, 0.0);
+}
+
+Result<MomentEstimate> estimateUnbiasedFixedWeightedFourth(
+    const SampleView& sample, const WeightSpec& fixedWeights,
+    const MomentRequest& request, Limits limits) {
+  if (!MomentInterval::supportsCurrentRounding()) {
+    return fail<MomentEstimate>(
+        ErrorCode::IllConditioned,
+        "fixed-weight fourth moment requires IEC 60559 binary arithmetic in "
+        "round-to-nearest mode");
+  }
+  auto dimension = validateSample(sample);
+  if (!dimension) {
+    return fail<MomentEstimate>(dimension.status().code(),
+                                dimension.status().message());
+  }
+  const Extent d = dimension.value();
+  if (fixedWeights.rule != WeightRule::fixed_iid ||
+      !fixedWeights.rowWeights.has_value() ||
+      fixedWeights.componentWeights.has_value() ||
+      !fixedWeights.frequencyCounts.empty()) {
+    return fail<MomentEstimate>(
+        ErrorCode::InvalidDomain,
+        "unbiased fourth moment requires fixed-IID row weights only");
+  }
+  if (fixedWeights.rowWeights->size() != sample.rows.rows()) {
+    return fail<MomentEstimate>(ErrorCode::DimensionMismatch,
+                                "fixed-IID weights must match sample rows");
+  }
+  if (request.orders != 0x08U) {
+    return fail<MomentEstimate>(
+        ErrorCode::InvalidDomain,
+        "unbiased fourth moment requires order four only");
+  }
+  const Status requestStatus = validateRequest(request, d, fixedWeights);
+  if (!requestStatus.ok()) {
+    return fail<MomentEstimate>(requestStatus.code(), requestStatus.message());
+  }
+
+  const bool contracted =
+      request.representation == MomentRepresentation::contraction;
+  const Extent outD = contracted ? request.contraction->rows() : d;
+  Extent planCount = 0U;
+  Extent totalValues = 0U;
+  Extent tupleItems = 0U;
+  const auto plans =
+      makePlans(request, d, outD, planCount, totalValues, tupleItems);
+  if (!plans) {
+    return fail<MomentEstimate>(plans.status().code(),
+                                plans.status().message());
+  }
+  if (planCount != 1U || plans.value()[0U].order != 4U) {
+    return fail<MomentEstimate>(ErrorCode::InvalidDomain,
+                                "fixed-weight fourth-moment request must "
+                                "produce one fourth-order term");
+  }
+  const Extent count = plans.value()[0U].count;
+  Extent selectedItems = 0U;
+  if (request.representation == MomentRepresentation::selected) {
+    for (const auto tuple : request.selected) {
+      if (!checkedAdd(selectedItems, tuple.size(), selectedItems)) {
+        return fail<MomentEstimate>(ErrorCode::SizeOverflow,
+                                    "selected tuple storage overflows");
+      }
+    }
+  }
+  const Extent shapeItems = contracted ? 1U : sample.observation_shape.size();
+  Extent outputValues = 0U;
+  Extent outputIndices = 0U;
+  const Extent outputRecords = 2U;
+  Extent workspaceValues = 0U;
+  Extent workspaceIndices = tupleItems;
+  Extent workspaceRecords = 1U;
+  if (!checkedMultiply(count, 2U, outputValues) ||
+      !checkedAdd(outputValues, outD, outputValues) ||
+      !checkedAdd(shapeItems, selectedItems, outputIndices) ||
+      !checkedMultiply(d, 3U, workspaceValues) ||
+      !checkedAdd(workspaceValues, contracted ? outD : 0U, workspaceValues) ||
+      !checkedAdd(workspaceValues, outD, workspaceValues) ||
+      !checkedAdd(workspaceValues, count, workspaceValues) ||
+      !checkedAdd(workspaceValues, 18U, workspaceValues) ||
+      !checkedAdd(workspaceIndices, selectedItems, workspaceIndices)) {
+    return fail<MomentEstimate>(
+        ErrorCode::SizeOverflow,
+        "fixed-weight fourth-moment storage accounting overflows");
+  }
+  if (!checkedStorage(outputValues, outputIndices, outputRecords,
+                      workspaceValues, workspaceIndices, workspaceRecords,
+                      limits)) {
+    return fail<MomentEstimate>(ErrorCode::ResourceLimit,
+                                "fixed-weight fourth-moment output/workspace "
+                                "exceeds configured limits");
+  }
+
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    const Scalar weight = fixedWeights.rowWeights->at(row);
+    if (!std::isfinite(weight)) {
+      return fail<MomentEstimate>(ErrorCode::NonFiniteInput,
+                                  "fixed-IID weight is not finite");
+    }
+    if (weight < 0.0) {
+      return fail<MomentEstimate>(ErrorCode::InvalidDomain,
+                                  "fixed-IID weights must be nonnegative");
+    }
+    for (Index coordinate = 0U; coordinate < d; ++coordinate) {
+      if (!std::isfinite(sample.rows.at(row, coordinate))) {
+        return fail<MomentEstimate>(
+            ErrorCode::NonFiniteInput,
+            "fixed-weight fourth moment requires finite complete rows");
+      }
+    }
+  }
+  if (contracted) {
+    for (Index row = 0U; row < outD; ++row) {
+      for (Index column = 0U; column < d; ++column) {
+        if (!std::isfinite(request.contraction->at(row, column))) {
+          return fail<MomentEstimate>(ErrorCode::NonFiniteInput,
+                                      "contraction map is not finite");
+        }
+      }
+    }
+  }
+
+  Index positive = 0U;
+  Index originRow = 0U;
+  Scalar maximumWeight = 0.0;
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    const Scalar weight = fixedWeights.rowWeights->at(row);
+    if (weight > 0.0) {
+      ++positive;
+      if (weight > maximumWeight) {
+        maximumWeight = weight;
+        originRow = row;
+      }
+    }
+  }
+  if (positive < 4U) {
+    return fail<MomentEstimate>(
+        ErrorCode::InsufficientSamples,
+        "fixed-weight fourth moment requires at least four positive weights");
+  }
+
+  MomentInterval mass{};
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    mass = mass + MomentInterval::point(fixedWeights.rowWeights->at(row));
+  }
+  const BinaryEndpoint zero{};
+  if (!(zero < mass.lower())) {
+    return fail<MomentEstimate>(ErrorCode::IllConditioned,
+                                "cannot certify positive fixed-weight mass");
+  }
+  std::array<MomentInterval, 3U> normalizedPowers{};
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    const Scalar weight = fixedWeights.rowWeights->at(row);
+    if (weight == 0.0) {
+      continue;
+    }
+    const auto p = MomentInterval::point(weight).divideByPositive(mass);
+    normalizedPowers[0U] = normalizedPowers[0U] + p * p;
+    normalizedPowers[1U] = normalizedPowers[1U] + p * p * p;
+    normalizedPowers[2U] = normalizedPowers[2U] + p * p * p * p;
+  }
+  const auto& s2 = normalizedPowers[0U];
+  const auto& s3 = normalizedPowers[1U];
+  const auto& s4 = normalizedPowers[2U];
+  const MomentInterval one = MomentInterval::point(1.0);
+  const MomentInterval a = one - MomentInterval::point(4.0) * s2 +
+                           MomentInterval::point(6.0) * s3 -
+                           MomentInterval::point(3.0) * s4;
+  // Q is the average of its three covariance pairings.
+  const MomentInterval b =
+      MomentInterval::point(6.0) * s2 - MomentInterval::point(9.0) * s2 * s2 -
+      MomentInterval::point(6.0) * s3 + MomentInterval::point(9.0) * s4;
+  const MomentInterval c = s2 - MomentInterval::point(2.0) * s3 + s4;
+  const MomentInterval e = one - MomentInterval::point(3.0) * s2 +
+                           MomentInterval::point(3.0) * s2 * s2 +
+                           MomentInterval::point(2.0) * s3 -
+                           MomentInterval::point(3.0) * s4;
+  const Scalar matrixScale = std::max({magnitudeUpper(a), magnitudeUpper(b),
+                                       magnitudeUpper(c), magnitudeUpper(e)});
+  if (!std::isfinite(matrixScale) || matrixScale <= 0.0) {
+    return fail<MomentEstimate>(
+        ErrorCode::IllConditioned,
+        "fourth-moment correction matrix is uncertifiable");
+  }
+  const auto scale = MomentInterval::point(matrixScale);
+  MomentInterval scaledA = a.divideByPositive(scale);
+  MomentInterval scaledB = b.divideByPositive(scale);
+  MomentInterval scaledC = c.divideByPositive(scale);
+  MomentInterval scaledD = e.divideByPositive(scale);
+  const auto determinant = scaledA * scaledD - scaledB * scaledC;
+  const auto determinantMagnitude = magnitudeLower(determinant);
+  if (!determinantMagnitude.has_value()) {
+    return fail<MomentEstimate>(
+        ErrorCode::IllConditioned,
+        "fourth-moment correction determinant includes zero");
+  }
+  const Scalar normA =
+      std::max(addUpper(magnitudeUpper(scaledA), magnitudeUpper(scaledB)),
+               addUpper(magnitudeUpper(scaledC), magnitudeUpper(scaledD)));
+  const Scalar inverseNumerator =
+      std::max(addUpper(magnitudeUpper(scaledD), magnitudeUpper(scaledB)),
+               addUpper(magnitudeUpper(scaledC), magnitudeUpper(scaledA)));
+  const Scalar normInverse =
+      divideUpper(inverseNumerator, *determinantMagnitude);
+  const Scaled denominator = multiply(scaled(normA), scaled(normInverse));
+  const Scalar denominatorUpper =
+      denominator.fraction == 0.0
+          ? 0.0
+          : std::scalbn(std::nextafter(denominator.fraction,
+                                       std::numeric_limits<Scalar>::infinity()),
+                        denominator.exponent);
+  const Scalar reciprocalCondition =
+      std::isfinite(denominatorUpper) && denominatorUpper > 0.0
+          ? std::nextafter(1.0 / denominatorUpper, 0.0)
+          : 0.0;
+  if (reciprocalCondition < 64.0 * std::numeric_limits<Scalar>::epsilon()) {
+    return fail<MomentEstimate>(ErrorCode::IllConditioned,
+                                "fourth-moment correction system is below its "
+                                "reciprocal-condition threshold");
+  }
+
+  std::vector<MomentInterval> shiftedSums(d);
+  for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    const Scalar weight = fixedWeights.rowWeights->at(row);
+    if (weight == 0.0) {
+      continue;
+    }
+    for (Index coordinate = 0U; coordinate < d; ++coordinate) {
+      const auto shifted =
+          MomentInterval::point(sample.rows.at(row, coordinate)) -
+          MomentInterval::point(sample.rows.at(originRow, coordinate));
+      shiftedSums[coordinate] =
+          shiftedSums[coordinate] + MomentInterval::point(weight) * shifted;
+    }
+  }
+  std::vector<MomentInterval> shiftedMean(d);
+  for (Index coordinate = 0U; coordinate < d; ++coordinate) {
+    shiftedMean[coordinate] = shiftedSums[coordinate].divideByPositive(mass);
+  }
+
+  std::vector<Index> tuples(tupleItems, 0U);
+  if (request.representation == MomentRepresentation::component) {
+    for (Extent term = 0U; term < count; ++term) {
+      std::ranges::fill(std::span<Index>{tuples}.subspan(term * 4U, 4U), term);
+    }
+  } else if (request.representation == MomentRepresentation::selected) {
+    Extent cursor = 0U;
+    for (const auto tuple : request.selected) {
+      std::ranges::copy(tuple,
+                        std::span<Index>{tuples}.subspan(cursor, 4U).begin());
+      cursor += 4U;
+    }
+  } else if (request.representation == MomentRepresentation::packed) {
+    std::array<Index, 4U> tuple{};
+    for (Extent term = 0U; term < count; ++term) {
+      std::ranges::copy(
+          tuple, std::span<Index>{tuples}.subspan(term * 4U, 4U).begin());
+      if (term + 1U == count) {
+        continue;
+      }
+      Index axis = 4U;
+      while (axis > 0U && tuple.at(axis - 1U) + 1U >= d) {
+        --axis;
+      }
+      --axis;
+      ++tuple.at(axis);
+      std::ranges::fill(std::span<Index>{tuple}.subspan(axis + 1U),
+                        tuple.at(axis));
+    }
+  } else {
+    const Extent tupleDimension = contracted ? outD : d;
+    for (Extent term = 0U; term < count; ++term) {
+      Extent value = term;
+      for (Index axis = 4U; axis > 0U; --axis) {
+        tuples.at((term * 4U) + axis - 1U) = value % tupleDimension;
+        value /= tupleDimension;
+      }
+    }
+  }
+
+  std::vector<MomentInterval> centered(d);
+  std::vector<MomentInterval> mapped(contracted ? outD : 0U);
+  std::vector<Scalar> values(count, 0.0);
+  Scalar maximumError = 0.0;
+  for (Extent term = 0U; term < count; ++term) {
+    const std::array<Index, 4U> tuple{
+        tuples.at(term * 4U), tuples.at(term * 4U + 1U),
+        tuples.at(term * 4U + 2U), tuples.at(term * 4U + 3U)};
+    MomentInterval fourthNumerator{};
+    std::array<MomentInterval, 6U> pairNumerators{};
+    for (Index row = 0U; row < sample.rows.rows(); ++row) {
+      const Scalar weight = fixedWeights.rowWeights->at(row);
+      if (weight == 0.0) {
+        continue;
+      }
+      for (Index coordinate = 0U; coordinate < d; ++coordinate) {
+        centered[coordinate] =
+            MomentInterval::point(sample.rows.at(row, coordinate)) -
+            MomentInterval::point(sample.rows.at(originRow, coordinate)) -
+            shiftedMean[coordinate];
+      }
+      if (contracted) {
+        for (Index output = 0U; output < outD; ++output) {
+          MomentInterval sum{};
+          for (Index coordinate = 0U; coordinate < d; ++coordinate) {
+            sum = sum + MomentInterval::point(
+                            request.contraction->at(output, coordinate)) *
+                            centered[coordinate];
+          }
+          mapped[output] = sum;
+        }
+      }
+      const auto coordinate = [&](Index index) -> MomentInterval {
+        return contracted ? mapped[index] : centered[index];
+      };
+      const auto x0 = coordinate(tuple[0U]);
+      const auto x1 = coordinate(tuple[1U]);
+      const auto x2 = coordinate(tuple[2U]);
+      const auto x3 = coordinate(tuple[3U]);
+      const auto weightInterval = MomentInterval::point(weight);
+      fourthNumerator = fourthNumerator + weightInterval * x0 * x1 * x2 * x3;
+      pairNumerators[0U] = pairNumerators[0U] + weightInterval * x0 * x1;
+      pairNumerators[1U] = pairNumerators[1U] + weightInterval * x0 * x2;
+      pairNumerators[2U] = pairNumerators[2U] + weightInterval * x0 * x3;
+      pairNumerators[3U] = pairNumerators[3U] + weightInterval * x1 * x2;
+      pairNumerators[4U] = pairNumerators[4U] + weightInterval * x1 * x3;
+      pairNumerators[5U] = pairNumerators[5U] + weightInterval * x2 * x3;
+    }
+    const auto sampleFourth = fourthNumerator.divideByPositive(mass);
+    std::array<MomentInterval, 6U> samplePairs{};
+    for (Index pair = 0U; pair < samplePairs.size(); ++pair) {
+      samplePairs[pair] = pairNumerators[pair].divideByPositive(mass);
+    }
+    const auto q =
+        (samplePairs[0U] * samplePairs[5U] + samplePairs[1U] * samplePairs[4U] +
+         samplePairs[2U] * samplePairs[3U])
+            .divideByPositive(MomentInterval::point(3.0));
+
+    bool swapRows = false;
+    Scalar pivotA = 0.0;
+    Scalar pivotC = 0.0;
+    if (!intervalCandidate(scaledA, pivotA) ||
+        !intervalCandidate(scaledC, pivotC)) {
+      return fail<MomentEstimate>(
+          ErrorCode::IllConditioned,
+          "cannot certify fourth-moment pivot selection");
+    }
+    swapRows = std::abs(pivotA) < std::abs(pivotC);
+    auto rowA = swapRows ? scaledC : scaledA;
+    auto rowB = swapRows ? scaledD : scaledB;
+    auto rowC = swapRows ? scaledA : scaledC;
+    auto rowD = swapRows ? scaledB : scaledD;
+    auto rhsA = (swapRows ? q : sampleFourth).divideByPositive(scale);
+    auto rhsB = (swapRows ? sampleFourth : q).divideByPositive(scale);
+    const auto multiplier = divideByNonzero(rowC, rowA);
+    if (!multiplier.has_value()) {
+      return fail<MomentEstimate>(ErrorCode::IllConditioned,
+                                  "fourth-moment first pivot contains zero");
+    }
+    const auto secondPivot = rowD - *multiplier * rowB;
+    const auto secondRhs = rhsB - *multiplier * rhsA;
+    const auto secondSolution = divideByNonzero(secondRhs, secondPivot);
+    if (!secondSolution.has_value()) {
+      return fail<MomentEstimate>(ErrorCode::IllConditioned,
+                                  "fourth-moment second pivot contains zero");
+    }
+    const auto firstSolution =
+        divideByNonzero(rhsA - rowB * *secondSolution, rowA);
+    if (!firstSolution.has_value()) {
+      return fail<MomentEstimate>(ErrorCode::IllConditioned,
+                                  "fourth-moment solution pivot contains zero");
+    }
+    Scalar error = 0.0;
+    const MomentCertificate certificate =
+        detail::certifyMoment(*firstSolution, values[term], error);
+    if (certificate == MomentCertificate::overflow) {
+      return fail<MomentEstimate>(
+          ErrorCode::NonFiniteResult,
+          "fixed-weight fourth-moment result is outside "
+          "the finite Scalar range");
+    }
+    if (certificate != MomentCertificate::accepted) {
+      return fail<MomentEstimate>(ErrorCode::IllConditioned,
+                                  "fixed-weight fourth-moment result cannot "
+                                  "meet its forward-error bound");
+    }
+    maximumError = std::max(maximumError, error);
+  }
+
+  std::vector<Index> flattenedValues;
+  Array<Index> flattened;
+  if (request.representation == MomentRepresentation::selected) {
+    flattenedValues = tuples;
+    auto copy = Array<Index>::copy(flattenedValues, limits);
+    if (!copy) {
+      return fail<MomentEstimate>(copy.status().code(),
+                                  copy.status().message());
+    }
+    flattened = std::move(copy).value();
+  }
+  std::vector<MomentTerm> terms;
+  terms.push_back(
+      MomentTerm{.order = 4U,
+                 .layout = contracted ? MomentRepresentation::dense
+                                      : request.representation,
+                 .flattened_tuples = std::move(flattened),
+                 .values = Vector(std::span<const Scalar>{values})});
+  auto ownedTerms = Array<MomentTerm>::copy(terms, limits);
+  if (!ownedTerms) {
+    return fail<MomentEstimate>(ownedTerms.status().code(),
+                                ownedTerms.status().message());
+  }
+  std::vector<Scalar> outputMean(outD, 0.0);
+  bool outputMeanAvailable = true;
+  for (Index coordinate = 0U; coordinate < (contracted ? outD : d);
+       ++coordinate) {
+    MomentInterval meanRange;
+    if (contracted) {
+      for (Index input = 0U; input < d; ++input) {
+        const auto shifted =
+            MomentInterval::point(sample.rows.at(originRow, input)) +
+            shiftedMean[input];
+        meanRange =
+            meanRange +
+            MomentInterval::point(request.contraction->at(coordinate, input)) *
+                shifted;
+      }
+    } else {
+      meanRange = MomentInterval::point(sample.rows.at(originRow, coordinate)) +
+                  shiftedMean[coordinate];
+    }
+    if (!intervalCandidate(meanRange, outputMean[coordinate])) {
+      outputMeanAvailable = false;
+      break;
+    }
+  }
+  auto shape = Array<Index>::copy(
+      contracted ? std::span<const Index>{&outD, 1U}
+                 : std::span<const Index>{sample.observation_shape},
+      limits);
+  if (!shape) {
+    return fail<MomentEstimate>(shape.status().code(),
+                                shape.status().message());
+  }
+  std::array<std::optional<Scalar>, 3U> powers{1.0, std::nullopt, std::nullopt};
+  Scalar squaredPower = 0.0;
+  Scalar cubedPower = 0.0;
+  if (intervalCandidate(s2, squaredPower)) {
+    powers[1U] = squaredPower;
+  }
+  if (intervalCandidate(s3, cubedPower)) {
+    powers[2U] = cubedPower;
+  }
+  std::optional<Scalar> effectiveCount;
+  if (squaredPower > 0.0) {
+    const Scalar reciprocal = 1.0 / squaredPower;
+    if (std::isfinite(reciprocal)) {
+      effectiveCount = reciprocal;
+    }
+  }
+  Scalar reportedMassValue = 0.0;
+  std::optional<Scalar> reportedMass;
+  if (intervalCandidate(mass, reportedMassValue)) {
+    reportedMass = reportedMassValue;
+  }
+  const Support support{.input = sample.rows.rows(),
+                        .valid = sample.rows.rows(),
+                        .positive = positive,
+                        .frequency_mass = std::nullopt,
+                        .weight_mass = reportedMass,
+                        .normalized_weight_powers = powers,
+                        .effective_count = effectiveCount,
+                        .degrees_of_freedom = std::nullopt,
+                        .squared_weight_mass = std::nullopt};
+  auto coordinateSupport = Array<Support>::copy({}, limits);
+  if (!coordinateSupport) {
+    return fail<MomentEstimate>(coordinateSupport.status().code(),
+                                coordinateSupport.status().message());
+  }
+  auto tupleSupport = Array<TupleSupport>::copy({}, limits);
+  if (!tupleSupport) {
+    return fail<MomentEstimate>(tupleSupport.status().code(),
+                                tupleSupport.status().message());
+  }
+  EstimatorDiagnostics diagnostics{
+      .estimand = Estimand::observed,
+      .weight = WeightRule::fixed_iid,
+      .center = CenterRule::estimated,
+      .approximation = Approximation::exact,
+      .global = support,
+      .coordinate_support = std::move(coordinateSupport).value(),
+      .tuple_support = std::move(tupleSupport).value(),
+      .reciprocal_condition = reciprocalCondition,
+      .numerical_error = maximumError,
+      .sampling_error = std::nullopt,
+      .rank = std::nullopt,
+      .algorithm =
+          "fixed_iid_weighted_fourth_central_moment_scaled_pivoted_2x2",
+      .premises =
+          "complete IID rows with deterministic nonnegative weights fixed "
+          "independently of observations; no sampling covariance estimated",
+      .warnings = {}};
+  std::optional<Vector> populationMean;
+  if (outputMeanAvailable) {
+    populationMean.emplace(std::span<const Scalar>{outputMean});
+  }
+  return Result<MomentEstimate>::success(
+      MomentEstimate{.observation_shape = std::move(shape).value(),
+                     .terms = std::move(ownedTerms).value(),
+                     .diagnostics = std::move(diagnostics),
+                     .population_mean = std::move(populationMean)});
+}
+
 } // namespace
 
 Result<MomentEstimate> estimateRawMoments(const SampleView& sample,
@@ -1607,6 +2179,14 @@ unbiasedFixedWeightedThirdMoment(const SampleView& sample,
                                  const MomentRequest& request, Limits limits) {
   return estimateUnbiasedFixedWeightedThird(sample, fixedWeights, request,
                                             limits);
+}
+
+Result<MomentEstimate>
+unbiasedFixedWeightedFourthMoment(const SampleView& sample,
+                                  const WeightSpec& fixedWeights,
+                                  const MomentRequest& request, Limits limits) {
+  return estimateUnbiasedFixedWeightedFourth(sample, fixedWeights, request,
+                                             limits);
 }
 
 } // namespace vss::math::statistics

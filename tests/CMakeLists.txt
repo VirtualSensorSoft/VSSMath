@@ -97,6 +97,9 @@ vss_math_add_algorithm_test(test_population_moments
 vss_math_add_algorithm_test(test_fixed_weighted_third_moment
                              algorithms/test_fixed_weighted_third_moment.cpp
                              math.fixed_weighted_third_moment)
+vss_math_add_algorithm_test(test_fixed_weighted_fourth_moment
+                             algorithms/test_fixed_weighted_fourth_moment.cpp
+                             math.fixed_weighted_fourth_moment)
 vss_math_add_algorithm_test(test_chi_square algorithms/test_chi_square.cpp
                              math.probability PRIVATE_DETAIL)
 vss_math_add_test(test_error_precedence unit/test_error_precedence.cpp

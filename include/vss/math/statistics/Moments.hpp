@@ -122,6 +122,27 @@ unbiasedFixedWeightedThirdMoment(const SampleView& sample,
                                  const WeightSpec& fixedWeights,
                                  const MomentRequest& request, Limits limits);
 
+/// @brief Estimates an unbiased order-four central moment tensor using fixed
+///        row weights independent of IID observations.
+/// @param sample Complete finite observations, one observation per row.
+/// @param fixedWeights A `fixed_iid` specification with one nonnegative weight
+///        per row and at least four positive weights.
+/// @param request Exactly the order-four bit and one supported moment layout.
+/// @param limits Maximum output and simultaneously required workspace storage.
+/// @return The corrected fourth central moment tensor, or a typed validation,
+///         resource, or numerical-certification error.
+/// @details Solves the scaled two-by-two expectation system for the weighted
+///          empirical fourth central moment and the mean of the three
+///          covariance pairings of the empirical second central moment. The
+///          result is only the first solution coordinate. All requested
+///          entries share one weighted center and row support. Fixed-IID
+///          assumptions are supplied by the caller and cannot be inferred
+///          from numeric weights. No estimator covariance is estimated.
+[[nodiscard]] Result<MomentEstimate>
+unbiasedFixedWeightedFourthMoment(const SampleView& sample,
+                                  const WeightSpec& fixedWeights,
+                                  const MomentRequest& request, Limits limits);
+
 } // namespace vss::math::statistics
 
 #endif // VSS_MATH_STATISTICS_MOMENTS_HPP
