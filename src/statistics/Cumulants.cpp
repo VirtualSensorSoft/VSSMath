@@ -1883,7 +1883,8 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
       continue;
     }
 
-    std::optional<MomentEstimate> converted;
+    auto converted = failure(ErrorCode::InvalidDomain,
+                             "weighted sum has no requested cumulant orders");
     for (Index order = 1U; order <= 4U; ++order) {
       if ((conversionOrders & (1U << (order - 1U))) == 0U) {
         continue;
@@ -1897,26 +1898,25 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
             orderResult.status().code(),
             std::string(orderResult.status().message()));
       }
-      if (converted.has_value()) {
+      if (converted) {
         auto merged = mergeMomentEstimates(converted.value(),
                                            orderResult.value(), limits);
         if (!merged) {
           return merged;
         }
-        converted.emplace(std::move(merged).value());
+        converted = std::move(merged);
       } else {
-        converted.emplace(std::move(orderResult).value());
+        converted = std::move(orderResult);
       }
     }
-    if (converted.has_value()) {
-      cumulantInputs.push_back(std::move(converted).value());
-    } else {
-      return failure(ErrorCode::InvalidDomain,
-                     "weighted sum has no requested cumulant orders");
+    if (!converted) {
+      return converted;
     }
+    cumulantInputs.push_back(std::move(converted).value());
   }
 
-  std::optional<MomentEstimate> summedCumulants;
+  auto summedCumulants =
+      failure(ErrorCode::InvalidDomain, "weighted sum produced no cumulants");
   if (selectedFourth) {
     MomentRequest pairRequest = request;
     pairRequest.orders = 0x02U;
@@ -1943,14 +1943,14 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
     if (!combined) {
       return combined;
     }
-    summedCumulants.emplace(std::move(combined).value());
+    summedCumulants = std::move(combined);
   } else {
     auto sum = independentCumulantSum(cumulantInputs, coefficients,
                                       internalRequest, limits);
     if (!sum) {
       return sum;
     }
-    summedCumulants.emplace(std::move(sum).value());
+    summedCumulants = std::move(sum);
   }
 
   MomentRequest outputRequest = request;
@@ -1959,9 +1959,8 @@ Result<MomentEstimate> weightedSum(ConstVectorView coefficients,
     outputRequest.selected = {};
     outputRequest.contraction = std::nullopt;
   }
-  if (!summedCumulants.has_value()) {
-    return failure(ErrorCode::InvalidDomain,
-                   "weighted sum produced no cumulants");
+  if (!summedCumulants) {
+    return summedCumulants;
   }
   return cumulantsToCentralMoments(summedCumulants.value(), outputRequest,
                                    limits);
