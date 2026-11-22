@@ -663,6 +663,22 @@ int main() {
       weightedSample, fixedWeights, Limits{16U, 1024U, 0U});
   const auto meanSpread = statistics::weightedMeanCovariance(
       weightedSample, fixedWeights, Limits{16U, 1024U, 0U});
+  Matrix thirdMomentRows(3U, 1U);
+  thirdMomentRows.at(0U, 0U) = 0.0;
+  thirdMomentRows.at(1U, 0U) = 0.0;
+  thirdMomentRows.at(2U, 0U) = 3.0;
+  const Vector thirdMomentWeights{std::array<Scalar, 3U>{1.0, 1.0, 1.0}};
+  const statistics::WeightSpec fixedThirdMomentWeights{
+      WeightRule::fixed_iid, thirdMomentWeights.view(), std::nullopt, {}};
+  const SampleView thirdMomentSample{thirdMomentRows.view(), {}, {}};
+  const statistics::MomentRequest thirdMomentRequest{
+      .orders = 0x04U,
+      .representation = statistics::MomentRepresentation::dense,
+      .selected = {},
+      .contraction = std::nullopt};
+  const auto unbiasedThirdMoment = statistics::unbiasedFixedWeightedThirdMoment(
+      thirdMomentSample, fixedThirdMomentWeights, thirdMomentRequest,
+      Limits{64U, 4096U, 0U});
   const std::array<std::uint64_t, 2U> frequencyCounts{1U, 2U};
   const auto frequencySpread = statistics::frequencyWeightedCovariance(
       weightedSample, frequencyCounts, statistics::VarianceMode::iid_sample,
@@ -681,6 +697,10 @@ int main() {
                        6.0) < 1.0e-12 &&
               weightedAverage.hasValue() && weightedSpread.hasValue() &&
               unbiasedSpread.hasValue() && meanSpread.hasValue() &&
+              unbiasedThirdMoment.hasValue() &&
+              std::abs(
+                  unbiasedThirdMoment.value().terms.view()[0U].values.at(0U) -
+                  9.0) < 1.0e-12 &&
               frequencySpread.hasValue() && precisionAverage.hasValue() &&
               weightedAverage.value().value.at(0U) == 2.0 &&
               weightedSpread.value().value.at(0U, 0U) == 2.0 &&

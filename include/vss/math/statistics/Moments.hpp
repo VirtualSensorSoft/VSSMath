@@ -53,7 +53,7 @@ struct MomentTerm final {
   Vector values;
 };
 
-/// @brief Owns requested empirical moments with support and center metadata.
+/// @brief Owns requested moment estimates with support and center metadata.
 struct MomentEstimate final {
   /// @brief Shape of each original observation; empty denotes a scalar.
   Array<Index> observation_shape;
@@ -101,6 +101,26 @@ estimateRawMoments(const SampleView& sample, const WeightSpec& weights,
 estimateCentralMoments(const SampleView& sample, const WeightSpec& weights,
                        const CenterSpec& center, const MomentRequest& request,
                        Limits limits);
+
+/// @brief Estimates an unbiased order-three central moment tensor using fixed
+///        row weights independent of IID observations.
+/// @param sample Complete finite observations, one observation per row.
+/// @param fixedWeights A `fixed_iid` specification with one nonnegative weight
+///        per row and at least three positive weights.
+/// @param request Exactly the order-three bit and one supported moment layout.
+/// @param limits Maximum output and simultaneously required workspace storage.
+/// @return The corrected moment tensor, or a typed validation, resource, or
+///         numerical-certification error.
+/// @details Applies the correction `H W^2/(6 e_3)` using the positive
+///          elementary symmetric sum of raw weights. All requested entries
+///          share one weighted center and row support. Optional linear
+///          contractions are applied before forming the central tensor. The
+///          fixed-IID premise is supplied by the caller and cannot be inferred
+///          from numeric weights. No sampling covariance is estimated.
+[[nodiscard]] Result<MomentEstimate>
+unbiasedFixedWeightedThirdMoment(const SampleView& sample,
+                                 const WeightSpec& fixedWeights,
+                                 const MomentRequest& request, Limits limits);
 
 } // namespace vss::math::statistics
 
