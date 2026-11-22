@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <initializer_list>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <string>
@@ -593,7 +595,7 @@ void descriptiveSummaryCases() {
 
 } // namespace
 
-int main() {
+int main() try {
   publicSignatures();
   quantileCases();
   medianCases();
@@ -605,6 +607,10 @@ int main() {
   positiveMeanExtremes();
   robustOrderSummaryCases();
   descriptiveSummaryCases();
+  return 0;
+} catch (const std::exception& error) {
+  std::cerr << error.what() << '\n';
+  return 1;
 }
 
 // VSS-MATH-TRACEABILITY: STAT-ORDER-01
