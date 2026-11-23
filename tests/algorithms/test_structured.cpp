@@ -735,7 +735,7 @@ void c113ProjectionSatisfiesSubspaceInvariants() {
 
 } // namespace
 
-int main() { // NOLINT(bugprone-exception-escape)
+int main() try {
   diagonalActionAndValidation();
   blockGridActionPreservesRectangularLayoutAndEmptyBlocks();
   projectionUsesRetainedColumnSpan();
@@ -750,4 +750,6 @@ int main() { // NOLINT(bugprone-exception-escape)
   c113StructuredSolvesPreserveAllRightHandSidesAndRejectPadding();
   c113ProjectionSatisfiesSubspaceInvariants();
   return 0;
+} catch (...) {
+  return EXIT_FAILURE;
 }
