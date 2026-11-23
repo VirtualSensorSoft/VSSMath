@@ -620,6 +620,22 @@ void c113RegularizedLeastSquaresPolicyAndCallbackCases() {
       minimum_norm, limits());
   VSS_CHECK(!invalid_output.hasValue());
   VSS_CHECK(invalid_output.status().code() == ErrorCode::NonFiniteInput);
+
+  Index thrown_calls = 0U;
+  const linear::LinearMap throwing_callback{
+      .rows = 1U,
+      .columns = 2U,
+      .apply = [&thrown_calls](ConstVectorView) -> Result<Vector> {
+        ++thrown_calls;
+        throw std::runtime_error("active penalty callback failed");
+      },
+      .transpose = {}};
+  const auto thrown = linear::regularizedLeastSquares(
+      design.view(), matrix({{4.0}}).view(), throwing_callback, 1.0,
+      minimum_norm, limits());
+  VSS_CHECK(!thrown.hasValue());
+  VSS_CHECK(thrown.status().code() == ErrorCode::CallbackFailure);
+  VSS_CHECK(thrown_calls == 1U);
 }
 
 void c113StructuredSolvesPreserveAllRightHandSidesAndRejectPadding() {
@@ -705,7 +721,10 @@ void c113ProjectionSatisfiesSubspaceInvariants() {
             dot(input.view(), input.view()));
   VSS_CHECK(std::abs(dot(input.view(), other_projected.value().view()) -
                      dot(projected.value().view(), other.view())) < 1e-12);
-  const Vector residual(std::array<Scalar, 3U>{1.0, -1.0, 4.0});
+  Vector residual(3U);
+  for (Index i = 0U; i < 3U; ++i) {
+    residual.at(i) = input.at(i) - projected.value().at(i);
+  }
   VSS_CHECK(std::abs(dot(
                 residual.view(),
                 Vector(std::array<Scalar, 3U>{1.0, 1.0, 0.0}).view())) < 1e-12);
