@@ -68,6 +68,7 @@ add_library(vss_math STATIC
   src/statistics/Weighted.cpp
   src/statistics/Moments.cpp
   src/statistics/MomentTransforms.cpp
+  src/statistics/MomentDiagnostics.cpp
   src/statistics/Cumulants.cpp
   src/statistics/MomentInterval.hpp
   include/vss/math/statistics/Population.hpp
