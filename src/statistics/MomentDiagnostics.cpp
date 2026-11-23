@@ -761,7 +761,7 @@ Result<Matrix> whitenedRows(const SampleView& sample, SolvePolicy policy,
                         "Mardia covariance is rank deficient");
   }
 
-  const auto meanEstimate = estimateRawMoments(
+  auto meanEstimate = estimateRawMoments(
       sample,
       WeightSpec{.rule = WeightRule::unweighted,
                  .rowWeights = std::nullopt,
