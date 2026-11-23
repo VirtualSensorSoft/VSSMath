@@ -710,6 +710,20 @@ int main() {
     return 1;
   }
 
+  const Vector geometricMeanSample{std::array<Scalar, 2U>{1.0, 4.0}};
+  const Vector harmonicMeanSample{std::array<Scalar, 2U>{1.0, 3.0}};
+  const auto installedGeometricMean =
+      statistics::geometricMean(geometricMeanSample.view());
+  const auto installedHarmonicMean =
+      statistics::harmonicMean(harmonicMeanSample.view());
+  if (!require(installedGeometricMean.hasValue() &&
+                   installedGeometricMean.value() == 2.0 &&
+                   installedHarmonicMean.hasValue() &&
+                   installedHarmonicMean.value() == 1.5,
+               "installed geometric or harmonic mean API failed")) {
+    return 1;
+  }
+
   Matrix summaryRows(3U, 1U);
   summaryRows.at(0U, 0U) = 1.0;
   summaryRows.at(1U, 0U) = 2.0;
