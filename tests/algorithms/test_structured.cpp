@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <initializer_list>
 #include <limits>
+#include <numbers>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -708,7 +709,7 @@ void c113ProjectionSatisfiesSubspaceInvariants() {
                 residual.view(),
                 Vector(std::array<Scalar, 3U>{1.0, 1.0, 0.0}).view())) < 1e-12);
 
-  const Scalar inverse_root_two = 1.0 / std::sqrt(2.0);
+  const Scalar inverse_root_two = 1.0 / std::numbers::sqrt2;
   const Matrix coordinate_basis = matrix({{1.0, 0.0}, {0.0, 1.0}, {0.0, 0.0}});
   const Matrix rotated_basis = matrix({{inverse_root_two, -inverse_root_two},
                                        {inverse_root_two, inverse_root_two},
@@ -734,7 +735,7 @@ void c113ProjectionSatisfiesSubspaceInvariants() {
 
 } // namespace
 
-int main() {
+int main() { // NOLINT(bugprone-exception-escape)
   diagonalActionAndValidation();
   blockGridActionPreservesRectangularLayoutAndEmptyBlocks();
   projectionUsesRetainedColumnSpan();
