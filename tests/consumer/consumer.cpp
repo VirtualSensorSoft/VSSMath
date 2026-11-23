@@ -38,6 +38,7 @@
 #include <vss/math/linear/Sparse.hpp>
 #include <vss/math/linear/Structured.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
+#include <vss/math/statistics/MomentDiagnostics.hpp>
 #include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Order.hpp>
 #include <vss/math/statistics/Population.hpp>
@@ -754,6 +755,31 @@ int main() {
       Limits{128U, 4096U, 0U});
   if (!require(centralMoments.hasValue(),
                "installed central-moment API failed")) {
+    return 1;
+  }
+  SolvePolicy diagnosticPolicy{};
+  diagnosticPolicy.iteration.max_iterations = 128U;
+  const auto momentValidity = statistics::validateMoments(
+      centralMoments.value(), diagnosticPolicy, Limits{4096U, 1U << 20U, 0U});
+  Matrix mardiaRows(3U, 1U);
+  mardiaRows.at(0U, 0U) = -1.0;
+  mardiaRows.at(1U, 0U) = 0.0;
+  mardiaRows.at(2U, 0U) = 2.0;
+  const SampleView mardiaSample{mardiaRows.view(), {}, {}};
+  const auto installedMardiaSkewness = statistics::mardiaSkewness(
+      mardiaSample, diagnosticPolicy, Limits{4096U, 1U << 20U, 0U});
+  const auto installedMardiaKurtosis = statistics::mardiaKurtosis(
+      mardiaSample, diagnosticPolicy, Limits{4096U, 1U << 20U, 0U});
+  if (!require(momentValidity.hasValue() && momentValidity.value().symmetric &&
+                   momentValidity.value().second_psd &&
+                   momentValidity.value().degree_two_moment_gram_psd &&
+                   !momentValidity.value().sufficient_for_model &&
+                   installedMardiaSkewness.hasValue() &&
+                   std::abs(installedMardiaSkewness.value() - 50.0 / 343.0) <
+                       1.0e-12 &&
+                   installedMardiaKurtosis.hasValue() &&
+                   std::abs(installedMardiaKurtosis.value() - 1.5) < 1.0e-12,
+               "installed moment diagnostics API failed")) {
     return 1;
   }
   const auto installedCumulants = statistics::centralMomentsToCumulants(
