@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <new>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 #include <vss/math/Array.hpp>
@@ -128,177 +130,195 @@ Result<Scalar> scaledRowDot(const CSR& matrix, ConstVectorView vector,
 
 Result<CSR> sparseCSRFromTriplets(Extent rows, Extent columns,
                                   TripletView entries, Limits limits) {
-  if (rows == std::numeric_limits<Extent>::max()) {
-    return failure<CSR>(ErrorCode::SizeOverflow,
-                        "CSR row offset extent overflows");
-  }
-  const Extent offset_count = rows + 1U;
-  const Extent entry_count = entries.size();
-  for (const auto& entry : entries) {
-    if (entry.row >= rows || entry.column >= columns) {
-      return failure<CSR>(ErrorCode::IndexOutOfRange,
-                          "sparse coordinate lies outside the matrix shape");
+  try {
+    if (rows == std::numeric_limits<Extent>::max()) {
+      return failure<CSR>(ErrorCode::ResourceLimit,
+                          "CSR row offset extent overflows");
     }
-    if (!std::isfinite(entry.value)) {
-      return failure<CSR>(ErrorCode::NonFiniteInput,
-                          "sparse triplet contains a non-finite value");
+    const Extent offset_count = rows + 1U;
+    const Extent entry_count = entries.size();
+    for (const auto& entry : entries) {
+      if (entry.row >= rows || entry.column >= columns) {
+        return failure<CSR>(ErrorCode::IndexOutOfRange,
+                            "sparse coordinate lies outside the matrix shape");
+      }
+      if (!std::isfinite(entry.value)) {
+        return failure<CSR>(ErrorCode::NonFiniteInput,
+                            "sparse triplet contains a non-finite value");
+      }
     }
-  }
-  // The stable merge sort has two simultaneously live Triplet arrays. The
-  // coalescing/finalization stage is preflighted separately below, because its
-  // peak is different and the sort workspace is released before it begins.
-  if (!multiplyFits(entry_count, 2U) ||
-      !multiplyFits(entry_count, 2U * sizeof(Triplet))) {
-    return failure<CSR>(ErrorCode::SizeOverflow,
-                        "CSR sorting workspace size overflows");
-  }
-  if (2U * entry_count > limits.elements ||
-      2U * entry_count * sizeof(Triplet) > limits.bytes) {
-    return failure<CSR>(ErrorCode::ResourceLimit,
-                        "CSR sorting workspace exceeds configured limits");
-  }
-  std::vector<Triplet> first(entries.begin(), entries.end());
-  std::vector<Triplet> second(entry_count);
-  const auto before = [](const Triplet& lhs, const Triplet& rhs) {
-    return lhs.row < rhs.row ||
-           (lhs.row == rhs.row && lhs.column <= rhs.column);
-  };
-  std::vector<Triplet>* source = &first;
-  std::vector<Triplet>* destination = &second;
-  for (Extent width = 1U; width < entry_count;) {
-    for (Extent begin = 0U; begin < entry_count;) {
-      const Extent middle = begin + std::min(width, entry_count - begin);
-      const Extent end = middle + std::min(width, entry_count - middle);
-      Extent left = begin;
-      Extent right = middle;
-      for (Extent out = begin; out < end; ++out) {
-        if (left < middle &&
-            (right == end || before((*source)[left], (*source)[right]))) {
-          (*destination)[out] = (*source)[left++];
-        } else {
-          (*destination)[out] = (*source)[right++];
+    // The stable merge sort has two simultaneously live Triplet arrays. The
+    // coalescing/finalization stage is preflighted separately below, because
+    // its peak is different and the sort workspace is released before it
+    // begins.
+    if (!multiplyFits(entry_count, 2U) ||
+        !multiplyFits(entry_count, 2U * sizeof(Triplet))) {
+      return failure<CSR>(ErrorCode::ResourceLimit,
+                          "CSR sorting workspace size overflows");
+    }
+    if (2U * entry_count > limits.elements ||
+        2U * entry_count * sizeof(Triplet) > limits.bytes) {
+      return failure<CSR>(ErrorCode::ResourceLimit,
+                          "CSR sorting workspace exceeds configured limits");
+    }
+    std::vector<Triplet> first(entries.begin(), entries.end());
+    std::vector<Triplet> second(entry_count);
+    const auto before = [](const Triplet& lhs, const Triplet& rhs) {
+      return lhs.row < rhs.row ||
+             (lhs.row == rhs.row && lhs.column <= rhs.column);
+    };
+    std::vector<Triplet>* source = &first;
+    std::vector<Triplet>* destination = &second;
+    for (Extent width = 1U; width < entry_count;) {
+      for (Extent begin = 0U; begin < entry_count;) {
+        const Extent middle = begin + std::min(width, entry_count - begin);
+        const Extent end = middle + std::min(width, entry_count - middle);
+        Extent left = begin;
+        Extent right = middle;
+        for (Extent out = begin; out < end; ++out) {
+          if (left < middle &&
+              (right == end || before((*source)[left], (*source)[right]))) {
+            (*destination)[out] = (*source)[left++];
+          } else {
+            (*destination)[out] = (*source)[right++];
+          }
+        }
+        begin = end;
+      }
+      std::swap(source, destination);
+      if (width > entry_count / 2U) {
+        break;
+      }
+      width *= 2U;
+    }
+    std::vector<Triplet> sorted = std::move(*source);
+    std::vector<Triplet>().swap(first);
+    std::vector<Triplet>().swap(second);
+
+    // During coalescing, sorted triplets, row offsets, and worst-case entry
+    // staging are live. During Array/Vector ownership transfer the final arrays
+    // overlap their source staging, but the sorted scratch has been released.
+    if (!multiplyFits(offset_count, 2U) || !multiplyFits(entry_count, 4U) ||
+        !addFits(offset_count, 3U * entry_count) ||
+        !addFits(2U * offset_count, 4U * entry_count) ||
+        !multiplyFits(entry_count, sizeof(Triplet)) ||
+        !multiplyFits(offset_count, 2U * sizeof(Index)) ||
+        !multiplyFits(entry_count, 2U * (sizeof(Index) + sizeof(Scalar)))) {
+      return failure<CSR>(ErrorCode::ResourceLimit,
+                          "CSR coalescing workspace size overflows");
+    }
+    const Extent coalesce_elements = offset_count + 3U * entry_count;
+    const Extent finalize_elements = 2U * offset_count + 4U * entry_count;
+    const Extent sorted_bytes = entry_count * sizeof(Triplet);
+    const Extent offset_bytes = offset_count * sizeof(Index);
+    const Extent entry_output_bytes =
+        entry_count * (sizeof(Index) + sizeof(Scalar));
+    if (!addFits(sorted_bytes, offset_bytes) ||
+        !addFits(sorted_bytes + offset_bytes, entry_output_bytes) ||
+        !addFits(offset_bytes * 2U, entry_output_bytes * 2U)) {
+      return failure<CSR>(ErrorCode::ResourceLimit,
+                          "CSR peak byte accounting overflows");
+    }
+    const Extent coalesce_bytes =
+        sorted_bytes + offset_bytes + entry_output_bytes;
+    const Extent finalize_bytes = offset_bytes * 2U + entry_output_bytes * 2U;
+    if (std::max(coalesce_elements, finalize_elements) > limits.elements ||
+        std::max(coalesce_bytes, finalize_bytes) > limits.bytes) {
+      return failure<CSR>(ErrorCode::ResourceLimit,
+                          "CSR coalescing/finalization peak exceeds limits");
+    }
+
+    std::vector<Index> offsets(offset_count, 0U);
+    std::vector<Index> output_columns;
+    std::vector<Scalar> output_values;
+    output_columns.reserve(entry_count);
+    output_values.reserve(entry_count);
+    Index cursor = 0U;
+    for (Index row = 0U; row < rows; ++row) {
+      while (cursor < sorted.size() && sorted[cursor].row == row) {
+        const Index begin = cursor;
+        const Index column = sorted[cursor].column;
+        while (cursor < sorted.size() && sorted[cursor].row == row &&
+               sorted[cursor].column == column) {
+          ++cursor;
+        }
+        const auto sum = scaledSum(sorted, begin, cursor);
+        if (!sum.hasValue()) {
+          return failure<CSR>(sum.status().code(),
+                              "sparse duplicate coalescing failed");
+        }
+        if (sum.value() != 0.0) {
+          output_columns.push_back(column);
+          output_values.push_back(sum.value());
         }
       }
-      begin = end;
+      offsets[row + 1U] = output_values.size();
     }
-    std::swap(source, destination);
-    if (width > entry_count / 2U) {
-      break;
-    }
-    width *= 2U;
-  }
-  std::vector<Triplet> sorted = std::move(*source);
-  std::vector<Triplet>().swap(first);
-  std::vector<Triplet>().swap(second);
 
-  // During coalescing, sorted triplets, row offsets, and worst-case entry
-  // staging are live. During Array/Vector ownership transfer the final arrays
-  // overlap their source staging, but the sorted scratch has been released.
-  if (!multiplyFits(offset_count, 2U) || !multiplyFits(entry_count, 4U) ||
-      !addFits(offset_count, 3U * entry_count) ||
-      !addFits(2U * offset_count, 4U * entry_count) ||
-      !multiplyFits(entry_count, sizeof(Triplet)) ||
-      !multiplyFits(offset_count, 2U * sizeof(Index)) ||
-      !multiplyFits(entry_count, 2U * (sizeof(Index) + sizeof(Scalar)))) {
-    return failure<CSR>(ErrorCode::SizeOverflow,
-                        "CSR coalescing workspace size overflows");
-  }
-  const Extent coalesce_elements = offset_count + 3U * entry_count;
-  const Extent finalize_elements = 2U * offset_count + 4U * entry_count;
-  const Extent sorted_bytes = entry_count * sizeof(Triplet);
-  const Extent offset_bytes = offset_count * sizeof(Index);
-  const Extent entry_output_bytes =
-      entry_count * (sizeof(Index) + sizeof(Scalar));
-  if (!addFits(sorted_bytes, offset_bytes) ||
-      !addFits(sorted_bytes + offset_bytes, entry_output_bytes) ||
-      !addFits(offset_bytes * 2U, entry_output_bytes * 2U)) {
-    return failure<CSR>(ErrorCode::SizeOverflow,
-                        "CSR peak byte accounting overflows");
-  }
-  const Extent coalesce_bytes =
-      sorted_bytes + offset_bytes + entry_output_bytes;
-  const Extent finalize_bytes = offset_bytes * 2U + entry_output_bytes * 2U;
-  if (std::max(coalesce_elements, finalize_elements) > limits.elements ||
-      std::max(coalesce_bytes, finalize_bytes) > limits.bytes) {
+    auto row_offsets =
+        Array<Index>::copy(std::span<const Index>{offsets}, limits);
+    auto column_indices =
+        Array<Index>::copy(std::span<const Index>{output_columns}, limits);
+    if (!row_offsets.hasValue() || !column_indices.hasValue()) {
+      return failure<CSR>(ErrorCode::ResourceLimit,
+                          "canonical CSR arrays exceed configured limits");
+    }
+    Vector values(std::span<const Scalar>{output_values});
+    return Result<CSR>::success(
+        CSR{rows, columns, std::move(row_offsets).value(),
+            std::move(column_indices).value(), std::move(values)});
+  } catch (const std::bad_alloc&) {
     return failure<CSR>(ErrorCode::ResourceLimit,
-                        "CSR coalescing/finalization peak exceeds limits");
-  }
-
-  std::vector<Index> offsets(offset_count, 0U);
-  std::vector<Index> output_columns;
-  std::vector<Scalar> output_values;
-  output_columns.reserve(entry_count);
-  output_values.reserve(entry_count);
-  Index cursor = 0U;
-  for (Index row = 0U; row < rows; ++row) {
-    while (cursor < sorted.size() && sorted[cursor].row == row) {
-      const Index begin = cursor;
-      const Index column = sorted[cursor].column;
-      while (cursor < sorted.size() && sorted[cursor].row == row &&
-             sorted[cursor].column == column) {
-        ++cursor;
-      }
-      const auto sum = scaledSum(sorted, begin, cursor);
-      if (!sum.hasValue()) {
-        return failure<CSR>(sum.status().code(),
-                            "sparse duplicate coalescing failed");
-      }
-      if (sum.value() != 0.0) {
-        output_columns.push_back(column);
-        output_values.push_back(sum.value());
-      }
-    }
-    offsets[row + 1U] = output_values.size();
-  }
-
-  auto row_offsets =
-      Array<Index>::copy(std::span<const Index>{offsets}, limits);
-  auto column_indices =
-      Array<Index>::copy(std::span<const Index>{output_columns}, limits);
-  if (!row_offsets.hasValue() || !column_indices.hasValue()) {
+                        "CSR construction allocation failed");
+  } catch (const std::length_error&) {
     return failure<CSR>(ErrorCode::ResourceLimit,
-                        "canonical CSR arrays exceed configured limits");
+                        "CSR construction exceeds container limits");
   }
-  Vector values(std::span<const Scalar>{output_values});
-  return Result<CSR>::success(CSR{rows, columns, std::move(row_offsets).value(),
-                                  std::move(column_indices).value(),
-                                  std::move(values)});
 }
 
 Result<Vector> apply(const CSR& matrix, ConstVectorView vector, Limits limits) {
-  const auto valid = validateCSR(matrix);
-  if (!valid.ok()) {
-    return failure<Vector>(valid.code(), "CSR matrix is not canonical");
-  }
-  if (vector.size() != matrix.columns) {
-    return failure<Vector>(ErrorCode::DimensionMismatch,
-                           "CSR column count must equal vector size");
-  }
-  for (Index column = 0U; column < vector.size(); ++column) {
-    if (!std::isfinite(vector.at(column))) {
-      return failure<Vector>(ErrorCode::NonFiniteInput,
-                             "sparse input vector contains a non-finite value");
+  try {
+    const auto valid = validateCSR(matrix);
+    if (!valid.ok()) {
+      return failure<Vector>(valid.code(), "CSR matrix is not canonical");
     }
-  }
-  if (matrix.rows > limits.elements ||
-      !multiplyFits(matrix.rows, sizeof(Scalar)) ||
-      matrix.rows * sizeof(Scalar) > limits.bytes) {
-    return failure<Vector>(ErrorCode::ResourceLimit,
-                           "sparse result exceeds configured limits");
-  }
+    if (vector.size() != matrix.columns) {
+      return failure<Vector>(ErrorCode::DimensionMismatch,
+                             "CSR column count must equal vector size");
+    }
+    for (Index column = 0U; column < vector.size(); ++column) {
+      if (!std::isfinite(vector.at(column))) {
+        return failure<Vector>(
+            ErrorCode::NonFiniteInput,
+            "sparse input vector contains a non-finite value");
+      }
+    }
+    if (matrix.rows > limits.elements ||
+        !multiplyFits(matrix.rows, sizeof(Scalar)) ||
+        matrix.rows * sizeof(Scalar) > limits.bytes) {
+      return failure<Vector>(ErrorCode::ResourceLimit,
+                             "sparse result exceeds configured limits");
+    }
 
-  Vector result(matrix.rows, 0.0);
-  const auto offsets = matrix.row_offsets.view();
-  for (Index row = 0U; row < matrix.rows; ++row) {
-    const auto value =
-        scaledRowDot(matrix, vector, offsets[row], offsets[row + 1U]);
-    if (!value.hasValue()) {
-      return failure<Vector>(value.status().code(),
-                             "sparse matrix-vector product failed");
+    Vector result(matrix.rows, 0.0);
+    const auto offsets = matrix.row_offsets.view();
+    for (Index row = 0U; row < matrix.rows; ++row) {
+      const auto value =
+          scaledRowDot(matrix, vector, offsets[row], offsets[row + 1U]);
+      if (!value.hasValue()) {
+        return failure<Vector>(value.status().code(),
+                               "sparse matrix-vector product failed");
+      }
+      result.at(row) = value.value();
     }
-    result.at(row) = value.value();
+    return Result<Vector>::success(std::move(result));
+  } catch (const std::bad_alloc&) {
+    return failure<Vector>(ErrorCode::ResourceLimit,
+                           "sparse result allocation failed");
+  } catch (const std::length_error&) {
+    return failure<Vector>(ErrorCode::ResourceLimit,
+                           "sparse result exceeds container limits");
   }
-  return Result<Vector>::success(std::move(result));
 }
 
 } // namespace vss::math::linear

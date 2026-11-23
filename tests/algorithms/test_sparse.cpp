@@ -48,6 +48,9 @@ void acceptsEmptyRowsAndZeroRowMatrices() {
   VSS_CHECK(output.value().size() == 4U);
   VSS_CHECK(output.value().at(0U) == 0.0 && output.value().at(1U) == 0.0 &&
             output.value().at(2U) == 6.0 && output.value().at(3U) == 0.0);
+  VSS_CHECK(!std::signbit(output.value().at(0U)) &&
+            !std::signbit(output.value().at(1U)) &&
+            !std::signbit(output.value().at(3U)));
 
   const auto empty = linear::sparseCSRFromTriplets(0U, 2U, {}, limits());
   VSS_CHECK(empty.hasValue());
@@ -55,6 +58,12 @@ void acceptsEmptyRowsAndZeroRowMatrices() {
   const auto empty_result =
       linear::apply(empty.value(), input.view(), limits());
   VSS_CHECK(empty_result.hasValue() && empty_result.value().empty());
+  const Vector nonfinite_input(
+      std::array<Scalar, 2U>{1.0, std::numeric_limits<Scalar>::quiet_NaN()});
+  const auto empty_nonfinite =
+      linear::apply(empty.value(), nonfinite_input.view(), limits());
+  VSS_CHECK(!empty_nonfinite.hasValue());
+  VSS_CHECK(empty_nonfinite.status().code() == ErrorCode::NonFiniteInput);
 }
 
 void validatesCanonicalCSRBeforeApplying() {
@@ -72,6 +81,47 @@ void validatesCanonicalCSRBeforeApplying() {
   const auto result = linear::apply(malformed, input.view(), limits());
   VSS_CHECK(!result.hasValue());
   VSS_CHECK(result.status().code() == ErrorCode::InvalidDomain);
+
+  const std::array<Index, 1U> short_offsets{{0U}};
+  const auto short_offset_array = Array<Index>::copy(short_offsets, limits());
+  VSS_CHECK(short_offset_array.hasValue());
+  const linear::CSR wrong_offset_length{1U, 1U, short_offset_array.value(),
+                                        column_indices.value(), values};
+  const auto wrong_offsets =
+      linear::apply(wrong_offset_length, input.view(), limits());
+  VSS_CHECK(!wrong_offsets.hasValue());
+  VSS_CHECK(wrong_offsets.status().code() == ErrorCode::DimensionMismatch);
+
+  const std::array<Index, 2U> unsorted_columns{{1U, 0U}};
+  const std::array<Scalar, 2U> unsorted_values{{1.0, 2.0}};
+  const std::array<Index, 2U> two_offsets{{0U, 2U}};
+  const auto unsorted_offset_array = Array<Index>::copy(two_offsets, limits());
+  const auto unsorted_column_array =
+      Array<Index>::copy(unsorted_columns, limits());
+  VSS_CHECK(unsorted_offset_array.hasValue() &&
+            unsorted_column_array.hasValue());
+  const Vector unsorted_value_array(unsorted_values);
+  const linear::CSR unsorted{1U, 2U, unsorted_offset_array.value(),
+                             unsorted_column_array.value(),
+                             unsorted_value_array};
+  const Vector two_values(std::array<Scalar, 2U>{1.0, 1.0});
+  const auto unsorted_result =
+      linear::apply(unsorted, two_values.view(), limits());
+  VSS_CHECK(!unsorted_result.hasValue());
+  VSS_CHECK(unsorted_result.status().code() == ErrorCode::InvalidDomain);
+
+  const std::array<Index, 1U> out_of_range_column{{1U}};
+  const auto out_of_range_array =
+      Array<Index>::copy(out_of_range_column, limits());
+  VSS_CHECK(out_of_range_array.hasValue());
+  const std::array<Scalar, 1U> finite_values{{2.0}};
+  const linear::CSR out_of_range{1U, 1U, row_offsets.value(),
+                                 out_of_range_array.value(),
+                                 Vector(finite_values)};
+  const auto out_of_range_result =
+      linear::apply(out_of_range, input.view(), limits());
+  VSS_CHECK(!out_of_range_result.hasValue());
+  VSS_CHECK(out_of_range_result.status().code() == ErrorCode::IndexOutOfRange);
 
   const Vector wrong_size(std::array<Scalar, 2U>{1.0, 2.0});
   const auto valid = linear::sparseCSRFromTriplets(
@@ -112,6 +162,20 @@ void rejectsMalformedInputsAndEnforcesLimits() {
       Limits{.elements = 1U, .bytes = 8U, .evaluations = 0U});
   VSS_CHECK(!resource.hasValue());
   VSS_CHECK(resource.status().code() == ErrorCode::ResourceLimit);
+
+  const auto row_offset_overflow = linear::sparseCSRFromTriplets(
+      std::numeric_limits<Extent>::max(), 0U,
+      std::span<const linear::Triplet>{}, limits());
+  VSS_CHECK(!row_offset_overflow.hasValue());
+  VSS_CHECK(row_offset_overflow.status().code() == ErrorCode::ResourceLimit);
+
+  const Scalar maximum = std::numeric_limits<Scalar>::max();
+  const std::array<linear::Triplet, 2U> overflowing_duplicates{
+      {{0U, 0U, maximum}, {0U, 0U, maximum}}};
+  const auto overflow =
+      linear::sparseCSRFromTriplets(1U, 1U, overflowing_duplicates, limits());
+  VSS_CHECK(!overflow.hasValue());
+  VSS_CHECK(overflow.status().code() == ErrorCode::NonFiniteResult);
 }
 
 void accountsForOverlappingConstructionPeak() {
