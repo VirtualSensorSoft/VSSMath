@@ -352,6 +352,159 @@ bool verifyCorrelationContracts() {
       "installed correlation fabricated zero-variance units");
 }
 
+bool verifyWeightedPopulationContracts() {
+  using namespace vss::math;
+
+  constexpr Limits ample{4096U, 262144U, 0U};
+  const Matrix values =
+      matrixFromArray(std::array<Scalar, 5U>{1.0, 2.0, 4.0, 8.0, 16.0}, 5U, 1U);
+  const Vector masses{std::array<Scalar, 5U>{0.1, 0.15, 0.2, 0.25, 0.3}};
+  const SampleView sample{.rows = values.view()};
+  const statistics::WeightSpec empirical{.rule = WeightRule::empirical,
+                                         .rowWeights = masses.view(),
+                                         .componentWeights = std::nullopt,
+                                         .frequencyCounts = {}};
+  const statistics::WeightSpec fixed{.rule = WeightRule::fixed_iid,
+                                     .rowWeights = masses.view(),
+                                     .componentWeights = std::nullopt,
+                                     .frequencyCounts = {}};
+  const auto mean = statistics::weightedMean(sample, empirical, ample);
+  const auto covariance =
+      statistics::weightedEmpiricalCovariance(sample, empirical, ample);
+  const auto unbiasedCovariance =
+      statistics::unbiasedFixedWeightedCovariance(sample, fixed, ample);
+  if (!require(mean.hasValue() && mean.value().value.at(0U) == 8.0 &&
+                   covariance.hasValue() &&
+                   std::abs(covariance.value().value.at(0U, 0U) - 32.7) <
+                       1.0e-12 &&
+                   unbiasedCovariance.hasValue() &&
+                   std::abs(unbiasedCovariance.value().value.at(0U, 0U) -
+                            1308.0 / 31.0) < 1.0e-12,
+               "installed weighted mean/covariance estimators are incorrect")) {
+    return false;
+  }
+
+  const Matrix componentValues =
+      matrixFromArray(std::array<Scalar, 4U>{2.0, 10.0, 8.0, 20.0}, 2U, 2U);
+  const Matrix componentMasses =
+      matrixFromArray(std::array<Scalar, 4U>{1.0, 2.0, 3.0, 0.0}, 2U, 2U);
+  constexpr std::array<Index, 1U> vectorShape{2U};
+  const SampleView componentSample{.rows = componentValues.view(),
+                                   .observation_shape = vectorShape};
+  const statistics::WeightSpec componentwise{.rule = WeightRule::componentwise,
+                                             .rowWeights = std::nullopt,
+                                             .componentWeights =
+                                                 componentMasses.view(),
+                                             .frequencyCounts = {}};
+  const auto componentMean =
+      statistics::weightedMean(componentSample, componentwise, ample);
+  if (!require(componentMean.hasValue() &&
+                   componentMean.value().value.at(0U) == 6.5 &&
+                   componentMean.value().value.at(1U) == 10.0 &&
+                   componentMean.value()
+                           .diagnostics.coordinate_support.view()
+                           .size() == 2U &&
+                   componentMean.value()
+                           .diagnostics.coordinate_support.view()[1U]
+                           .positive == 1U,
+               "installed componentwise weighting lost channel support")) {
+    return false;
+  }
+
+  const Matrix jointValues =
+      matrixFromArray(std::array<Scalar, 4U>{0.0, 6.0, 6.0, 0.0}, 2U, 2U);
+  const SampleView jointSample{.rows = jointValues.view(),
+                               .observation_shape = vectorShape};
+  const Vector jointMasses{std::array<Scalar, 2U>{0.25, 0.75}};
+  const statistics::WeightSpec jointWeights{.rule = WeightRule::empirical,
+                                            .rowWeights = jointMasses.view(),
+                                            .componentWeights = std::nullopt,
+                                            .frequencyCounts = {}};
+  const auto jointCovariance =
+      statistics::weightedEmpiricalCovariance(jointSample, jointWeights, ample);
+  if (!require(
+          jointCovariance.hasValue() &&
+              jointCovariance.value().value.rows() == 2U &&
+              jointCovariance.value().value.columns() == 2U &&
+              jointCovariance.value().value.at(0U, 1U) == -27.0 / 4.0,
+          "installed joint weighted covariance lost shared-row correlation")) {
+    return false;
+  }
+  const auto componentCovariance = statistics::weightedEmpiricalCovariance(
+      jointSample, componentwise, ample);
+  if (!requireError(componentCovariance, ErrorCode::InvalidDomain,
+                    "installed covariance accepted componentwise weights")) {
+    return false;
+  }
+
+  const Matrix twoRows =
+      matrixFromArray(std::array<Scalar, 4U>{0.0, 0.0, 2.0, -4.0}, 2U, 2U);
+  const SampleView vectorSample{.rows = twoRows.view(),
+                                .observation_shape = vectorShape};
+  const Vector dominantMasses{std::array<Scalar, 2U>{1.0, 1.0e6}};
+  const statistics::WeightSpec dominantWeights{.rule = WeightRule::fixed_iid,
+                                               .rowWeights =
+                                                   dominantMasses.view(),
+                                               .componentWeights = std::nullopt,
+                                               .frequencyCounts = {}};
+  const auto dominant = statistics::unbiasedFixedWeightedCovariance(
+      vectorSample, dominantWeights, ample);
+  if (!require(dominant.hasValue() &&
+                   dominant.value().value.at(0U, 0U) == 2.0 &&
+                   dominant.value().value.at(0U, 1U) == -4.0 &&
+                   dominant.value().value.at(1U, 1U) == 8.0,
+               "installed fixed-weight covariance mishandled extreme ratios")) {
+    return false;
+  }
+
+  const Vector negativeMasses{std::array<Scalar, 2U>{1.0, -1.0}};
+  const statistics::WeightSpec negativeWeights{.rule = WeightRule::empirical,
+                                               .rowWeights =
+                                                   negativeMasses.view(),
+                                               .componentWeights = std::nullopt,
+                                               .frequencyCounts = {}};
+  const Vector zeroMasses{std::array<Scalar, 2U>{0.0, 0.0}};
+  const statistics::WeightSpec zeroWeights{.rule = WeightRule::empirical,
+                                           .rowWeights = zeroMasses.view(),
+                                           .componentWeights = std::nullopt,
+                                           .frequencyCounts = {}};
+  const Matrix scalarPair =
+      matrixFromArray(std::array<Scalar, 2U>{1.0, 3.0}, 2U, 1U);
+  const SampleView scalarSample{.rows = scalarPair.view()};
+  if (!requireError(
+          statistics::weightedMean(scalarSample, negativeWeights, ample),
+          ErrorCode::InvalidDomain,
+          "installed empirical mean accepted negative mass") ||
+      !requireError(statistics::weightedMean(scalarSample, zeroWeights, ample),
+                    ErrorCode::InsufficientSamples,
+                    "installed empirical mean accepted zero support") ||
+      !requireError(statistics::unbiasedFixedWeightedCovariance(
+                        vectorSample,
+                        statistics::WeightSpec{.rule = WeightRule::fixed_iid,
+                                               .rowWeights = zeroMasses.view(),
+                                               .componentWeights = std::nullopt,
+                                               .frequencyCounts = {}},
+                        ample),
+                    ErrorCode::InsufficientSamples,
+                    "installed fixed covariance accepted zero support")) {
+    return false;
+  }
+
+  const Vector equalMasses{std::array<Scalar, 3U>{1.0, 1.0, 1.0}};
+  const Matrix equalValues =
+      matrixFromArray(std::array<Scalar, 3U>{1.0, 2.0, 4.0}, 3U, 1U);
+  const statistics::WeightSpec equalWeights{.rule = WeightRule::empirical,
+                                            .rowWeights = equalMasses.view(),
+                                            .componentWeights = std::nullopt,
+                                            .frequencyCounts = {}};
+  const auto equalMean = statistics::weightedMean(
+      SampleView{.rows = equalValues.view()}, equalWeights, ample);
+  return require(equalMean.hasValue() &&
+                     equalMean.value().diagnostics.global.effective_count ==
+                         3.0,
+                 "installed equal-mass effective sample count is incorrect");
+}
+
 } // namespace
 
 int main() {
@@ -359,6 +512,9 @@ int main() {
 
   if (!verifyRobustOrderStatisticContracts() ||
       !verifyPopulationCovarianceContracts() || !verifyCorrelationContracts()) {
+    return 1;
+  }
+  if (!verifyWeightedPopulationContracts()) {
     return 1;
   }
 
