@@ -4,21 +4,28 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <initializer_list>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/statistics/MomentDiagnostics.hpp>
 #include <vss/math/statistics/Moments.hpp>
+#include <vss/math/statistics/Population.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 using namespace vss::math;
 using namespace vss::math::statistics;
@@ -71,7 +78,7 @@ allOrders(MomentRepresentation representation = MomentRepresentation::dense) {
 MomentEstimate centralMoments(
     const Matrix& values, std::span<const Index> shape = {},
     MomentRepresentation representation = MomentRepresentation::dense) {
-  const auto result =
+  auto result =
       estimateCentralMoments(sample(values, shape),
                              WeightSpec{.rule = WeightRule::unweighted,
                                         .rowWeights = std::nullopt,
@@ -201,7 +208,7 @@ void missingRequiredCrossMomentIsNotTreatedAsZero() {
   std::vector<MomentTerm> terms(moments.terms.view().begin(),
                                 moments.terms.view().end());
   const std::array<Index, 4U> tuple{0U, 0U, 0U, 0U};
-  const auto flattened = Array<Index>::copy(tuple, limits());
+  auto flattened = Array<Index>::copy(tuple, limits());
   VSS_CHECK(flattened);
   if (flattened) {
     terms.at(3U) = MomentTerm{.order = 4U,
