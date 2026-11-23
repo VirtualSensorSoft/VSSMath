@@ -657,8 +657,25 @@ int main() {
   constexpr Limits orderLimits{64U, 4096U, 0U};
   const auto installedQuantile = statistics::quantile(
       orderSample.view(), 0.25, QuantileRule::linear, orderLimits);
+  const auto installedInverseQuantile = statistics::quantile(
+      orderSample.view(), 0.25, QuantileRule::inverse_empirical, orderLimits);
+  const auto installedLowerQuantile = statistics::quantile(
+      orderSample.view(), 0.0, QuantileRule::linear, orderLimits);
+  const auto installedUpperQuantile = statistics::quantile(
+      orderSample.view(), 1.0, QuantileRule::linear, orderLimits);
+  const auto installedMedian =
+      statistics::median(orderSample.view(), orderLimits);
   const auto installedTrimmed =
       statistics::trimmedMean(orderSample.view(), 0.25, orderLimits);
+  const auto installedWinsorized =
+      statistics::winsorizedMean(orderSample.view(), 0.25, orderLimits);
+  const Vector nominalOrderSample{std::array<Scalar, 4U>{1.0, 2.0, 3.0, 5.0}};
+  const auto installedNominalMedian =
+      statistics::median(nominalOrderSample.view(), orderLimits);
+  const auto installedNominalTrimmed =
+      statistics::trimmedMean(nominalOrderSample.view(), 0.25, orderLimits);
+  const auto installedNominalWinsorized =
+      statistics::winsorizedMean(nominalOrderSample.view(), 0.25, orderLimits);
   const auto installedGeometric = statistics::geometricMean(orderSample.view());
   const auto installedHarmonic = statistics::harmonicMean(orderSample.view());
   const auto installedMad =
@@ -667,7 +684,22 @@ int main() {
       orderSample.view(), QuantileRule::linear, orderLimits);
   if (!require(
           installedQuantile.hasValue() && installedQuantile.value() == 1.75 &&
+              installedInverseQuantile.hasValue() &&
+              installedInverseQuantile.value() == 1.0 &&
+              installedLowerQuantile.hasValue() &&
+              installedLowerQuantile.value() == 1.0 &&
+              installedUpperQuantile.hasValue() &&
+              installedUpperQuantile.value() == 8.0 &&
+              installedMedian.hasValue() && installedMedian.value() == 3.0 &&
               installedTrimmed.hasValue() && installedTrimmed.value() == 3.0 &&
+              installedWinsorized.hasValue() &&
+              installedWinsorized.value() == 3.0 &&
+              installedNominalMedian.hasValue() &&
+              installedNominalMedian.value() == 2.5 &&
+              installedNominalTrimmed.hasValue() &&
+              installedNominalTrimmed.value() == 2.5 &&
+              installedNominalWinsorized.hasValue() &&
+              installedNominalWinsorized.value() == 2.5 &&
               installedGeometric.hasValue() &&
               std::abs(installedGeometric.value() - std::sqrt(8.0)) < 1.0e-12 &&
               installedHarmonic.hasValue() &&
