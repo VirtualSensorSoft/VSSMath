@@ -26,7 +26,9 @@ template <class T> const T& required(const std::optional<T>& value) {
   return value.value();
 }
 
-Limits limits() { return {4096U, 262144U, 0U}; }
+Limits limits() {
+  return Limits{.elements = 4096U, .bytes = 262144U, .evaluations = 0U};
+}
 
 Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows);
 
@@ -73,6 +75,72 @@ void emptyScaledAndInvalidInputs() {
   VSS_CHECK(empty.value().at(0U, 0U) == 0.0);
   VSS_CHECK(empty.value().at(1U, 0U) == 0.0);
 
+  const Limits exactEmptyBudget{
+      .elements = 2U, .bytes = 2U * sizeof(Scalar), .evaluations = 0U};
+  const auto emptyWithinOutputBudget = covariance::crossCovarianceFromMaps(
+      left.view(), cross.view(), right.view(), exactEmptyBudget);
+  VSS_CHECK(emptyWithinOutputBudget.hasValue());
+  VSS_CHECK(emptyWithinOutputBudget.value().rows() == 2U);
+  VSS_CHECK(emptyWithinOutputBudget.value().columns() == 1U);
+
+  const Matrix wideCross(1U, 64U, 1.0);
+  const Matrix wideRight(1U, 64U, 1.0);
+  const Matrix one(1U, 1U, 1.0);
+  const auto deniedIntermediate = covariance::crossCovarianceFromMaps(
+      one.view(), wideCross.view(), wideRight.view(),
+      Limits{.elements = 4096U, .bytes = 256U, .evaluations = 0U});
+  VSS_CHECK(!deniedIntermediate.hasValue());
+  VSS_CHECK(deniedIntermediate.status().code() == ErrorCode::ResourceLimit);
+
+  const Matrix identity = matrix({{1.0, 0.0}, {0.0, 1.0}});
+  const Matrix negativeIdentity = matrix({{-1.0, 0.0}, {0.0, -1.0}});
+  const Matrix orderedCross = matrix({{1.0, 1.0}, {0.0, 1.0}});
+  const auto dependentCorrection = covariance::crossCovarianceFromMaps(
+      identity.view(), orderedCross.view(), negativeIdentity.view(), limits());
+  VSS_CHECK(dependentCorrection.hasValue());
+  VSS_CHECK(dependentCorrection.value().at(0U, 0U) == -1.0);
+  VSS_CHECK(dependentCorrection.value().at(0U, 1U) == -1.0);
+  VSS_CHECK(dependentCorrection.value().at(1U, 0U) == 0.0);
+  VSS_CHECK(dependentCorrection.value().at(1U, 1U) == -1.0);
+  const Matrix transposedCross = matrix({{1.0, 0.0}, {1.0, 1.0}});
+  const auto reversedCorrection = covariance::crossCovarianceFromMaps(
+      negativeIdentity.view(), transposedCross.view(), identity.view(),
+      limits());
+  VSS_CHECK(reversedCorrection.hasValue());
+  const Matrix transposeExpected = matrix({{-1.0, 0.0}, {-1.0, -1.0}});
+  for (Index row = 0U; row < 2U; ++row) {
+    for (Index column = 0U; column < 2U; ++column) {
+      VSS_CHECK(reversedCorrection.value().at(row, column) ==
+                transposeExpected.at(row, column));
+    }
+  }
+
+  const Matrix noRows(0U, 1U, 0.0);
+  const Matrix finiteSource(1U, 1U, 2.0);
+  const Matrix twoOutputs(2U, 1U, 1.0);
+  const auto emptyOutput = covariance::crossCovarianceFromMaps(
+      noRows.view(), finiteSource.view(), twoOutputs.view(),
+      Limits{.elements = 0U, .bytes = 0U, .evaluations = 0U});
+  VSS_CHECK(emptyOutput.hasValue());
+  VSS_CHECK(emptyOutput.value().rows() == 0U);
+  VSS_CHECK(emptyOutput.value().columns() == 2U);
+  const Matrix nonFiniteSource(1U, 1U,
+                               std::numeric_limits<Scalar>::quiet_NaN());
+  const auto emptyOutputWithNonFinite = covariance::crossCovarianceFromMaps(
+      noRows.view(), nonFiniteSource.view(), twoOutputs.view(),
+      Limits{.elements = 0U, .bytes = 0U, .evaluations = 0U});
+  VSS_CHECK(!emptyOutputWithNonFinite.hasValue());
+  VSS_CHECK(emptyOutputWithNonFinite.status().code() ==
+            ErrorCode::NonFiniteInput);
+
+  const Matrix tooLargeLeft(1U, 1U, 2.0);
+  const Matrix tooLargeCross(1U, 1U, std::numeric_limits<Scalar>::max());
+  const Matrix unitRight(1U, 1U, 1.0);
+  const auto overflow = covariance::crossCovarianceFromMaps(
+      tooLargeLeft.view(), tooLargeCross.view(), unitRight.view(), limits());
+  VSS_CHECK(!overflow.hasValue());
+  VSS_CHECK(overflow.status().code() == ErrorCode::NonFiniteResult);
+
   const Matrix scaleLeft(1U, 1U, 2.0);
   const Matrix maximum(1U, 1U, std::numeric_limits<Scalar>::max());
   const Matrix quarter(1U, 1U, 0.25);
@@ -95,17 +163,19 @@ void emptyScaledAndInvalidInputs() {
   VSS_CHECK(invalid.status().code() == ErrorCode::NonFiniteInput);
 
   const auto denied = covariance::crossCovarianceFromMaps(
-      scaleLeft.view(), maximum.view(), quarter.view(), {0U, 0U, 0U});
+      scaleLeft.view(), maximum.view(), quarter.view(),
+      Limits{.elements = 0U, .bytes = 0U, .evaluations = 0U});
   VSS_CHECK(!denied.hasValue());
   VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
 }
 
 PropagationResult propagation(Vector mean, Matrix covariance) {
-  return {std::move(mean),
-          std::move(covariance),
-          Approximation::exact,
-          {},
-          PropagationCovarianceCheck::positive_semidefinite};
+  return PropagationResult{
+      .mean = std::move(mean),
+      .covariance = std::move(covariance),
+      .method = Approximation::exact,
+      .diagnostics = {},
+      .covariance_check = PropagationCovarianceCheck::positive_semidefinite};
 }
 
 void uncertaintySummaries() {
@@ -121,6 +191,13 @@ void uncertaintySummaries() {
   VSS_CHECK(summary.value().expanded.at(1U) == 6.0);
   VSS_CHECK(summary.value().coverage_factor == 2.0);
   VSS_CHECK(!summary.value().lower && !summary.value().upper);
+
+  const Vector reversedLower{std::array<Scalar, 2>{-1.0, 2.0}};
+  const Vector reversedUpper{std::array<Scalar, 2>{9.0, 1.0}};
+  const auto reversedBounds = covariance::summarizeUncertainty(
+      value, 1.0, reversedLower.view(), reversedUpper.view(), limits());
+  VSS_CHECK(!reversedBounds.hasValue());
+  VSS_CHECK(reversedBounds.status().code() == ErrorCode::InvalidDomain);
 
   const Vector lower{std::array<Scalar, 2>{-1.0, -8.0}};
   const Vector upper{std::array<Scalar, 2>{9.0, 1.0}};
@@ -156,7 +233,8 @@ void uncertaintySummaries() {
            upper.view(), limits(), ErrorCode::NonFiniteInput);
   rejected(value, std::numeric_limits<Scalar>::infinity(), std::nullopt,
            std::nullopt, limits(), ErrorCode::NonFiniteInput);
-  rejected(value, 1.0, lower.view(), upper.view(), {0U, 0U, 0U},
+  rejected(value, 1.0, lower.view(), upper.view(),
+           Limits{.elements = 0U, .bytes = 0U, .evaluations = 0U},
            ErrorCode::ResourceLimit);
 
   auto mismatch = value;
@@ -194,6 +272,13 @@ void uncertaintySummaries() {
   VSS_CHECK(roundoff.hasValue());
   VSS_CHECK(roundoff.value().standard.at(0U) == 1.0);
   VSS_CHECK(roundoff.value().standard.at(1U) == 1.0);
+
+  auto rankOne = propagation(Vector(2U), matrix({{1.0, 1.0}, {1.0, 1.0}}));
+  const auto rankOneSummary = covariance::summarizeUncertainty(
+      rankOne, 1.0, std::nullopt, std::nullopt, limits());
+  VSS_CHECK(rankOneSummary.hasValue());
+  VSS_CHECK(rankOneSummary.value().standard.at(0U) == 1.0);
+  VSS_CHECK(rankOneSummary.value().standard.at(1U) == 1.0);
   auto overflow = propagation(Vector(1U), Matrix(1U, 1U, 8.0));
   rejected(overflow, std::numeric_limits<Scalar>::max(), std::nullopt,
            std::nullopt, limits(), ErrorCode::NonFiniteResult);
