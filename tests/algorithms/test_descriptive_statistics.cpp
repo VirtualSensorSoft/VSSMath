@@ -79,6 +79,15 @@ void ordinaryFiniteSample() {
             std::sqrt(7.5));
 }
 
+void retainedC018Examples() {
+  const Vector values = vector({1.0, 2.0, 4.0});
+  checkNear(vss::math::statistics::mean(values.view()).value(), 7.0 / 3.0);
+  checkNear(vss::math::statistics::populationVariance(values.view()).value(),
+            14.0 / 9.0);
+  checkNear(vss::math::statistics::sampleVariance(values.view()).value(),
+            7.0 / 3.0);
+}
+
 void offsetStability() {
   const Vector values =
       vector({1000000000001.0, 1000000000002.0, 1000000000003.0});
@@ -172,6 +181,7 @@ void largeFiniteVarianceDoesNotOverflow() {
 int main() {
   publicContract();
   ordinaryFiniteSample();
+  retainedC018Examples();
   offsetStability();
   rootMeanSquare();
   emptyInput();
