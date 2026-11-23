@@ -10,6 +10,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <random>
 #include <span>
 #include <vector>
 #include <vss/math/Core.hpp>
@@ -86,6 +87,34 @@ WeightSpec fixedWeights(const Vector& values) {
           .frequencyCounts = {}};
 }
 
+WeightSpec unweighted() {
+  return {.rule = WeightRule::unweighted,
+          .rowWeights = std::nullopt,
+          .componentWeights = std::nullopt,
+          .frequencyCounts = {}};
+}
+
+void unweightedMeanAndCovarianceUseUnitMasses() {
+  const Matrix values = matrix({{1.0}, {2.0}, {4.0}});
+  const auto mean = weightedMean(sample(values), unweighted(), limits());
+  const auto covariance =
+      weightedEmpiricalCovariance(sample(values), unweighted(), limits());
+  VSS_CHECK(mean && covariance);
+  close(mean.value().value.at(0U), 7.0 / 3.0);
+  close(covariance.value().value.at(0U, 0U), 14.0 / 9.0);
+  VSS_CHECK(mean.value().diagnostics.weight == WeightRule::unweighted);
+  VSS_CHECK(covariance.value().diagnostics.weight == WeightRule::unweighted);
+  VSS_CHECK(mean.value().diagnostics.global.positive == 3U);
+  VSS_CHECK(covariance.value().diagnostics.global.positive == 3U);
+
+  WeightSpec malformed = unweighted();
+  const Vector supplied = vector({1.0, 1.0, 1.0});
+  malformed.rowWeights = supplied.view();
+  const auto rejected = weightedMean(sample(values), malformed, limits());
+  VSS_CHECK(!rejected);
+  VSS_CHECK(rejected.status().code() == ErrorCode::InvalidDomain);
+}
+
 void weightedScalarMeanAndEmpiricalVariance() {
   const Matrix values = matrix({{0.0}, {3.0}});
   const Vector weights = vector({1.0, 2.0});
@@ -147,6 +176,8 @@ void componentWeightsAndPerCoordinateSupport() {
   close(estimate.value().value.at(1U), 20.0);
   VSS_CHECK(estimate.value().diagnostics.coordinate_support.view().size() ==
             2U);
+  VSS_CHECK(estimate.value().diagnostics.global.valid == 3U);
+  VSS_CHECK(estimate.value().diagnostics.global.positive == 2U);
   VSS_CHECK(
       estimate.value().diagnostics.coordinate_support.view()[0].positive == 1U);
   VSS_CHECK(
@@ -281,8 +312,16 @@ void fixedWeightCovarianceRejectsInvalidInputs() {
   const Vector singular = vector({1.0, std::numeric_limits<Scalar>::min()});
   const auto nearSingular = unbiasedFixedWeightedCovariance(
       sample(values), fixedWeights(singular), limits());
-  VSS_CHECK(!nearSingular);
-  VSS_CHECK(nearSingular.status().code() == ErrorCode::InvalidDomain);
+  VSS_CHECK(nearSingular);
+  close(nearSingular.value().value.at(0U, 0U), 4.5);
+
+  const Vector beyondScaledRange =
+      vector({std::numeric_limits<Scalar>::denorm_min(),
+              std::numeric_limits<Scalar>::max()});
+  const auto representable = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(beyondScaledRange), limits());
+  VSS_CHECK(representable);
+  close(representable.value().value.at(0U, 0U), 4.5);
 
   const Vector weights = vector({1.0, 1.0});
   const auto limited = unbiasedFixedWeightedCovariance(
@@ -327,6 +366,102 @@ void weightedMeanAndLinearEstimateCovariance() {
       {.elements = 0U, .bytes = 0U, .evaluations = 0U});
   VSS_CHECK(!limited);
   VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+}
+
+void fixedWeightCovarianceHandlesExtremeWeightRatios() {
+  const Matrix values = matrix({{0.0, 0.0}, {2.0, -4.0}});
+  const Vector weights = vector({1.0, 1.0e100});
+  const auto estimate = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(weights), limits());
+  VSS_CHECK(estimate);
+  close(estimate.value().value.at(0U, 0U), 2.0);
+  close(estimate.value().value.at(0U, 1U), -4.0);
+  close(estimate.value().value.at(1U, 0U), -4.0);
+  close(estimate.value().value.at(1U, 1U), 8.0);
+
+  const Matrix reversed = matrix({{2.0, -4.0}, {0.0, 0.0}});
+  const Vector reversedWeights = vector({1.0e100, 1.0});
+  const auto reversedEstimate = unbiasedFixedWeightedCovariance(
+      sample(reversed), fixedWeights(reversedWeights), limits());
+  VSS_CHECK(reversedEstimate);
+  for (Index row = 0U; row < 2U; ++row) {
+    for (Index column = 0U; column < 2U; ++column) {
+      close(reversedEstimate.value().value.at(row, column),
+            estimate.value().value.at(row, column));
+    }
+  }
+
+  const Vector rescaledWeights = vector({1.0e100, 1.0e200});
+  const auto rescaled = unbiasedFixedWeightedCovariance(
+      sample(values), fixedWeights(rescaledWeights), limits());
+  VSS_CHECK(rescaled);
+  close(rescaled.value().value.at(0U, 0U), 2.0);
+  close(rescaled.value().value.at(0U, 1U), -4.0);
+  close(rescaled.value().value.at(1U, 1U), 8.0);
+}
+
+struct CoverageCounts final {
+  std::uint64_t nonpositive = 0U;
+  std::uint64_t jointCoverage = 0U;
+  std::uint64_t diagonalOnlyCoverage = 0U;
+};
+
+CoverageCounts runSharedBiasArm(std::uint64_t seed, bool offset) {
+  constexpr std::uint64_t replicates = 131072U;
+  constexpr Scalar z95 = 1.95996398454;
+  constexpr Scalar covarianceVariance = 4.5;
+  constexpr Scalar diagonalVariance = 2.5;
+  std::mt19937_64 generator(seed);
+  std::normal_distribution<Scalar> standardNormal(0.0, 1.0);
+  CoverageCounts counts;
+  for (std::uint64_t i = 0U; i < replicates; ++i) {
+    const Scalar shared = 2.0 * standardNormal(generator);
+    const Scalar first =
+        shared + standardNormal(generator) + (offset ? 2.0 : 0.0);
+    const Scalar second =
+        shared + standardNormal(generator) + (offset ? 2.0 : 0.0);
+    const Scalar corrected = 0.5 * ((first - (offset ? 2.0 : 0.0)) +
+                                    (second - (offset ? 2.0 : 0.0)));
+    counts.nonpositive += corrected <= 0.0 ? 1U : 0U;
+    counts.jointCoverage +=
+        std::abs(corrected) <= z95 * std::sqrt(covarianceVariance) ? 1U : 0U;
+    counts.diagonalOnlyCoverage +=
+        std::abs(corrected) <= z95 * std::sqrt(diagonalVariance) ? 1U : 0U;
+  }
+  return counts;
+}
+
+void sharedBiasMonteCarloCoverageIsQualified() {
+  constexpr Scalar replicates = 131072.0;
+  constexpr Scalar radius = 0.008444020861 + 1.0e-8;
+  const Matrix averageMap = matrix({{0.5, 0.5}});
+  const Matrix jointCovariance = matrix({{5.0, 4.0}, {4.0, 5.0}});
+  const Matrix diagonalOnlyCovariance = matrix({{5.0, 0.0}, {0.0, 5.0}});
+  const auto propagated = linearEstimateCovariance(
+      averageMap.view(), jointCovariance.view(), limits());
+  const auto diagonalOnly = linearEstimateCovariance(
+      averageMap.view(), diagonalOnlyCovariance.view(), limits());
+  VSS_CHECK(propagated && diagonalOnly);
+  close(propagated.value().at(0U, 0U), 4.5);
+  close(diagonalOnly.value().at(0U, 0U), 2.5);
+  const auto checkRate = [=](std::uint64_t count, Scalar target) {
+    const Scalar observed = static_cast<Scalar>(count) / replicates;
+    VSS_CHECK(std::abs(observed - target) <= radius);
+  };
+  const auto centered = runSharedBiasArm(0x31b97a420e6d5c81ULL, false);
+  const auto offset = runSharedBiasArm(0xa54ff53a5f1d36f1ULL, true);
+  checkRate(centered.nonpositive, 0.5);
+  checkRate(centered.jointCoverage, 0.95);
+  checkRate(centered.diagonalOnlyCoverage, 0.855949126325);
+  checkRate(offset.nonpositive, 0.5);
+  checkRate(offset.jointCoverage, 0.95);
+  checkRate(offset.diagonalOnlyCoverage, 0.855949126325);
+  std::cout
+      << "C027 shared-bias P08 seeds=0x31b97a420e6d5c81,0xa54ff53a5f1d36f1 "
+      << "N=131072 centered=" << centered.nonpositive << ','
+      << centered.jointCoverage << ',' << centered.diagonalOnlyCoverage
+      << " offset=" << offset.nonpositive << ',' << offset.jointCoverage << ','
+      << offset.diagonalOnlyCoverage << '\n';
 }
 
 void rejectsMalformedInputsAndUnrepresentableCovariance() {
@@ -566,6 +701,7 @@ void precisionWeightedMeanRejectsInvalidInputsAndResourceExcess() {
 } // namespace
 
 int main() try {
+  unweightedMeanAndCovarianceUseUnitMasses();
   weightedScalarMeanAndEmpiricalVariance();
   rowWeightScalingAndVectorCovariance();
   componentWeightsAndPerCoordinateSupport();
@@ -573,6 +709,8 @@ int main() try {
   rejectsUnsupportedRulesAndLimits();
   covarianceUsesCompleteRowsAndRejectsNonFiniteValues();
   fixedWeightUnbiasedCovariance();
+  fixedWeightCovarianceHandlesExtremeWeightRatios();
+  sharedBiasMonteCarloCoverageIsQualified();
   fixedWeightCovarianceRejectsInvalidInputs();
   weightedMeanAndLinearEstimateCovariance();
   rejectsMalformedInputsAndUnrepresentableCovariance();

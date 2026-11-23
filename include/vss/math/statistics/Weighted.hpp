@@ -14,11 +14,11 @@ namespace vss::math::statistics {
 
 /// @brief Supplies exactly one supported weight representation to an
 ///        estimator.
-/// @details C025 supports empirical row weights and componentwise weights for
-///          the weighted mean. Other rules are reserved for separately
-///          specified estimators and are rejected here. All views are borrowed
-///          only for the duration of the call. Frequency counts are reserved
-///          for the frequency-weighted contracts.
+/// @details C025 supports unweighted unit masses, empirical row weights and
+///          componentwise weights for the mean. Other rules are reserved for
+///          separately specified estimators and are rejected here. All views
+///          are borrowed only for the duration of the call. Frequency counts
+///          are reserved for the frequency-weighted contracts.
 struct WeightSpec final {
   /// @brief Declares the statistical interpretation of the supplied weights.
   WeightRule rule;
@@ -32,7 +32,8 @@ struct WeightSpec final {
 
 /// @brief Estimates a weighted coordinate mean from a borrowed population.
 /// @param sample Rows of observations and optional cell-validity mask.
-/// @param weights Empirical row weights or componentwise mean weights.
+/// @param weights Unweighted unit masses, empirical row weights or
+///        componentwise mean weights.
 /// @param limits Maximum output and simultaneously required workspace storage.
 /// @return Owned coordinate means and per-coordinate support/weight
 ///         diagnostics.
@@ -46,7 +47,8 @@ struct WeightSpec final {
 
 /// @brief Estimates weighted empirical covariance on common complete rows.
 /// @param sample Rows of observations and optional cell-validity mask.
-/// @param weights Nonnegative empirical row weights, aligned with rows.
+/// @param weights Unweighted unit masses or nonnegative empirical row weights,
+///        aligned with rows.
 /// @param limits Maximum output and simultaneously required workspace storage.
 /// @return Owned d-by-d covariance and support diagnostics.
 /// @details Uses the normalized weights `a_i = w_i / sum(w)` and a centered
@@ -71,8 +73,12 @@ weightedEmpiricalCovariance(const SampleView& sample, const WeightSpec& weights,
 ///          complete rows. The correction is accumulated as the stable
 ///          unordered-pair sum `2 sum_{i<j}(s_i s_j) / (sum_i s_i)^2`, with
 ///          maximum-scaled weights `s_i`. Requires at least two positive
-///          retained weights and rejects corrections no greater than
-///          `64 * epsilon`. This is unbiased only when weights are fixed
+///          retained weights and rejects only an unrepresentable or invalid
+///          correction; a small positive weight ratio alone is not grounds for
+///          rejection. For exactly two retained observations, it uses the
+///          equivalent half-outer-product identity to avoid losing a
+///          representable result when a normalized weight ratio underflows.
+///          This is unbiased only when weights are fixed
 ///          independently of IID observations. Complexity is O(Nd^2); owned
 ///          output and workspace are O(d^2).
 [[nodiscard]] Result<Estimate<Matrix>>

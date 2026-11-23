@@ -1399,6 +1399,23 @@ int main() {
   knownVariances.at(1U, 0U) = 3.0;
   const auto precisionAverage = statistics::precisionWeightedMean(
       weightedSample, knownVariances.view(), Limits{16U, 1024U, 0U});
+  Matrix heterogeneousRows(2U, 2U);
+  heterogeneousRows.at(0U, 0U) = 1.0;
+  heterogeneousRows.at(1U, 0U) = 3.0;
+  heterogeneousRows.at(0U, 1U) = 2.0;
+  heterogeneousRows.at(1U, 1U) = 6.0;
+  const std::array<Index, 1U> heterogeneousShape{2U};
+  const SampleView heterogeneousSample{
+      heterogeneousRows.view(), heterogeneousShape, {}};
+  const Scalar tinyVariance = std::numeric_limits<Scalar>::min() / 8.0;
+  Matrix heterogeneousVariances(2U, 2U);
+  heterogeneousVariances.at(0U, 0U) = tinyVariance;
+  heterogeneousVariances.at(1U, 0U) = tinyVariance;
+  heterogeneousVariances.at(0U, 1U) = 3.0;
+  heterogeneousVariances.at(1U, 1U) = 1.0;
+  const auto heterogeneousPrecision = statistics::precisionWeightedMean(
+      heterogeneousSample, heterogeneousVariances.view(),
+      Limits{16U, 1024U, 0U});
   if (!require(
           installedMoments.hasValue() &&
               installedMoments.value().terms.view().size() == 2U &&
@@ -1425,7 +1442,20 @@ int main() {
                   1.0e-12 &&
               precisionAverage.value().error_covariance.has_value() &&
               std::abs(precisionAverage.value().error_covariance->at(0U, 0U) -
-                       0.75) < 1.0e-12,
+                       0.75) < 1.0e-12 &&
+              heterogeneousPrecision.hasValue() &&
+              std::abs(heterogeneousPrecision.value().value.at(0U) - 2.0) <
+                  1.0e-12 &&
+              std::abs(heterogeneousPrecision.value().value.at(1U) - 5.0) <
+                  1.0e-12 &&
+              heterogeneousPrecision.value().error_covariance.has_value() &&
+              std::abs(
+                  heterogeneousPrecision.value().error_covariance->at(0U, 0U) /
+                      tinyVariance -
+                  0.5) < 1.0e-12 &&
+              std::abs(
+                  heterogeneousPrecision.value().error_covariance->at(1U, 1U) -
+                  0.75) < 1.0e-12,
           "installed weighted-population APIs failed")) {
     return 1;
   }
