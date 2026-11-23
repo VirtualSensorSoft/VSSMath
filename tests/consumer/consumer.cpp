@@ -38,6 +38,7 @@
 #include <vss/math/linear/Sparse.hpp>
 #include <vss/math/linear/Structured.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
+#include <vss/math/statistics/Descriptive.hpp>
 #include <vss/math/statistics/MomentDiagnostics.hpp>
 #include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Order.hpp>
@@ -65,6 +66,54 @@ bool requireError(const ResultType& result, vss::math::ErrorCode code,
 
 int main() {
   using namespace vss::math;
+
+  {
+    const Vector retainedSample(std::array{1.0, 2.0, 4.0});
+    const auto retainedMean = statistics::mean(retainedSample.view());
+    const auto retainedPopulationVariance =
+        statistics::populationVariance(retainedSample.view());
+    const auto retainedSampleVariance =
+        statistics::sampleVariance(retainedSample.view());
+    if (!require(retainedMean.hasValue() &&
+                     std::abs(retainedMean.value() - 7.0 / 3.0) < 1.0e-12 &&
+                     retainedPopulationVariance.hasValue() &&
+                     std::abs(retainedPopulationVariance.value() - 14.0 / 9.0) <
+                         1.0e-12 &&
+                     retainedSampleVariance.hasValue() &&
+                     std::abs(retainedSampleVariance.value() - 7.0 / 3.0) <
+                         1.0e-12,
+                 "installed retained descriptive APIs failed")) {
+      return 1;
+    }
+
+    const Vector emptySample;
+    if (!requireError(statistics::mean(emptySample.view()),
+                      ErrorCode::InvalidExtent,
+                      "installed retained mean accepted an empty sample") ||
+        !requireError(statistics::populationVariance(emptySample.view()),
+                      ErrorCode::InvalidExtent,
+                      "installed retained population variance accepted an "
+                      "empty sample") ||
+        !requireError(
+            statistics::sampleVariance(emptySample.view()),
+            ErrorCode::InvalidExtent,
+            "installed retained sample variance accepted an empty sample")) {
+      return 1;
+    }
+
+    const Vector singletonSample(std::array{5.0});
+    if (!require(
+            statistics::populationVariance(singletonSample.view()).hasValue() &&
+                statistics::populationVariance(singletonSample.view())
+                        .value() == 0.0,
+            "installed retained population variance singleton failed") ||
+        !requireError(
+            statistics::sampleVariance(singletonSample.view()),
+            ErrorCode::InsufficientSamples,
+            "installed retained sample variance accepted a singleton")) {
+      return 1;
+    }
+  }
 
   const std::array<Extent, 2> tensorExtents{2U, 2U};
   const auto tensorShape = TensorShape::create(tensorExtents);
