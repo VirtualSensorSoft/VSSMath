@@ -92,6 +92,12 @@ bool completeRow(const SampleView& sample, Index row) {
 
 Status validateWeightSpec(const WeightSpec& weights, const SampleView& sample,
                           bool covariance) {
+  if (weights.rule == WeightRule::unweighted &&
+      !weights.rowWeights.has_value() &&
+      !weights.componentWeights.has_value() &&
+      weights.frequencyCounts.empty()) {
+    return Status::success();
+  }
   if (weights.rule == WeightRule::empirical && weights.rowWeights.has_value() &&
       !weights.componentWeights.has_value() &&
       weights.frequencyCounts.empty()) {
@@ -115,12 +121,16 @@ Status validateWeightSpec(const WeightSpec& weights, const SampleView& sample,
   return Status::failure(
       ErrorCode::InvalidDomain,
       covariance
-          ? "weighted empirical covariance requires empirical row weights"
+          ? "empirical covariance requires unweighted or empirical row weights"
           : "weighted mean requires empirical row weights or componentwise "
             "weights");
 }
 
 Scalar rowWeightAt(const WeightSpec& weights, Index row) {
+  if (weights.rule == WeightRule::unweighted) {
+    (void)row;
+    return 1.0;
+  }
   if (weights.rowWeights.has_value()) {
     return weights.rowWeights.value().at(row);
   }
@@ -135,7 +145,8 @@ Scalar componentWeightAt(const WeightSpec& weights, Index row, Index column) {
 }
 
 Scalar weightAt(const WeightSpec& weights, Index row, Index column) {
-  if (weights.rule == WeightRule::empirical ||
+  if (weights.rule == WeightRule::unweighted ||
+      weights.rule == WeightRule::empirical ||
       weights.rule == WeightRule::fixed_iid) {
     return rowWeightAt(weights, row);
   }
@@ -286,7 +297,6 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
   Vector mean(columns);
   std::vector<Support> coordinateSupports;
   coordinateSupports.reserve(columns);
-  Index maximumCoordinatePositive = 0U;
 
   for (Index column = 0U; column < columns; ++column) {
     Scalar maximumWeight = 0.0;
@@ -349,8 +359,6 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
                                     "weighted mean is non-finite");
     }
     mean.at(column) = estimate;
-    maximumCoordinatePositive =
-        std::max(maximumCoordinatePositive, positiveCount);
     coordinateSupports.push_back(
         supportFor(sample.rows.rows(), validCount, positiveCount, maximumWeight,
                    scaledMass, power2.total() / (scaledMass * scaledMass),
@@ -364,13 +372,29 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
   }
   Index completeValid = 0U;
   Index completePositive = 0U;
+  Index componentValidRows = 0U;
+  Index componentPositiveRows = 0U;
   Scalar globalMaximum = 0.0;
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
+    bool hasValidComponent = false;
+    bool hasPositiveComponent = false;
+    if (weights.rule == WeightRule::componentwise) {
+      for (Index column = 0U; column < columns; ++column) {
+        if (validCell(sample, row, column)) {
+          hasValidComponent = true;
+          hasPositiveComponent = hasPositiveComponent ||
+                                 componentWeightAt(weights, row, column) > 0.0;
+        }
+      }
+      componentValidRows += hasValidComponent ? 1U : 0U;
+      componentPositiveRows += hasPositiveComponent ? 1U : 0U;
+    }
     if (!completeRow(sample, row)) {
       continue;
     }
     ++completeValid;
-    if (weights.rule == WeightRule::empirical) {
+    if (weights.rule == WeightRule::empirical ||
+        weights.rule == WeightRule::unweighted) {
       const Scalar weight = rowWeightAt(weights, row);
       if (weight > 0.0) {
         ++completePositive;
@@ -379,17 +403,21 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
     }
   }
   Support global{.input = sample.rows.rows(),
-                 .valid = completeValid,
-                 .positive = weights.rule == WeightRule::empirical
-                                 ? completePositive
-                                 : maximumCoordinatePositive,
+                 .valid = weights.rule == WeightRule::componentwise
+                              ? componentValidRows
+                              : completeValid,
+                 .positive = weights.rule == WeightRule::componentwise
+                                 ? componentPositiveRows
+                                 : completePositive,
                  .frequency_mass = std::nullopt,
                  .weight_mass = std::nullopt,
                  .normalized_weight_powers = {},
                  .effective_count = std::nullopt,
                  .degrees_of_freedom = std::nullopt,
                  .squared_weight_mass = std::nullopt};
-  if (weights.rule == WeightRule::empirical && completePositive > 0U) {
+  if ((weights.rule == WeightRule::empirical ||
+       weights.rule == WeightRule::unweighted) &&
+      completePositive > 0U) {
     detail::CompensatedSum mass;
     detail::CompensatedSum power2;
     detail::CompensatedSum power3;
@@ -833,6 +861,8 @@ unbiasedFixedWeightedCovariance(const SampleView& sample,
   }
 
   Index positiveCount = 0U;
+  Index firstPositiveRow = 0U;
+  Index secondPositiveRow = 0U;
   Scalar maximumWeight = 0.0;
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
     if (!completeRow(sample, row)) {
@@ -840,6 +870,11 @@ unbiasedFixedWeightedCovariance(const SampleView& sample,
     }
     const Scalar weight = rowWeightAt(fixedWeights, row);
     if (weight > 0.0) {
+      if (positiveCount == 0U) {
+        firstPositiveRow = row;
+      } else if (positiveCount == 1U) {
+        secondPositiveRow = row;
+      }
       ++positiveCount;
       maximumWeight = std::max(maximumWeight, weight);
     }
@@ -868,10 +903,9 @@ unbiasedFixedWeightedCovariance(const SampleView& sample,
   const Scalar scaledMass = mass.total();
   const Scalar correction =
       (2.0 * pairProducts.total() / scaledMass) / scaledMass;
-  constexpr Scalar minimumCorrection =
-      64.0 * std::numeric_limits<Scalar>::epsilon();
-  if (!std::isfinite(correction) || correction <= minimumCorrection ||
-      correction > 1.0) {
+  const bool twoPointIdentity = positiveCount == 2U;
+  if ((!std::isfinite(correction) || !(correction > 0.0) || correction > 1.0) &&
+      (!twoPointIdentity || !std::isfinite(correction) || correction > 1.0)) {
     return fail<Estimate<Matrix>>(
         ErrorCode::InvalidDomain,
         "fixed-IID unbiased covariance correction is singular or invalid");
@@ -887,7 +921,17 @@ unbiasedFixedWeightedCovariance(const SampleView& sample,
   Matrix& covariance = empiricalEstimate.value().value;
   for (Index row = 0U; row < covariance.rows(); ++row) {
     for (Index column = 0U; column < covariance.columns(); ++column) {
-      covariance.at(row, column) /= correction;
+      if (twoPointIdentity) {
+        const Scalar leftDifference = sample.rows.at(firstPositiveRow, row) -
+                                      sample.rows.at(secondPositiveRow, row);
+        const Scalar rightDifference =
+            sample.rows.at(firstPositiveRow, column) -
+            sample.rows.at(secondPositiveRow, column);
+        covariance.at(row, column) =
+            scaledProduct(leftDifference, rightDifference, 0.5);
+      } else {
+        covariance.at(row, column) /= correction;
+      }
       if (!std::isfinite(covariance.at(row, column))) {
         return fail<Estimate<Matrix>>(
             ErrorCode::NonFiniteResult,
@@ -898,8 +942,10 @@ unbiasedFixedWeightedCovariance(const SampleView& sample,
   auto& diagnostics = empiricalEstimate.value().diagnostics;
   diagnostics.weight = WeightRule::fixed_iid;
   diagnostics.algorithm =
-      "maximum-scaled compensated weighted covariance with fixed-IID "
-      "pair-sum correction";
+      twoPointIdentity
+          ? "fixed-IID two-observation half-outer-product identity"
+          : "maximum-scaled compensated weighted covariance with fixed-IID "
+            "pair-sum correction";
   diagnostics.premises =
       "complete rows with nonnegative weights fixed independently of IID "
       "observations";
