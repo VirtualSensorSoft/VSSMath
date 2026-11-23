@@ -39,15 +39,21 @@ void solvesWithAllThreeMethods() {
   // VSS-MATH-TRACEABILITY: C013
   const Vector rhs{std::array<Scalar, 2U>{2.0, 8.0}};
   const Vector zero(2U);
+  Index transpose_calls = 0U;
   const auto diagonal = [](ConstVectorView x) {
     return Result<Vector>::success(
         Vector{std::array<Scalar, 2U>{2.0 * x.at(0U), 4.0 * x.at(1U)}});
+  };
+  const auto forbidden_transpose = [&transpose_calls](ConstVectorView) {
+    ++transpose_calls;
+    return Result<Vector>::failure(ErrorCode::InvalidDomain,
+                                   "C013 must not invoke transpose");
   };
   const auto inverse = [](ConstVectorView x) {
     return Result<Vector>::success(
         Vector{std::array<Scalar, 2U>{x.at(0U) / 2.0, x.at(1U) / 4.0}});
   };
-  const linear::LinearMap spd{2U, 2U, diagonal, diagonal};
+  const linear::LinearMap spd{2U, 2U, diagonal, forbidden_transpose};
   const linear::LinearMap preconditioner{2U, 2U, inverse, inverse};
   const auto cg_result = linear::cg(spd, rhs.view(), zero.view(),
                                     &preconditioner, policy(), ample);
@@ -56,23 +62,42 @@ void solvesWithAllThreeMethods() {
   VSS_CHECK(cg_result.value().iterations == 1U);
   VSS_CHECK(std::abs(cg_result.value().value.at(0U) - 1.0) < 1e-12);
   VSS_CHECK(std::abs(cg_result.value().value.at(1U) - 2.0) < 1e-12);
+  const Scalar cg_residual =
+      std::hypot(rhs.at(0U) - 2.0 * cg_result.value().value.at(0U),
+                 rhs.at(1U) - 4.0 * cg_result.value().value.at(1U));
+  VSS_CHECK(cg_residual < 1e-12);
+  VSS_CHECK(std::abs(cg_result.value().residual_norm - cg_residual) < 1e-12);
+  VSS_CHECK(transpose_calls == 0U);
 
   const auto swap = [](ConstVectorView x) {
     return Result<Vector>::success(
         Vector{std::array<Scalar, 2U>{x.at(1U), x.at(0U)}});
   };
-  const linear::LinearMap indefinite{2U, 2U, swap, swap};
+  const linear::LinearMap indefinite{2U, 2U, swap, forbidden_transpose};
   const auto minres_result = linear::minres(indefinite, rhs.view(), zero.view(),
                                             nullptr, policy(), ample);
   VSS_CHECK(minres_result.hasValue());
   VSS_CHECK(minres_result.value().termination == Termination::converged);
   VSS_CHECK(std::abs(minres_result.value().value.at(0U) - 8.0) < 1e-12);
   VSS_CHECK(std::abs(minres_result.value().value.at(1U) - 2.0) < 1e-12);
+  const Scalar minres_residual =
+      std::hypot(rhs.at(0U) - minres_result.value().value.at(1U),
+                 rhs.at(1U) - minres_result.value().value.at(0U));
+  VSS_CHECK(minres_residual < 1e-12);
+  VSS_CHECK(std::abs(minres_result.value().residual_norm - minres_residual) <
+            1e-12);
+  VSS_CHECK(transpose_calls == 0U);
   const auto minres_preconditioned = linear::minres(
       indefinite, rhs.view(), zero.view(), &preconditioner, policy(), ample);
   VSS_CHECK(minres_preconditioned.hasValue());
   VSS_CHECK(std::abs(minres_preconditioned.value().value.at(0U) - 8.0) < 1e-12);
   VSS_CHECK(std::abs(minres_preconditioned.value().value.at(1U) - 2.0) < 1e-12);
+  const Scalar preconditioned_residual =
+      std::hypot(rhs.at(0U) - minres_preconditioned.value().value.at(1U),
+                 rhs.at(1U) - minres_preconditioned.value().value.at(0U));
+  VSS_CHECK(std::abs(minres_preconditioned.value().residual_norm -
+                     preconditioned_residual) < 1e-12);
+  VSS_CHECK(transpose_calls == 0U);
 
   const auto upper = [](ConstVectorView x) {
     return Result<Vector>::success(
@@ -85,6 +110,13 @@ void solvesWithAllThreeMethods() {
   VSS_CHECK(gmres_result.value().termination == Termination::converged);
   VSS_CHECK(std::abs(gmres_result.value().value.at(0U) + 2.0) < 1e-12);
   VSS_CHECK(std::abs(gmres_result.value().value.at(1U) - 4.0) < 1e-12);
+  const Scalar gmres_residual =
+      std::hypot(rhs.at(0U) - (gmres_result.value().value.at(0U) +
+                               gmres_result.value().value.at(1U)),
+                 rhs.at(1U) - 2.0 * gmres_result.value().value.at(1U));
+  VSS_CHECK(gmres_residual < 1e-12);
+  VSS_CHECK(std::abs(gmres_result.value().residual_norm - gmres_residual) <
+            1e-12);
 }
 
 void returnsVerifiedInitialAndCappedIterates() {
@@ -92,12 +124,14 @@ void returnsVerifiedInitialAndCappedIterates() {
   const Vector rhs{std::array<Scalar, 2U>{2.0, 8.0}};
   const Vector zero(2U);
   Index calls = 0U;
+  Index preconditioner_calls = 0U;
   const auto diagonal = [&calls](ConstVectorView x) {
     ++calls;
     return Result<Vector>::success(
         Vector{std::array<Scalar, 2U>{2.0 * x.at(0U), 4.0 * x.at(1U)}});
   };
-  const auto inverse = [](ConstVectorView x) {
+  const auto inverse = [&preconditioner_calls](ConstVectorView x) {
+    ++preconditioner_calls;
     return Result<Vector>::success(
         Vector{std::array<Scalar, 2U>{x.at(0U) / 2.0, x.at(1U) / 4.0}});
   };
@@ -110,6 +144,7 @@ void returnsVerifiedInitialAndCappedIterates() {
   VSS_CHECK(initial.value().iterations == 0U);
   VSS_CHECK(initial.value().termination == Termination::converged);
   VSS_CHECK(calls == 1U);
+  VSS_CHECK(preconditioner_calls == 0U);
 
   calls = 0U;
   const auto capped =
@@ -119,11 +154,16 @@ void returnsVerifiedInitialAndCappedIterates() {
   VSS_CHECK(capped.value().termination == Termination::cap);
   VSS_CHECK(std::abs(capped.value().residual_norm - std::sqrt(68.0)) < 1e-12);
   VSS_CHECK(calls == 1U);
+  VSS_CHECK(preconditioner_calls == 0U);
 
+  calls = 0U;
+  preconditioner_calls = 0U;
   const auto denied = linear::cg(counted, rhs.view(), zero.view(), &pre,
                                  policy(), Limits{4096U, 262144U, 1U});
   VSS_CHECK(!denied.hasValue());
   VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
+  VSS_CHECK(calls == 1U);
+  VSS_CHECK(preconditioner_calls == 0U);
 }
 
 void reportsCurvatureBreakdownAndRestartedRightPreconditioning() {
@@ -171,6 +211,11 @@ void reportsCurvatureBreakdownAndRestartedRightPreconditioning() {
   VSS_CHECK(capped.value().iterations == 1U);
   VSS_CHECK(std::abs(capped.value().value.at(0U) - 38.0 / 25.0) < 1e-12);
   VSS_CHECK(std::abs(capped.value().value.at(1U) - 76.0 / 25.0) < 1e-12);
+  const Scalar independent_residual =
+      std::hypot(rhs.at(0U) - (38.0 + 76.0) / 25.0, rhs.at(1U) - 152.0 / 25.0);
+  VSS_CHECK(std::abs(independent_residual - 80.0 / 25.0) < 1e-12);
+  VSS_CHECK(std::abs(capped.value().residual_norm - independent_residual) <
+            1e-12);
 }
 
 void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
@@ -197,6 +242,20 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
     }
     return Vector(result);
   };
+  const auto independent_residual =
+      [&vector_from](const std::array<Scalar, 9U>& matrix, const Vector& rhs,
+                     const Vector& candidate) {
+        std::array<Scalar, 3U> values{};
+        const std::array<Scalar, 3U> candidate_values{
+            candidate.at(0U), candidate.at(1U), candidate.at(2U)};
+        const Vector applied = vector_from(matrix, candidate_values);
+        for (Index i = 0U; i < values.size(); ++i) {
+          values.at(i) = rhs.at(i) - applied.at(i);
+        }
+        return std::sqrt(values.at(0U) * values.at(0U) +
+                         values.at(1U) * values.at(1U) +
+                         values.at(2U) * values.at(2U));
+      };
   const Vector solution(expected);
   const Vector zero(3U);
   const std::array<Scalar, 9U> spd_values{4.0, 1.0, 0.0, 1.0, 3.0,
@@ -212,6 +271,11 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
   for (Index i = 0U; i < 3U; ++i) {
     VSS_CHECK(std::abs(cg_result.value().value.at(i) - expected.at(i)) < 1e-11);
   }
+  const Scalar cg_true_residual =
+      independent_residual(spd_values, spd_rhs, cg_result.value().value);
+  VSS_CHECK(cg_true_residual < 1e-11);
+  VSS_CHECK(std::abs(cg_result.value().residual_norm - cg_true_residual) <
+            1e-11);
 
   const std::array<Scalar, 9U> indefinite_values{0.0, 1.0, 0.0, 1.0, 0.0,
                                                  1.0, 0.0, 1.0, 2.0};
@@ -224,6 +288,11 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
     VSS_CHECK(std::abs(minres_result.value().value.at(i) - expected.at(i)) <
               1e-11);
   }
+  const Scalar minres_true_residual = independent_residual(
+      indefinite_values, indefinite_rhs, minres_result.value().value);
+  VSS_CHECK(minres_true_residual < 1e-11);
+  VSS_CHECK(std::abs(minres_result.value().residual_norm -
+                     minres_true_residual) < 1e-11);
 
   const std::array<Scalar, 9U> general_values{1.0, 1.0, 0.0, 0.0, 2.0,
                                               1.0, 1.0, 0.0, 3.0};
@@ -238,6 +307,11 @@ void handlesThreeDimensionalSystemsAgainstKnownSolutions() {
     VSS_CHECK(std::abs(gmres_result.value().value.at(i) - expected.at(i)) <
               1e-11);
   }
+  const Scalar gmres_true_residual = independent_residual(
+      general_values, general_rhs, gmres_result.value().value);
+  VSS_CHECK(gmres_true_residual < 1e-11);
+  VSS_CHECK(std::abs(gmres_result.value().residual_norm - gmres_true_residual) <
+            1e-11);
 }
 
 void validatesCallbacksPoliciesAndBreakdown() {
