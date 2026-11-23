@@ -74,6 +74,10 @@ int main() {
         statistics::populationVariance(retainedSample.view());
     const auto retainedSampleVariance =
         statistics::sampleVariance(retainedSample.view());
+    const auto retainedPopulationStandardDeviation =
+        statistics::populationStandardDeviation(retainedSample.view());
+    const auto retainedSampleStandardDeviation =
+        statistics::sampleStandardDeviation(retainedSample.view());
     if (!require(retainedMean.hasValue() &&
                      std::abs(retainedMean.value() - 7.0 / 3.0) < 1.0e-12 &&
                      retainedPopulationVariance.hasValue() &&
@@ -81,7 +85,13 @@ int main() {
                          1.0e-12 &&
                      retainedSampleVariance.hasValue() &&
                      std::abs(retainedSampleVariance.value() - 7.0 / 3.0) <
-                         1.0e-12,
+                         1.0e-12 &&
+                     retainedPopulationStandardDeviation.hasValue() &&
+                     std::abs(retainedPopulationStandardDeviation.value() -
+                              std::sqrt(14.0) / 3.0) < 1.0e-12 &&
+                     retainedSampleStandardDeviation.hasValue() &&
+                     std::abs(retainedSampleStandardDeviation.value() -
+                              std::sqrt(7.0 / 3.0)) < 1.0e-12,
                  "installed retained descriptive APIs failed")) {
       return 1;
     }

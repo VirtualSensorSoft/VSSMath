@@ -88,6 +88,16 @@ void retainedC018Examples() {
             7.0 / 3.0);
 }
 
+void retainedC019Examples() {
+  const Vector values = vector({1.0, 2.0, 4.0});
+  checkNear(
+      vss::math::statistics::populationStandardDeviation(values.view()).value(),
+      std::sqrt(14.0) / 3.0);
+  checkNear(
+      vss::math::statistics::sampleStandardDeviation(values.view()).value(),
+      std::sqrt(7.0 / 3.0));
+}
+
 void offsetStability() {
   const Vector values =
       vector({1000000000001.0, 1000000000002.0, 1000000000003.0});
@@ -182,6 +192,7 @@ int main() {
   publicContract();
   ordinaryFiniteSample();
   retainedC018Examples();
+  retainedC019Examples();
   offsetStability();
   rootMeanSquare();
   emptyInput();
