@@ -919,20 +919,23 @@ unbiasedFixedWeightedCovariance(const SampleView& sample,
         std::string(empiricalEstimate.status().message()));
   }
   Matrix& covariance = empiricalEstimate.value().value;
-  for (Index row = 0U; row < covariance.rows(); ++row) {
-    for (Index column = 0U; column < covariance.columns(); ++column) {
+  for (Index coordinateRow = 0U; coordinateRow < covariance.rows();
+       ++coordinateRow) {
+    for (Index coordinateColumn = 0U; coordinateColumn < covariance.columns();
+         ++coordinateColumn) {
       if (twoPointIdentity) {
-        const Scalar leftDifference = sample.rows.at(firstPositiveRow, row) -
-                                      sample.rows.at(secondPositiveRow, row);
+        const Scalar leftDifference =
+            sample.rows.at(firstPositiveRow, coordinateRow) -
+            sample.rows.at(secondPositiveRow, coordinateRow);
         const Scalar rightDifference =
-            sample.rows.at(firstPositiveRow, column) -
-            sample.rows.at(secondPositiveRow, column);
-        covariance.at(row, column) =
+            sample.rows.at(firstPositiveRow, coordinateColumn) -
+            sample.rows.at(secondPositiveRow, coordinateColumn);
+        covariance.at(coordinateRow, coordinateColumn) =
             scaledProduct(leftDifference, rightDifference, 0.5);
       } else {
-        covariance.at(row, column) /= correction;
+        covariance.at(coordinateRow, coordinateColumn) /= correction;
       }
-      if (!std::isfinite(covariance.at(row, column))) {
+      if (!std::isfinite(covariance.at(coordinateRow, coordinateColumn))) {
         return fail<Estimate<Matrix>>(
             ErrorCode::NonFiniteResult,
             "unbiased fixed-IID covariance is outside the finite range");
