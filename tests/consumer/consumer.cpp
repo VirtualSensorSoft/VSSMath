@@ -62,10 +62,305 @@ bool requireError(const ResultType& result, vss::math::ErrorCode code,
   return require(!result.hasValue() && result.status().code() == code, message);
 }
 
+template <std::size_t N>
+vss::math::Matrix
+matrixFromArray(const std::array<vss::math::Scalar, N>& values,
+                vss::math::Extent rows, vss::math::Extent columns) {
+  vss::math::Matrix result(rows, columns);
+  for (std::size_t index = 0U; index < N; ++index) {
+    result.at(index / columns, index % columns) = values[index];
+  }
+  return result;
+}
+
+bool verifyRobustOrderStatisticContracts() {
+  using namespace vss::math;
+
+  constexpr Limits ample{4096U, 262144U, 0U};
+  const Vector values{std::array<Scalar, 4U>{1.0, 2.0, 3.0, 5.0}};
+  const auto mad =
+      statistics::medianAbsoluteDeviation(values.view(), 1.0, ample);
+  const auto linearIqr = statistics::interquartileRange(
+      values.view(), QuantileRule::linear, ample);
+  const auto inverseIqr = statistics::interquartileRange(
+      values.view(), QuantileRule::inverse_empirical, ample);
+  if (!require(mad.hasValue() && mad.value() == 1.0 && linearIqr.hasValue() &&
+                   linearIqr.value() == 1.75 && inverseIqr.hasValue() &&
+                   inverseIqr.value() == 2.0,
+               "installed MAD/IQR rules disagree with their contracts")) {
+    return false;
+  }
+
+  const Vector empty;
+  if (!requireError(
+          statistics::medianAbsoluteDeviation(empty.view(), 1.0, ample),
+          ErrorCode::InsufficientSamples,
+          "installed MAD accepted an empty sample") ||
+      !requireError(statistics::interquartileRange(empty.view(),
+                                                   QuantileRule::linear, ample),
+                    ErrorCode::InsufficientSamples,
+                    "installed IQR accepted an empty sample") ||
+      !requireError(
+          statistics::medianAbsoluteDeviation(values.view(), -1.0, ample),
+          ErrorCode::InvalidDomain,
+          "installed MAD accepted a negative scale")) {
+    return false;
+  }
+
+  const auto zeroScale =
+      statistics::medianAbsoluteDeviation(values.view(), 0.0, ample);
+  if (!require(zeroScale.hasValue() && zeroScale.value() == 0.0,
+               "installed MAD rejected the valid zero scale")) {
+    return false;
+  }
+
+  const Vector nonfinite{
+      std::array<Scalar, 2U>{1.0, std::numeric_limits<Scalar>::infinity()}};
+  if (!requireError(
+          statistics::medianAbsoluteDeviation(nonfinite.view(), 1.0, ample),
+          ErrorCode::NonFiniteInput,
+          "installed MAD accepted non-finite input") ||
+      !requireError(statistics::interquartileRange(nonfinite.view(),
+                                                   QuantileRule::linear, ample),
+                    ErrorCode::NonFiniteInput,
+                    "installed IQR accepted non-finite input")) {
+    return false;
+  }
+  constexpr Limits tooSmall{1U, 262144U, 0U};
+  if (!requireError(statistics::interquartileRange(
+                        values.view(), QuantileRule::linear, tooSmall),
+                    ErrorCode::ResourceLimit,
+                    "installed IQR ignored its element limit")) {
+    return false;
+  }
+
+  const Scalar maximum = std::numeric_limits<Scalar>::max();
+  const Vector wideMad{std::array<Scalar, 4U>{-1.0, 1.0, 3.0, 5.0}};
+  if (!requireError(
+          statistics::medianAbsoluteDeviation(wideMad.view(), maximum, ample),
+          ErrorCode::NonFiniteResult,
+          "installed MAD returned an unrepresentable result")) {
+    return false;
+  }
+  const Vector wideIqr{
+      std::array<Scalar, 4U>{-maximum, -maximum, maximum, maximum}};
+  return requireError(statistics::interquartileRange(
+                          wideIqr.view(), QuantileRule::linear, ample),
+                      ErrorCode::NonFiniteResult,
+                      "installed IQR returned an unrepresentable range");
+}
+
+bool verifyPopulationCovarianceContracts() {
+  using namespace vss::math;
+
+  constexpr Limits ample{4096U, 262144U, 0U};
+  constexpr statistics::PopulationPolicy empirical{
+      .normalization = statistics::VarianceMode::empirical,
+      .missingness = statistics::MissingMode::reject,
+      .estimand = Estimand::observed};
+  constexpr statistics::PopulationPolicy samplePolicy{
+      .normalization = statistics::VarianceMode::iid_sample,
+      .missingness = statistics::MissingMode::reject,
+      .estimand = Estimand::observed};
+  constexpr statistics::CenterSpec estimated{.rule = CenterRule::estimated,
+                                             .center = std::nullopt};
+
+  const Matrix left = matrixFromArray(
+      std::array<Scalar, 6U>{0.0, 1.0, 1.0, 0.0, 2.0, 2.0}, 3U, 2U);
+  const Matrix right = matrixFromArray(
+      std::array<Scalar, 6U>{2.0, 0.0, 1.0, 4.0, 5.0, 1.0}, 3U, 2U);
+  constexpr std::array<Index, 1U> shape{2U};
+  const SampleView leftView{
+      .rows = left.view(), .observation_shape = shape, .valid = {}};
+  const SampleView rightView{
+      .rows = right.view(), .observation_shape = shape, .valid = {}};
+  const auto cross = statistics::crossCovariance(leftView, rightView, estimated,
+                                                 estimated, empirical, ample);
+  const auto reverse = statistics::crossCovariance(
+      rightView, leftView, estimated, estimated, empirical, ample);
+  if (!require(
+          cross.hasValue() && reverse.hasValue() &&
+              cross.value().value.rows() == 2U &&
+              cross.value().value.columns() == 2U &&
+              cross.value().value.at(0U, 0U) == 1.0 &&
+              std::abs(cross.value().value.at(0U, 1U) - 1.0 / 3.0) < 1.0e-12 &&
+              std::abs(cross.value().value.at(1U, 0U) - 4.0 / 3.0) < 1.0e-12 &&
+              cross.value().value.at(1U, 1U) == -1.0 &&
+              reverse.value().value.rows() == 2U &&
+              reverse.value().value.columns() == 2U &&
+              reverse.value().value.at(0U, 0U) ==
+                  cross.value().value.at(0U, 0U) &&
+              reverse.value().value.at(0U, 1U) ==
+                  cross.value().value.at(1U, 0U) &&
+              reverse.value().value.at(1U, 0U) ==
+                  cross.value().value.at(0U, 1U) &&
+              reverse.value().value.at(1U, 1U) ==
+                  cross.value().value.at(1U, 1U),
+          "installed cross-covariance lost shape, values, or orientation")) {
+    return false;
+  }
+
+  const Matrix scalarLeft =
+      matrixFromArray(std::array<Scalar, 3U>{1.0, 2.0, 4.0}, 3U, 1U);
+  const Matrix scalarRight =
+      matrixFromArray(std::array<Scalar, 3U>{2.0, 1.0, 5.0}, 3U, 1U);
+  const auto scalarEmpirical =
+      statistics::crossCovariance(SampleView{.rows = scalarLeft.view()},
+                                  SampleView{.rows = scalarRight.view()},
+                                  estimated, estimated, empirical, ample);
+  const auto scalarSample =
+      statistics::crossCovariance(SampleView{.rows = scalarLeft.view()},
+                                  SampleView{.rows = scalarRight.view()},
+                                  estimated, estimated, samplePolicy, ample);
+  if (!require(
+          scalarEmpirical.hasValue() && scalarSample.hasValue() &&
+              std::abs(scalarEmpirical.value().value.at(0U, 0U) - 16.0 / 9.0) <
+                  1.0e-12 &&
+              std::abs(scalarSample.value().value.at(0U, 0U) - 8.0 / 3.0) <
+                  1.0e-12,
+          "installed scalar cross-covariance normalization is incorrect")) {
+    return false;
+  }
+
+  Matrix retained = matrixFromArray(
+      std::array<Scalar, 6U>{1.0, 2.0, 3.0, 6.0, 100.0, 200.0}, 3U, 2U);
+  constexpr std::array<std::uint8_t, 6U> valid{1U, 1U, 1U, 1U, 0U, 0U};
+  constexpr std::array<Index, 1U> vectorShape{2U};
+  const SampleView masked{.rows = retained.view(),
+                          .observation_shape = vectorShape,
+                          .valid = valid};
+  const statistics::PopulationPolicy commonSupport{
+      .normalization = statistics::VarianceMode::empirical,
+      .missingness = statistics::MissingMode::complete_row,
+      .estimand = Estimand::observed};
+  const statistics::PopulationPolicy commonSample{
+      .normalization = statistics::VarianceMode::iid_sample,
+      .missingness = statistics::MissingMode::complete_row,
+      .estimand = Estimand::observed};
+  const auto retainedCovariance =
+      statistics::covarianceMatrix(masked, estimated, commonSupport, ample);
+  const auto retainedSampleCovariance =
+      statistics::covarianceMatrix(masked, estimated, commonSample, ample);
+  Vector origin(2U, 0.0);
+  const statistics::CenterSpec knownOrigin{.rule = CenterRule::known,
+                                           .center = origin.view()};
+  const statistics::PopulationPolicy knownCenter{
+      .normalization = statistics::VarianceMode::known_center,
+      .missingness = statistics::MissingMode::complete_row,
+      .estimand = Estimand::observed};
+  const auto knownCenterCovariance =
+      statistics::covarianceMatrix(masked, knownOrigin, knownCenter, ample);
+  if (!require(retainedCovariance.hasValue() &&
+                   retainedCovariance.value().diagnostics.global.valid == 2U &&
+                   retainedCovariance.value().value.at(0U, 1U) == 2.0 &&
+                   retainedSampleCovariance.hasValue() &&
+                   retainedSampleCovariance.value().value.at(0U, 1U) == 4.0 &&
+                   knownCenterCovariance.hasValue() &&
+                   knownCenterCovariance.value().value.at(0U, 1U) == 10.0,
+               "installed covariance did not retain common complete rows")) {
+    return false;
+  }
+
+  const Matrix oneRow = matrixFromArray(std::array<Scalar, 1U>{1.0}, 1U, 1U);
+  const Matrix twoRows =
+      matrixFromArray(std::array<Scalar, 2U>{1.0, 2.0}, 2U, 1U);
+  const auto mismatch = statistics::crossCovariance(
+      SampleView{.rows = oneRow.view()}, SampleView{.rows = twoRows.view()},
+      estimated, estimated, empirical, ample);
+  return requireError(mismatch, ErrorCode::DimensionMismatch,
+                      "installed cross-covariance accepted mismatched rows");
+}
+
+bool verifyCorrelationContracts() {
+  using namespace vss::math;
+
+  constexpr Limits ample{4096U, 262144U, 0U};
+  SolvePolicy policy{};
+  policy.iteration.max_iterations = 128U;
+  policy.rank = RankPolicy::supported_subspace;
+  policy.reciprocal_condition_floor = 0.5;
+  const Matrix covariance =
+      matrixFromArray(std::array<Scalar, 4U>{4.0, 3.0, 3.0, 9.0}, 2U, 2U);
+  const auto correlation =
+      statistics::correlationMatrix(covariance.view(), policy, ample);
+  if (!require(
+          correlation.hasValue() && correlation.value().rank == 2U &&
+              correlation.value().classification ==
+                  covariance::CovarianceKind::ill_conditioned &&
+              std::abs(correlation.value().covariance.at(0U, 1U) - 0.5) <
+                  1.0e-12 &&
+              std::abs(correlation.value().reciprocal_condition.value_or(0.0) -
+                       1.0 / 3.0) < 1.0e-12,
+          "installed correlation scaling/conditioning is incorrect")) {
+    return false;
+  }
+
+  const Matrix singular =
+      matrixFromArray(std::array<Scalar, 4U>{1.0, -1.0, -1.0, 1.0}, 2U, 2U);
+  const auto singularCorrelation =
+      statistics::correlationMatrix(singular.view(), policy, ample);
+  if (!require(singularCorrelation.hasValue() &&
+                   singularCorrelation.value().rank == 1U &&
+                   singularCorrelation.value().covariance.at(0U, 1U) == -1.0,
+               "installed correlation rejected a valid singular matrix")) {
+    return false;
+  }
+
+  const Matrix redundant = matrixFromArray(
+      std::array<Scalar, 16U>{1.0, 0.5, 0.5, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5, 0.5,
+                              1.0, 1.0, 0.5, 0.5, 1.0, 1.0},
+      4U, 4U);
+  constexpr std::array<Index, 2U> selected{0U, 1U};
+  constexpr std::array<Index, 2U> conditioned{2U, 3U};
+  auto strictPolicy = policy;
+  strictPolicy.rank = RankPolicy::reject;
+  strictPolicy.reciprocal_condition_floor = 0.0;
+  const auto strictResult = statistics::partialCorrelation(
+      redundant.view(), selected, conditioned, strictPolicy, ample);
+  auto supportedPolicy = policy;
+  supportedPolicy.reciprocal_condition_floor = 0.0;
+  const auto supportedResult = statistics::partialCorrelation(
+      redundant.view(), selected, conditioned, supportedPolicy, ample);
+  if (!requireError(
+          strictResult, ErrorCode::RankDeficient,
+          "installed strict partial correlation accepted a rank loss") ||
+      !require(supportedResult.hasValue() &&
+                   std::abs(supportedResult.value().covariance.at(0U, 1U) -
+                            1.0 / 3.0) < 1.0e-12,
+               "installed partial correlation mishandled redundant support")) {
+    return false;
+  }
+
+  const Matrix identical =
+      matrixFromArray(std::array<Scalar, 4U>{1.0, 1.0, 1.0, 1.0}, 2U, 2U);
+  constexpr std::array<Index, 1U> oneSelected{0U};
+  constexpr std::array<Index, 1U> oneConditioned{1U};
+  if (!requireError(
+          statistics::partialCorrelation(identical.view(), oneSelected,
+                                         oneConditioned, supportedPolicy,
+                                         ample),
+          ErrorCode::InvalidDomain,
+          "installed partial correlation accepted zero residual variance")) {
+    return false;
+  }
+
+  const Matrix zeroVariance =
+      matrixFromArray(std::array<Scalar, 4U>{0.0, 0.0, 0.0, 1.0}, 2U, 2U);
+  return requireError(
+      statistics::correlationMatrix(zeroVariance.view(), policy, ample),
+      ErrorCode::InvalidDomain,
+      "installed correlation fabricated zero-variance units");
+}
+
 } // namespace
 
 int main() {
   using namespace vss::math;
+
+  if (!verifyRobustOrderStatisticContracts() ||
+      !verifyPopulationCovarianceContracts() || !verifyCorrelationContracts()) {
+    return 1;
+  }
 
   {
     const Vector retainedSample(std::array{1.0, 2.0, 4.0});
