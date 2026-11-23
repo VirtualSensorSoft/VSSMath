@@ -101,7 +101,7 @@ jobs:
           ccache --version
           ccache --show-stats
       - name: Restore compiler cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node.js 24
         with:
           path: ${{ runner.temp }}/vssmath-ccache
           key: vssmath-${{ github.repository }}-ubuntu-24.04-x64-${{ matrix.profile }}-${{ matrix.compiler }}-${{ steps.compiler.outputs.version }}-${{ github.sha }}
@@ -174,7 +174,7 @@ jobs:
           ccache --version
           ccache --show-stats
       - name: Restore fast GCC Debug compiler cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node.js 24
         with:
           path: ${{ runner.temp }}/vssmath-ccache
           key: vssmath-${{ github.repository }}-ubuntu-24.04-x64-gcc-debug-g++-${{ steps.compiler.outputs.version }}-${{ github.sha }}
@@ -430,7 +430,7 @@ jobs:
         id: compiler
         run: echo "version=$(g++ -dumpfullversion -dumpversion)" >> "$GITHUB_OUTPUT"
       - name: Restore coverage compiler cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node.js 24
         with:
           path: ${{ runner.temp }}/vssmath-ccache
           key: vssmath-${{ github.repository }}-ubuntu-24.04-x64-coverage-gcc-debug-${{ steps.compiler.outputs.version }}-${{ github.sha }}
@@ -468,7 +468,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Scan source tree
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # verified in existing organization CI
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, verified Node.js 24-compatible setup-trivy/cache
         with:
           version: v0.69.3
           scan-type: fs
@@ -489,7 +489,7 @@ jobs:
           cmake --build build-security --parallel 2
           cmake --install build-security --prefix "$RUNNER_TEMP/vssmath-install"
       - name: Scan installed package
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # verified in existing organization CI
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0, verified Node.js 24-compatible setup-trivy/cache
         with:
           version: v0.69.3
           scan-type: fs
