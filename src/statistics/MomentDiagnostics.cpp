@@ -780,7 +780,8 @@ Result<Matrix> whitenedRows(const SampleView& sample, SolvePolicy policy,
     return fail<Matrix>(ErrorCode::InsufficientSamples,
                         "Mardia mean estimation failed");
   }
-  const Vector& populationMean = meanEstimate.value().population_mean.value();
+  Vector populationMean =
+      std::move(meanEstimate.value().population_mean).value_or(Vector{});
   Matrix whitened(sample.rows.rows(), dimension, 0.0);
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
     for (Index output = 0U; output < dimension; ++output) {
@@ -1079,7 +1080,7 @@ Result<MomentValidity> validateMoments(const MomentEstimate& moments,
               ErrorCode::NonFiniteResult,
               "normalized Gram entry is not representable");
         }
-        const Scalar entry = static_cast<Scalar>(normalized);
+        const auto entry = static_cast<Scalar>(normalized);
         gram.at(row, column) = entry;
         if (row != column) {
           setSymmetricEntry(gram, row, column, entry);
