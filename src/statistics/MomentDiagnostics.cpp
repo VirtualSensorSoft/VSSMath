@@ -1,9 +1,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdint>
 #include <detail/CompensatedSum.hpp>
 #include <limits>
+#include <new>
 #include <numeric>
 #include <optional>
 #include <span>
@@ -17,10 +17,14 @@
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/SampleView.hpp>
+#include <vss/math/Tolerance.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/covariance/Diagnostics.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 #include <vss/math/statistics/MomentDiagnostics.hpp>
+#include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/Weighted.hpp>
 
@@ -220,6 +224,11 @@ bool nextTuplePermutation(std::array<Index, 4U>& tuple, Index size) {
   return true;
 }
 
+void setSymmetricEntry(Matrix& matrix, Index first, Index second,
+                       Scalar value) {
+  matrix.at(second, first) = value;
+}
+
 Status validateMomentTermShapes(const MomentEstimate& moments,
                                 Extent dimension) {
   std::array<bool, 5U> seenOrders{};
@@ -265,8 +274,8 @@ Status validateMomentTermShapes(const MomentEstimate& moments,
                                "selected moment metadata has the wrong shape");
       }
       const auto flattened = term.flattened_tuples.view();
-      for (Index index = 0U; index < flattened.size(); ++index) {
-        if (flattened[index] >= dimension) {
+      for (const Index coordinate : flattened) {
+        if (coordinate >= dimension) {
           return Status::failure(ErrorCode::IndexOutOfRange,
                                  "selected moment coordinate is out of range");
         }
@@ -294,7 +303,7 @@ Status validateMomentTermShapes(const MomentEstimate& moments,
     }
     if (term.values.size() != expectedValues ||
         (term.layout != MomentRepresentation::selected &&
-         term.flattened_tuples.view().size() != 0U)) {
+         !term.flattened_tuples.view().empty())) {
       return Status::failure(ErrorCode::DimensionMismatch,
                              "moment term values have the wrong shape");
     }
@@ -491,7 +500,7 @@ Result<SymmetricValue> symmetricValue(const MomentEstimate& moments,
   bool first = true;
   bool symmetric = true;
   Index permutations = 0U;
-  do {
+  while (true) {
     const std::span<const Index> permutation(sorted.data(), tuple.size());
     const auto permutationSupport =
         supportForTuple(moments, permutation, dimension);
@@ -524,7 +533,10 @@ Result<SymmetricValue> symmetricValue(const MomentEstimate& moments,
     }
     sum.add(value.value());
     ++permutations;
-  } while (nextTuplePermutation(sorted, tuple.size()));
+    if (!nextTuplePermutation(sorted, tuple.size())) {
+      break;
+    }
+  }
   const long double average =
       sum.total() / static_cast<long double>(permutations);
   if (!std::isfinite(average) ||
@@ -760,26 +772,29 @@ Result<Matrix> whitenedRows(const SampleView& sample, SolvePolicy policy,
                     .selected = {},
                     .contraction = std::nullopt},
       limits);
-  if (!meanEstimate || !meanEstimate.value().population_mean.has_value()) {
-    return fail<Matrix>(meanEstimate ? ErrorCode::InsufficientSamples
-                                     : meanEstimate.status().code(),
+  if (!meanEstimate) {
+    return fail<Matrix>(meanEstimate.status().code(),
                         "Mardia mean estimation failed");
   }
+  if (!meanEstimate.value().population_mean.has_value()) {
+    return fail<Matrix>(ErrorCode::InsufficientSamples,
+                        "Mardia mean estimation failed");
+  }
+  const Vector& populationMean = meanEstimate.value().population_mean.value();
   Matrix whitened(sample.rows.rows(), dimension, 0.0);
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
     for (Index output = 0U; output < dimension; ++output) {
       detail::CompensatedSum sum;
       for (Index input = 0U; input < dimension; ++input) {
         sum.add(inverseRoot.value().covariance.at(output, input) *
-                (sample.rows.at(row, input) -
-                 meanEstimate.value().population_mean->at(input)));
+                (sample.rows.at(row, input) - populationMean.at(input)));
       }
       if (!std::isfinite(sum.total()) ||
           std::abs(sum.total()) > std::numeric_limits<Scalar>::max()) {
         return fail<Matrix>(ErrorCode::NonFiniteResult,
                             "Mardia whitened row is not representable");
       }
-      whitened.at(row, output) = static_cast<Scalar>(sum.total());
+      whitened.at(row, output) = sum.total();
     }
   }
   return Result<Matrix>::success(std::move(whitened));
@@ -1064,8 +1079,11 @@ Result<MomentValidity> validateMoments(const MomentEstimate& moments,
               ErrorCode::NonFiniteResult,
               "normalized Gram entry is not representable");
         }
-        gram.at(row, column) = static_cast<Scalar>(normalized);
-        gram.at(column, row) = gram.at(row, column);
+        const Scalar entry = static_cast<Scalar>(normalized);
+        gram.at(row, column) = entry;
+        if (row != column) {
+          setSymmetricEntry(gram, row, column, entry);
+        }
       }
     }
     Scalar gramScale = 0.0;
