@@ -75,6 +75,13 @@ void diagonalLowRankAndRankAwareSolve() {
   VSS_CHECK(pcg.hasValue());
   VSS_CHECK(std::abs(pcg.value().parameters.at(0, 0) - 2.0) < 1e-11);
   VSS_CHECK(std::abs(pcg.value().parameters.at(1, 0) - 3.0) < 1e-11);
+  const Matrix unit_rhs = matrix({{3.0}, {4.0}});
+  const auto unit_pcg = solveStructuredCovariance(
+      covariance.value(), unit_rhs.view(), StructuredSolveKind::iterative,
+      iterative, budget);
+  VSS_CHECK(unit_pcg.hasValue());
+  VSS_CHECK(std::abs(unit_pcg.value().parameters.at(0, 0) - 1.0) < 1e-11 &&
+            std::abs(unit_pcg.value().parameters.at(1, 0) - 1.0) < 1e-11);
   const Matrix multiple = matrix({{7, 7}, {11, 11}});
   auto exhausted = solveStructuredCovariance(
       covariance.value(), multiple.view(), StructuredSolveKind::iterative,
@@ -232,6 +239,81 @@ void projectedToeplitzAndKernelSolveWithoutDenseCovariance() {
             inactive.status().code() == ErrorCode::InvalidDomain);
 }
 
+void structuredActionsMatchC081Fixtures() {
+  const Vector ones(std::array<Scalar, 3>{1.0, 1.0, 1.0});
+
+  const Vector diagonal(std::array<Scalar, 2>{2.0, 3.0});
+  const Matrix update = matrix({{1.0}, {1.0}});
+  const auto low_rank = structuredCovariance({StructureKind::diagonal_low_rank,
+                                              diagonal.view(),
+                                              update.view(),
+                                              {},
+                                              {},
+                                              {}},
+                                             {}, budget);
+  VSS_CHECK(low_rank.hasValue());
+  const auto low_rank_action = applyStructuredCovariance(
+      low_rank.value(), Vector(std::array<Scalar, 2>{1.0, 1.0}).view(), budget);
+  VSS_CHECK(low_rank_action.hasValue());
+  VSS_CHECK(low_rank_action.value().at(0) == 4.0 &&
+            low_rank_action.value().at(1) == 5.0);
+
+  const std::array<Matrix, 2> blocks{matrix({{1.0}}),
+                                     matrix({{2.0, 1.0}, {1.0, 3.0}})};
+  SolvePolicy spectral{};
+  spectral.iteration.max_iterations = 64;
+  const auto block = structuredCovariance(
+      {StructureKind::block, Vector{}.view(), {}, blocks, {}, {}}, spectral,
+      budget);
+  VSS_CHECK(block.hasValue());
+  const auto block_action =
+      applyStructuredCovariance(block.value(), ones.view(), budget);
+  VSS_CHECK(block_action.hasValue());
+  VSS_CHECK(block_action.value().at(0) == 1.0 &&
+            block_action.value().at(1) == 3.0 &&
+            block_action.value().at(2) == 4.0);
+
+  const Vector lags(std::array<Scalar, 3>{2.0, 1.0, 0.5});
+  const auto toeplitz = structuredCovariance(
+      {StructureKind::toeplitz, lags.view(), {}, {}, {}, {}}, spectral, budget);
+  VSS_CHECK(toeplitz.hasValue() && toeplitz.value().dimension == 3U);
+  const auto toeplitz_action =
+      applyStructuredCovariance(toeplitz.value(), ones.view(), budget);
+  VSS_CHECK(toeplitz_action.hasValue());
+  VSS_CHECK(toeplitz_action.value().at(0) == 3.5 &&
+            toeplitz_action.value().at(1) == 4.0 &&
+            toeplitz_action.value().at(2) == 3.5);
+
+  const Matrix points = matrix({{0.0}, {1.0}});
+  const auto kernel = structuredCovariance({StructureKind::gaussian_kernel,
+                                            Vector{}.view(),
+                                            points.view(),
+                                            {},
+                                            2.0,
+                                            1.0},
+                                           {}, budget);
+  VSS_CHECK(kernel.hasValue());
+  const auto kernel_action = applyStructuredCovariance(
+      kernel.value(), Vector(std::array<Scalar, 2>{1.0, 1.0}).view(), budget);
+  VSS_CHECK(kernel_action.hasValue());
+  const Scalar expected = 2.0 + 2.0 * std::exp(-0.5);
+  VSS_CHECK(std::abs(kernel_action.value().at(0) - expected) < 1e-14 &&
+            std::abs(kernel_action.value().at(1) - expected) < 1e-14);
+
+  const Vector wrong_size(std::array<Scalar, 2>{1.0, 1.0});
+  const auto shape_error =
+      applyStructuredCovariance(toeplitz.value(), wrong_size.view(), budget);
+  VSS_CHECK(!shape_error.hasValue() &&
+            shape_error.status().code() == ErrorCode::DimensionMismatch);
+  const auto budget_error =
+      applyStructuredCovariance(toeplitz.value(), ones.view(),
+                                {.elements = 1U,
+                                 .bytes = budget.bytes,
+                                 .evaluations = budget.evaluations});
+  VSS_CHECK(!budget_error.hasValue() &&
+            budget_error.status().code() == ErrorCode::ResourceLimit);
+}
+
 void emptyCovarianceSolvesWithoutScratch() {
   const Vector empty;
   const Limits no_storage{.elements = 0, .bytes = 0, .evaluations = 0};
@@ -259,6 +341,7 @@ int main() try {
   kroneckerAndGaussianActions();
   factorizedKroneckerUsesGlobalCutoffAndOriginalResidual();
   projectedToeplitzAndKernelSolveWithoutDenseCovariance();
+  structuredActionsMatchC081Fixtures();
   emptyCovarianceSolvesWithoutScratch();
   return 0;
 } catch (const std::exception& error) {
