@@ -52,6 +52,7 @@ Matrix matrix(std::initializer_list<std::initializer_list<Scalar>> rows) {
 }
 
 void diagonalActionAndValidation() {
+  // VSS-MATH-TRACEABILITY: C113
   const linear::DiagonalMatrix diagonal{
       Vector(std::array<Scalar, 3U>{2.0, -3.0, 0.0})};
   const Vector input(std::array<Scalar, 3U>{4.0, 5.0, 6.0});
@@ -73,6 +74,7 @@ void diagonalActionAndValidation() {
 }
 
 void blockGridActionPreservesRectangularLayoutAndEmptyBlocks() {
+  // VSS-MATH-TRACEABILITY: C113
   const std::array<Extent, 2U> row_extents{{1U, 2U}};
   const std::array<Extent, 2U> column_extents{{2U, 1U}};
   const std::array<linear::MatrixBlock, 2U> blocks{{
@@ -107,6 +109,7 @@ void blockGridActionPreservesRectangularLayoutAndEmptyBlocks() {
 }
 
 void projectionUsesRetainedColumnSpan() {
+  // VSS-MATH-TRACEABILITY: C113
   const Matrix basis = matrix({{1.0}, {0.0}});
   const Vector input(std::array<Scalar, 2U>{3.0, 4.0});
   SolvePolicy policy{};
@@ -125,6 +128,7 @@ void projectionUsesRetainedColumnSpan() {
 }
 
 void regularizedLeastSquaresUsesSquareRootAugmentation() {
+  // VSS-MATH-TRACEABILITY: C113
   const Matrix design = matrix({{2.0}});
   const Matrix observations = matrix({{6.0}});
   Index calls = 0U;
@@ -197,6 +201,7 @@ void regularizedLeastSquaresUsesSquareRootAugmentation() {
 }
 
 void diagonalAndBlockSolvesUseOneGlobalCutoff() {
+  // VSS-MATH-TRACEABILITY: C113
   const std::array<Matrix, 2U> blocks{{matrix({{2.0}}), matrix({{4.0}})}};
   const BlockDiagonal block_diagonal{array(blocks)};
   const Matrix rhs = matrix({{2.0}, {8.0}});
@@ -233,6 +238,7 @@ void diagonalAndBlockSolvesUseOneGlobalCutoff() {
 }
 
 void compactBandUsesLinearStorageAndKeepsSingularResidual() {
+  // VSS-MATH-TRACEABILITY: C113
   constexpr Index n = 64;
   Matrix band(n, 3);
   Matrix rhs(n, 1);
@@ -253,7 +259,7 @@ void compactBandUsesLinearStorageAndKeepsSingularResidual() {
   }
 
   const BandMatrix singular{2, 0, 0, matrix({{2}, {0}})};
-  const Matrix observations = matrix({{4}, {8}});
+  const Matrix observations = matrix({{2}, {8}});
   auto strict =
       linear::solveBanded(singular, observations.view(), {}, limits());
   VSS_CHECK(!strict.hasValue() &&
@@ -264,7 +270,7 @@ void compactBandUsesLinearStorageAndKeepsSingularResidual() {
       linear::solveBanded(singular, observations.view(), policy, limits());
   VSS_CHECK(permissive.hasValue());
   VSS_CHECK(permissive.value().rank == 1);
-  VSS_CHECK(permissive.value().parameters.at(0, 0) == 2);
+  VSS_CHECK(permissive.value().parameters.at(0, 0) == 1);
   VSS_CHECK(permissive.value().parameters.at(1, 0) == 0);
   VSS_CHECK(permissive.value().residual_norms.at(0) == 8);
   const auto empty = linear::solveBanded({0, 0, 0, Matrix{}},
@@ -273,6 +279,7 @@ void compactBandUsesLinearStorageAndKeepsSingularResidual() {
 }
 
 void singularBlockSolveKeepsOriginalResidual() {
+  // VSS-MATH-TRACEABILITY: C113
   const BlockDiagonal blocks{
       array(std::array{matrix({{2}}), matrix({{1, 1}, {1, 1}})})};
   const Matrix rhs = matrix({{2}, {3}, {1}});
@@ -291,6 +298,7 @@ void singularBlockSolveKeepsOriginalResidual() {
 }
 
 void redundantProjectionAndCallbackFailures() {
+  // VSS-MATH-TRACEABILITY: C113
   const Matrix basis = matrix({{1, 1}, {1, 1}, {0, 0}});
   const Vector input(std::array{3.0, 1.0, 4.0});
   SolvePolicy policy{};
@@ -442,6 +450,7 @@ void structuredActionFailureAndAccuracyCases() {
 }
 
 void exactProjectionCutoffAndSignedZeroPenalty() {
+  // VSS-MATH-TRACEABILITY: C113
   const Vector point(std::array{3.0, 4.0});
   SolvePolicy policy{};
   policy.rank = RankPolicy::minimum_norm;
@@ -479,6 +488,250 @@ void exactProjectionCutoffAndSignedZeroPenalty() {
             threw.status().code() == ErrorCode::CallbackFailure);
 }
 
+void c113RegularizedLeastSquaresPolicyAndCallbackCases() {
+  // VSS-MATH-TRACEABILITY: C113
+  const Matrix design = matrix({{1.0, 1.0}});
+  const Matrix observations = matrix({{4.0, 6.0}});
+  SolvePolicy minimum_norm{};
+  minimum_norm.rank = RankPolicy::minimum_norm;
+  minimum_norm.iteration.max_iterations = 128U;
+  minimum_norm.iteration.max_evaluations = 64U;
+
+  Index calls = 0U;
+  Index transpose_calls = 0U;
+  const linear::LinearMap inactive{
+      .rows = 17U,
+      .columns = 99U,
+      .apply =
+          [&calls](ConstVectorView) {
+            ++calls;
+            throw std::runtime_error("inactive penalty must not be called");
+            return Result<Vector>::success(Vector{});
+          },
+      .transpose =
+          [&transpose_calls](ConstVectorView) {
+            ++transpose_calls;
+            throw std::runtime_error("transpose must not be called");
+            return Result<Vector>::success(Vector{});
+          }};
+  const auto unregularized =
+      linear::regularizedLeastSquares(design.view(), observations.view(),
+                                      inactive, 0.0, minimum_norm, limits());
+  VSS_CHECK(unregularized.hasValue());
+  VSS_CHECK(unregularized.value().parameters.at(0U, 0U) == 2.0);
+  VSS_CHECK(unregularized.value().parameters.at(1U, 0U) == 2.0);
+  VSS_CHECK(unregularized.value().parameters.at(0U, 1U) == 3.0);
+  VSS_CHECK(unregularized.value().parameters.at(1U, 1U) == 3.0);
+  VSS_CHECK(unregularized.value().residual_norms.size() == 2U);
+  VSS_CHECK(unregularized.value().residual_norms.at(0U) == 0.0);
+  VSS_CHECK(unregularized.value().residual_norms.at(1U) == 0.0);
+  VSS_CHECK(calls == 0U && transpose_calls == 0U);
+
+  const linear::LinearMap no_rows{
+      .rows = 0U, .columns = 2U, .apply = {}, .transpose = {}};
+  const auto data_only = linear::regularizedLeastSquares(
+      design.view(), observations.view(), no_rows, 3.0, minimum_norm, limits());
+  VSS_CHECK(data_only.hasValue());
+  VSS_CHECK(data_only.value().parameters.at(0U, 0U) == 2.0);
+  VSS_CHECK(data_only.value().parameters.at(1U, 1U) == 3.0);
+
+  const linear::LinearMap selective{
+      .rows = 1U,
+      .columns = 2U,
+      .apply =
+          [&calls](ConstVectorView input) {
+            ++calls;
+            return Result<Vector>::success(
+                Vector(std::array<Scalar, 1U>{input.at(0U)}));
+          },
+      .transpose =
+          [&transpose_calls](ConstVectorView) {
+            ++transpose_calls;
+            throw std::runtime_error("penalty transpose must not be called");
+            return Result<Vector>::success(Vector{});
+          }};
+  calls = 0U;
+  const auto selectively_regularized =
+      linear::regularizedLeastSquares(design.view(), matrix({{4.0}}).view(),
+                                      selective, 1.0, minimum_norm, limits());
+  VSS_CHECK(selectively_regularized.hasValue());
+  VSS_CHECK(selectively_regularized.value().rank == 2U);
+  VSS_CHECK(std::abs(selectively_regularized.value().parameters.at(0U, 0U)) <
+            1e-12);
+  VSS_CHECK(std::abs(selectively_regularized.value().parameters.at(1U, 0U) -
+                     4.0) < 1e-12);
+  VSS_CHECK(calls == 2U && transpose_calls == 0U);
+
+  SolvePolicy strict{};
+  strict.rank = RankPolicy::reject;
+  strict.iteration.max_iterations = 128U;
+  strict.iteration.max_evaluations = 64U;
+  const linear::LinearMap duplicate_penalty{
+      .rows = 1U,
+      .columns = 2U,
+      .apply =
+          [](ConstVectorView input) {
+            return Result<Vector>::success(
+                Vector(std::array<Scalar, 1U>{input.at(0U) + input.at(1U)}));
+          },
+      .transpose = {}};
+  const auto rank_loss =
+      linear::regularizedLeastSquares(design.view(), matrix({{4.0}}).view(),
+                                      duplicate_penalty, 1.0, strict, limits());
+  VSS_CHECK(!rank_loss.hasValue());
+  VSS_CHECK(rank_loss.status().code() == ErrorCode::RankDeficient);
+
+  const auto nonfinite_weight = linear::regularizedLeastSquares(
+      design.view(), observations.view(), no_rows,
+      std::numeric_limits<Scalar>::infinity(), minimum_norm, limits());
+  VSS_CHECK(!nonfinite_weight.hasValue());
+  VSS_CHECK(nonfinite_weight.status().code() == ErrorCode::NonFiniteInput);
+  const auto nan_weight = linear::regularizedLeastSquares(
+      design.view(), observations.view(), no_rows,
+      std::numeric_limits<Scalar>::quiet_NaN(), minimum_norm, limits());
+  VSS_CHECK(!nan_weight.hasValue());
+  VSS_CHECK(nan_weight.status().code() == ErrorCode::NonFiniteInput);
+
+  const linear::LinearMap wrong_extent{
+      .rows = 1U,
+      .columns = 2U,
+      .apply =
+          [](ConstVectorView) { return Result<Vector>::success(Vector{}); },
+      .transpose = {}};
+  const auto wrong_output = linear::regularizedLeastSquares(
+      design.view(), matrix({{4.0}}).view(), wrong_extent, 1.0, minimum_norm,
+      limits());
+  VSS_CHECK(!wrong_output.hasValue());
+  VSS_CHECK(wrong_output.status().code() == ErrorCode::DimensionMismatch);
+
+  const linear::LinearMap nonfinite_output{
+      .rows = 1U,
+      .columns = 2U,
+      .apply =
+          [](ConstVectorView) {
+            return Result<Vector>::success(Vector(std::array<Scalar, 1U>{
+                std::numeric_limits<Scalar>::infinity()}));
+          },
+      .transpose = {}};
+  const auto invalid_output = linear::regularizedLeastSquares(
+      design.view(), matrix({{4.0}}).view(), nonfinite_output, 1.0,
+      minimum_norm, limits());
+  VSS_CHECK(!invalid_output.hasValue());
+  VSS_CHECK(invalid_output.status().code() == ErrorCode::NonFiniteInput);
+}
+
+void c113StructuredSolvesPreserveAllRightHandSidesAndRejectPadding() {
+  // VSS-MATH-TRACEABILITY: C113
+  const Matrix diagonal_storage = matrix({{2.0}, {4.0}});
+  const Matrix rhs = matrix({{2.0, 4.0}, {8.0, 12.0}});
+  const auto band_result = linear::solveBanded(
+      BandMatrix{2U, 0U, 0U, diagonal_storage}, rhs.view(), {}, limits());
+  VSS_CHECK(band_result.hasValue());
+  VSS_CHECK(band_result.value().parameters.rows() == 2U);
+  VSS_CHECK(band_result.value().parameters.columns() == 2U);
+  VSS_CHECK(band_result.value().parameters.at(0U, 0U) == 1.0);
+  VSS_CHECK(band_result.value().parameters.at(0U, 1U) == 2.0);
+  VSS_CHECK(band_result.value().parameters.at(1U, 0U) == 2.0);
+  VSS_CHECK(band_result.value().parameters.at(1U, 1U) == 3.0);
+  VSS_CHECK(band_result.value().residual_norms.size() == 2U);
+  VSS_CHECK(band_result.value().residual_norms.at(0U) == 0.0);
+  VSS_CHECK(band_result.value().residual_norms.at(1U) == 0.0);
+
+  const BandMatrix padded{2U, 0U, 1U, matrix({{2.0, 0.0}, {4.0, 9.0}})};
+  const auto padding_error =
+      linear::solveBanded(padded, matrix({{2.0}, {4.0}}).view(), {}, limits());
+  VSS_CHECK(!padding_error.hasValue());
+  VSS_CHECK(padding_error.status().code() == ErrorCode::InvalidDomain);
+
+  const std::array<Matrix, 2U> scalar_blocks{
+      {matrix({{2.0}}), matrix({{4.0}})}};
+  const BlockDiagonal block_diagonal{array(scalar_blocks)};
+  const auto block_result =
+      linear::solveBlockDiagonal(block_diagonal, rhs.view(), {}, limits());
+  VSS_CHECK(block_result.hasValue());
+  VSS_CHECK(block_result.value().parameters.at(0U, 0U) == 1.0);
+  VSS_CHECK(block_result.value().parameters.at(0U, 1U) == 2.0);
+  VSS_CHECK(block_result.value().parameters.at(1U, 0U) == 2.0);
+  VSS_CHECK(block_result.value().parameters.at(1U, 1U) == 3.0);
+  VSS_CHECK(block_result.value().residual_norms.size() == 2U);
+  VSS_CHECK(block_result.value().residual_norms.at(0U) == 0.0);
+  VSS_CHECK(block_result.value().residual_norms.at(1U) == 0.0);
+
+  const BlockDiagonal empty_blocks{Array<Matrix>{}};
+  const Matrix empty_rhs(0U, 2U);
+  const auto empty_result =
+      linear::solveBlockDiagonal(empty_blocks, empty_rhs.view(), {}, limits());
+  VSS_CHECK(empty_result.hasValue());
+  VSS_CHECK(empty_result.value().parameters.rows() == 0U);
+  VSS_CHECK(empty_result.value().parameters.columns() == 2U);
+  VSS_CHECK(empty_result.value().residual_norms.size() == 2U);
+}
+
+void c113ProjectionSatisfiesSubspaceInvariants() {
+  // VSS-MATH-TRACEABILITY: C113
+  const Matrix redundant_basis = matrix({{1.0, 1.0}, {1.0, 1.0}, {0.0, 0.0}});
+  const Vector input(std::array<Scalar, 3U>{3.0, 1.0, 4.0});
+  const Vector other(std::array<Scalar, 3U>{5.0, -3.0, 2.0});
+  SolvePolicy policy{};
+  policy.rank = RankPolicy::minimum_norm;
+  policy.iteration.max_iterations = 64U;
+  policy.iteration.max_evaluations = 64U;
+  const auto projected = linear::orthogonalProjection(
+      redundant_basis.view(), input.view(), policy, limits());
+  const auto other_projected = linear::orthogonalProjection(
+      redundant_basis.view(), other.view(), policy, limits());
+  VSS_CHECK(projected.hasValue() && other_projected.hasValue());
+  VSS_CHECK(std::abs(projected.value().at(0U) - 2.0) < 1e-12);
+  VSS_CHECK(std::abs(projected.value().at(1U) - 2.0) < 1e-12);
+  VSS_CHECK(std::abs(projected.value().at(2U)) < 1e-12);
+
+  const auto projected_again = linear::orthogonalProjection(
+      redundant_basis.view(), projected.value().view(), policy, limits());
+  VSS_CHECK(projected_again.hasValue());
+  const auto dot = [](ConstVectorView lhs, ConstVectorView rhs) {
+    Scalar result = 0.0;
+    for (Index i = 0U; i < lhs.size(); ++i) {
+      result += lhs.at(i) * rhs.at(i);
+    }
+    return result;
+  };
+  for (Index i = 0U; i < 3U; ++i) {
+    VSS_CHECK(std::abs(projected_again.value().at(i) -
+                       projected.value().at(i)) < 1e-12);
+  }
+  VSS_CHECK(dot(projected.value().view(), projected.value().view()) <=
+            dot(input.view(), input.view()));
+  VSS_CHECK(std::abs(dot(input.view(), other_projected.value().view()) -
+                     dot(projected.value().view(), other.view())) < 1e-12);
+  const Vector residual(std::array<Scalar, 3U>{1.0, -1.0, 4.0});
+  VSS_CHECK(std::abs(dot(
+                residual.view(),
+                Vector(std::array<Scalar, 3U>{1.0, 1.0, 0.0}).view())) < 1e-12);
+
+  const Scalar inverse_root_two = 1.0 / std::sqrt(2.0);
+  const Matrix coordinate_basis = matrix({{1.0, 0.0}, {0.0, 1.0}, {0.0, 0.0}});
+  const Matrix rotated_basis = matrix({{inverse_root_two, -inverse_root_two},
+                                       {inverse_root_two, inverse_root_two},
+                                       {0.0, 0.0}});
+  const Vector rotated_input(std::array<Scalar, 3U>{3.0, 4.0, 5.0});
+  const auto coordinate_projection = linear::orthogonalProjection(
+      coordinate_basis.view(), rotated_input.view(), policy, limits());
+  const auto rotated_projection = linear::orthogonalProjection(
+      rotated_basis.view(), rotated_input.view(), policy, limits());
+  VSS_CHECK(coordinate_projection.hasValue() && rotated_projection.hasValue());
+  for (Index i = 0U; i < 3U; ++i) {
+    VSS_CHECK(std::abs(coordinate_projection.value().at(i) -
+                       rotated_projection.value().at(i)) < 1e-12);
+  }
+
+  const Matrix zero_rows(0U, 2U);
+  const Vector empty_vector;
+  policy.rank = RankPolicy::reject;
+  const auto empty_projection = linear::orthogonalProjection(
+      zero_rows.view(), empty_vector.view(), policy, limits());
+  VSS_CHECK(empty_projection.hasValue() && empty_projection.value().empty());
+}
+
 } // namespace
 
 int main() {
@@ -492,5 +745,8 @@ int main() {
   redundantProjectionAndCallbackFailures();
   structuredActionFailureAndAccuracyCases();
   exactProjectionCutoffAndSignedZeroPenalty();
+  c113RegularizedLeastSquaresPolicyAndCallbackCases();
+  c113StructuredSolvesPreserveAllRightHandSidesAndRejectPadding();
+  c113ProjectionSatisfiesSubspaceInvariants();
   return 0;
 }
