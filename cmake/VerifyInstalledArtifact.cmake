@@ -150,6 +150,7 @@ set(vss_expected_files
   include/vss/math/statistics/Descriptive.hpp
   include/vss/math/statistics/Cumulants.hpp
   include/vss/math/statistics/Moments.hpp
+  include/vss/math/statistics/MomentState.hpp
   include/vss/math/statistics/MomentDiagnostics.hpp
   include/vss/math/statistics/Order.hpp
   include/vss/math/statistics/Population.hpp
