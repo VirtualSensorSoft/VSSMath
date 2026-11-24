@@ -584,10 +584,11 @@ void standardizedLinearProjections() {
     close(terms[1].values.at(0U), 1.5);
     VSS_CHECK(joint.value().observation_shape.view().size() == 1U);
     VSS_CHECK(joint.value().observation_shape.view()[0U] == 2U);
-    VSS_CHECK(joint.value().population_mean.has_value());
-    if (joint.value().population_mean) {
-      close(joint.value().population_mean->at(0U), 0.0);
-      close(joint.value().population_mean->at(1U), 0.0);
+    const auto& populationMean = joint.value().population_mean;
+    VSS_CHECK(populationMean.has_value());
+    if (populationMean.has_value()) {
+      close(populationMean.value().at(0U), 0.0);
+      close(populationMean.value().at(1U), 0.0);
     }
   }
 
