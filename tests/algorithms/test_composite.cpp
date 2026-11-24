@@ -20,6 +20,9 @@ void publicSignatures() {
       const Distribution&, IntervalSupport, ProbabilityPolicy, Limits);
   using IntervalLog = Result<Scalar> (*)(const Distribution&, IntervalSupport,
                                          ProbabilityPolicy);
+  using MixtureLogPdf =
+      Result<Scalar> (*)(const Distribution&, Scalar, ProbabilityPolicy);
+  using EmpiricalCdf = Result<Scalar> (*)(const Distribution&, Scalar);
   static_assert(
       std::is_same_v<decltype(static_cast<Truncate>(&truncatedDistribution)),
                      Truncate>);
@@ -32,6 +35,8 @@ void publicSignatures() {
   static_assert(
       std::is_same_v<decltype(static_cast<IntervalLog>(&quantizedLikelihood)),
                      IntervalLog>);
+  static_assert(std::is_same_v<decltype(&mixtureLogPdf), MixtureLogPdf>);
+  static_assert(std::is_same_v<decltype(&empiricalCDF), EmpiricalCdf>);
 }
 
 ProbabilityPolicy policy() {
@@ -103,6 +108,42 @@ void truncationAndIntervalLikelihoods() {
         Limits{0U, 0U, 0U});
     VSS_CHECK(!limited.hasValue());
     VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+
+    const auto rightUnbounded = truncatedDistribution(
+        uniformLaw.value(),
+        IntervalSupport{0.0, std::numeric_limits<Scalar>::infinity(), true,
+                        false},
+        policy());
+    VSS_CHECK(rightUnbounded.hasValue());
+    if (rightUnbounded) {
+      const auto first = rawMoment(rightUnbounded.value(), 1U, policy());
+      const auto second = rawMoment(rightUnbounded.value(), 2U, policy());
+      VSS_CHECK(first.hasValue() && second.hasValue());
+      if (first && second) {
+        VSS_CHECK(std::abs(first.value() - 1.0) < 1.0e-13);
+        VSS_CHECK(std::abs(second.value() - 4.0 / 3.0) < 1.0e-12);
+      }
+    }
+  }
+
+  const auto halfNormalBase =
+      truncatedNormal(0.0, 1.0, 0.0, std::numeric_limits<Scalar>::infinity());
+  VSS_CHECK(halfNormalBase.hasValue());
+  if (halfNormalBase) {
+    const auto noOpTruncation = truncatedDistribution(
+        halfNormalBase.value(),
+        IntervalSupport{-std::numeric_limits<Scalar>::infinity(),
+                        std::numeric_limits<Scalar>::infinity(), true, true},
+        policy());
+    VSS_CHECK(noOpTruncation.hasValue());
+    if (noOpTruncation) {
+      const auto mean = rawMoment(noOpTruncation.value(), 1U, policy());
+      VSS_CHECK(mean.hasValue());
+      if (mean) {
+        VSS_CHECK(std::abs(mean.value() - std::sqrt(2.0 / std::numbers::pi)) <
+                  1.0e-12);
+      }
+    }
   }
 
   const std::array<Scalar, 3> atomValues{0.0, 1.0, 2.0};

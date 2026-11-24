@@ -3731,17 +3731,52 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
       }
       return finish(total);
     }
-    if (!std::isfinite(lower) || !std::isfinite(upper)) {
+    if (base.family() == Family::truncated_normal) {
+      const auto& baseParameters = base.state_->parameters;
+      const Scalar clippedLower = std::max(lower, baseParameters[2]);
+      const Scalar clippedUpper = std::min(upper, baseParameters[3]);
+      auto clipped = truncatedNormal(baseParameters[0], baseParameters[1],
+                                     clippedLower, clippedUpper);
+      if (!clipped) {
+        return Result<Scalar>::failure(clipped.status().code(),
+                                       std::string(clipped.status().message()));
+      }
+      return rawMoment(clipped.value(), order, policy);
+    }
+    Scalar integrationLower = lower;
+    Scalar integrationUpper = upper;
+    switch (base.family()) {
+    case Family::uniform:
+      integrationLower = std::max(integrationLower, base.state_->parameters[0]);
+      integrationUpper = std::min(integrationUpper, base.state_->parameters[1]);
+      break;
+    case Family::triangular:
+      integrationLower = std::max(integrationLower, base.state_->parameters[0]);
+      integrationUpper = std::min(integrationUpper, base.state_->parameters[2]);
+      break;
+    case Family::beta:
+      integrationLower = std::max(integrationLower, 0.0);
+      integrationUpper = std::min(integrationUpper, 1.0);
+      break;
+    default:
+      break;
+    }
+    if (!std::isfinite(integrationLower) || !std::isfinite(integrationUpper)) {
       return Result<Scalar>::failure(
           ErrorCode::NoConvergence,
           "unbounded truncated raw moment needs a qualified tail enclosure");
     }
+    if (integrationLower >= integrationUpper) {
+      return Result<Scalar>::failure(
+          ErrorCode::InvalidDomain,
+          "truncated law has no representable continuous integration range");
+    }
     auto integrand = [&](Scalar coordinate) -> Result<long double> {
       Scalar evaluationPoint = coordinate;
-      if (coordinate == lower) {
-        evaluationPoint = std::nextafter(lower, upper);
-      } else if (coordinate == upper) {
-        evaluationPoint = std::nextafter(upper, lower);
+      if (coordinate == integrationLower) {
+        evaluationPoint = std::nextafter(integrationLower, integrationUpper);
+      } else if (coordinate == integrationUpper) {
+        evaluationPoint = std::nextafter(integrationUpper, integrationLower);
       }
       auto value = evaluate(base, evaluationPoint, policy);
       if (!value) {
@@ -3765,9 +3800,10 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
       }
       return Result<long double>::success(result);
     };
-    auto leftValue = integrand(lower);
-    auto middleValue = integrand(0.5 * (lower + upper));
-    auto rightValue = integrand(upper);
+    auto leftValue = integrand(integrationLower);
+    auto middleValue = integrand(integrationLower +
+                                 0.5 * (integrationUpper - integrationLower));
+    auto rightValue = integrand(integrationUpper);
     if (!leftValue || !middleValue || !rightValue) {
       const Status& status = !leftValue     ? leftValue.status()
                              : !middleValue ? middleValue.status()
@@ -3777,7 +3813,7 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
     }
     std::uint64_t evaluations = 3U;
     const long double whole =
-        static_cast<long double>(upper - lower) *
+        static_cast<long double>(integrationUpper - integrationLower) *
         (leftValue.value() + 4.0L * middleValue.value() + rightValue.value()) /
         6.0L;
     std::function<Result<long double>(Scalar, Scalar, long double, long double,
@@ -3830,8 +3866,9 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
       return Result<long double>::success(left.value() + right.value());
     };
     auto integral =
-        integrate(lower, upper, leftValue.value(), middleValue.value(),
-                  rightValue.value(), whole, policy.iteration.abs, 0U);
+        integrate(integrationLower, integrationUpper, leftValue.value(),
+                  middleValue.value(), rightValue.value(), whole,
+                  policy.iteration.abs, 0U);
     if (!integral) {
       return Result<Scalar>::failure(integral.status().code(),
                                      std::string(integral.status().message()));
