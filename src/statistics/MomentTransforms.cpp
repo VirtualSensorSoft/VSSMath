@@ -1,3 +1,6 @@
+#include "ExactProductSum.hpp"
+#include "MomentInterval.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -23,6 +26,8 @@
 
 namespace vss::math::statistics {
 namespace {
+
+using detail::ExactProductSum;
 
 template <class T> Result<T> fail(ErrorCode code, const char* message) {
   return Result<T>::failure(code, message);
@@ -491,7 +496,7 @@ Result<MomentEstimate> buildTransform(const MomentEstimate& source,
       std::vector<Scalar> values;
       values.reserve(outputTuples.value().size());
       for (const auto& outputTuple : outputTuples.value()) {
-        detail::CompensatedSum sum;
+        vss::math::detail::CompensatedSum sum;
         if (!contract) {
           std::vector<Index> sourceTuple;
           sourceTuple.reserve(order);
@@ -749,7 +754,7 @@ Result<MomentEstimate> buildTransform(const MomentEstimate& source,
       }
       std::vector<Scalar> transformedMean(outputDimension, 0.0);
       for (Index row = 0U; row < outputDimension; ++row) {
-        detail::CompensatedSum sum;
+        vss::math::detail::CompensatedSum sum;
         for (Index column = 0U; column < components.size(); ++column) {
           sum.add(request.contraction->at(row, column) *
                   mean->at(components[column]));
@@ -1001,6 +1006,349 @@ Result<Scalar> scaledStandardize(Scalar moment,
   return Result<Scalar>::success(result);
 }
 
+struct ProjectedMoment final {
+  detail::BinaryEndpoint value;
+  Support support;
+};
+
+Result<Extent> projectedTupleCount(Extent dimension, Index order) {
+  Extent count = 1U;
+  for (Index axis = 0U; axis < order; ++axis) {
+    if (!checkedMultiply(count, dimension, count)) {
+      return fail<Extent>(ErrorCode::SizeOverflow,
+                          "projected dense tuple count overflows");
+    }
+  }
+  return Result<Extent>::success(count);
+}
+
+void decodeTuple(Extent ordinal, Extent dimension, Index order,
+                 std::array<Index, 4U>& tuple) {
+  for (Index axis = order; axis > 0U;) {
+    --axis;
+    tuple.at(axis) = ordinal % dimension;
+    ordinal /= dimension;
+  }
+}
+
+Result<ProjectedMoment>
+projectedMoment(const MomentEstimate& source, ConstMatrixView map,
+                Extent inputDimension, Index outputOrder,
+                std::span<const Index> outputTuple, Limits limits) {
+  const auto sourceTupleCount =
+      projectedTupleCount(inputDimension, outputOrder);
+  if (!sourceTupleCount) {
+    return fail<ProjectedMoment>(sourceTupleCount.status().code(),
+                                 "projected source tuple count is invalid");
+  }
+  if (sourceTupleCount.value() > limits.elements) {
+    return fail<ProjectedMoment>(
+        ErrorCode::ResourceLimit,
+        "projected dependencies exceed element limits");
+  }
+  ExactProductSum sum;
+  std::optional<Support> commonSupport;
+  for (Extent ordinal = 0U; ordinal < sourceTupleCount.value(); ++ordinal) {
+    std::array<Index, 4U> sourceTuple{};
+    decodeTuple(ordinal, inputDimension, outputOrder, sourceTuple);
+    std::array<Scalar, 4U> coefficients{};
+    bool structuralZero = false;
+    for (Index axis = 0U; axis < outputOrder; ++axis) {
+      coefficients.at(axis) =
+          map.at(outputTuple.subspan(axis).front(), sourceTuple.at(axis));
+      structuralZero = structuralZero || coefficients.at(axis) == 0.0;
+    }
+    if (structuralZero) {
+      continue;
+    }
+    auto sourceValue = termValue(
+        source, outputOrder,
+        std::span<const Index>(sourceTuple).first(outputOrder), inputDimension);
+    if (!sourceValue) {
+      return fail<ProjectedMoment>(
+          ErrorCode::InvalidDomain,
+          "projected standardized moment has a missing source term");
+    }
+    auto support = supportForTuple(
+        source, std::span<const Index>(sourceTuple).first(outputOrder),
+        inputDimension);
+    if (!support) {
+      return fail<ProjectedMoment>(ErrorCode::InvalidDomain,
+                                   "projected source supports are invalid");
+    }
+    if (commonSupport.has_value() &&
+        !supportEqual(*commonSupport, support.value())) {
+      return fail<ProjectedMoment>(
+          ErrorCode::InvalidDomain,
+          "projected standardized terms combine incompatible supports");
+    }
+    commonSupport = support.value();
+    std::array<Scalar, 5U> factors{};
+    factors[0U] = sourceValue.value();
+    for (Index axis = 0U; axis < outputOrder; ++axis) {
+      factors.at(axis + 1U) = coefficients.at(axis);
+    }
+    if (!sum.add(std::span<const Scalar>(factors).first(outputOrder + 1U))) {
+      return fail<ProjectedMoment>(ErrorCode::NonFiniteResult,
+                                   "projected moment exceeds exact range");
+    }
+  }
+  if (!commonSupport.has_value()) {
+    return fail<ProjectedMoment>(ErrorCode::InvalidDomain,
+                                 "projected moment has no contributing terms");
+  }
+  return Result<ProjectedMoment>::success(
+      ProjectedMoment{.value = sum.endpoint(), .support = *commonSupport});
+}
+
+Result<MomentEstimate> standardizedProjection(const MomentEstimate& source,
+                                              const MomentRequest& request,
+                                              Extent inputDimension,
+                                              Limits limits) {
+  if (source.diagnostics.algorithm.find("central") == std::string::npos ||
+      source.diagnostics.center == CenterRule::known ||
+      !request.contraction.has_value() || !request.selected.empty() ||
+      request.orders == 0U || (request.orders & 0xf0U) != 0U ||
+      request.representation != MomentRepresentation::contraction) {
+    return fail<MomentEstimate>(ErrorCode::InvalidDomain,
+                                "projected standardization request is invalid");
+  }
+  const ConstMatrixView map = request.contraction.value();
+  if (map.rows() == 0U || map.columns() != inputDimension) {
+    return fail<MomentEstimate>(ErrorCode::DimensionMismatch,
+                                "standardization map has incompatible shape");
+  }
+  for (Index row = 0U; row < map.rows(); ++row) {
+    for (Index column = 0U; column < map.columns(); ++column) {
+      if (!std::isfinite(map.at(row, column))) {
+        return fail<MomentEstimate>(ErrorCode::NonFiniteInput,
+                                    "standardization map is not finite");
+      }
+    }
+  }
+
+  Extent outputValueCount = 0U;
+  for (Index order = 1U; order <= 4U; ++order) {
+    if ((request.orders & (1U << (order - 1U))) == 0U) {
+      continue;
+    }
+    auto count = projectedTupleCount(map.rows(), order);
+    if (!count ||
+        !checkedAdd(outputValueCount, count.value(), outputValueCount)) {
+      return fail<MomentEstimate>(ErrorCode::SizeOverflow,
+                                  "projected output tuple count overflows");
+    }
+    if (count.value() > limits.elements) {
+      return fail<MomentEstimate>(ErrorCode::ResourceLimit,
+                                  "projected moments exceed element limits");
+    }
+  }
+  if (map.rows() > limits.elements || outputValueCount > limits.elements) {
+    return fail<MomentEstimate>(ErrorCode::ResourceLimit,
+                                "projected result exceeds element limits");
+  }
+  Extent dependencyWork = 0U;
+  auto varianceDependencies = projectedTupleCount(inputDimension, 2U);
+  Extent allVarianceDependencies = 0U;
+  if (!varianceDependencies ||
+      !checkedMultiply(map.rows(), varianceDependencies.value(),
+                       allVarianceDependencies) ||
+      allVarianceDependencies > limits.elements) {
+    return fail<MomentEstimate>(ErrorCode::ResourceLimit,
+                                "projected variance work exceeds limits");
+  }
+  dependencyWork = allVarianceDependencies;
+  for (Index order = 2U; order <= 4U; ++order) {
+    if ((request.orders & (1U << (order - 1U))) == 0U) {
+      continue;
+    }
+    auto sourceCount = projectedTupleCount(inputDimension, order);
+    auto outputCount = projectedTupleCount(map.rows(), order);
+    Extent orderWork = 0U;
+    if (!sourceCount || !outputCount ||
+        !checkedMultiply(sourceCount.value(), outputCount.value(), orderWork) ||
+        !checkedAdd(dependencyWork, orderWork, dependencyWork) ||
+        dependencyWork > limits.elements) {
+      return fail<MomentEstimate>(ErrorCode::ResourceLimit,
+                                  "projected dependency work exceeds limits");
+    }
+  }
+  Extent valueBytes = 0U;
+  Extent meanBytes = 0U;
+  Extent warningBytes = 0U;
+  Extent premiseBytes = 0U;
+  Extent termBytes = 0U;
+  const auto outputTermCount =
+      static_cast<Extent>(std::popcount(request.orders));
+  Extent peakBytes = 0U;
+  if (!checkedMultiply(outputValueCount, 2U * sizeof(Scalar), valueBytes) ||
+      !checkedMultiply(map.rows(),
+                       (2U * sizeof(Scalar)) +
+                           (2U * sizeof(detail::BinaryEndpoint)) +
+                           (2U * sizeof(Support)),
+                       meanBytes) ||
+      !checkedMultiply(source.diagnostics.warnings.view().size(),
+                       sizeof(ErrorCode), warningBytes) ||
+      !checkedAdd(source.diagnostics.premises.size(), 512U, premiseBytes) ||
+      !checkedMultiply(outputTermCount, 2U * sizeof(MomentTerm), termBytes) ||
+      !checkedAdd(valueBytes, meanBytes, peakBytes) ||
+      !checkedAdd(peakBytes, termBytes, peakBytes) ||
+      !checkedAdd(peakBytes, warningBytes, peakBytes) ||
+      !checkedAdd(peakBytes, premiseBytes, peakBytes) ||
+      !checkedAdd(peakBytes,
+                  (2U * sizeof(Index)) + sizeof(ExactProductSum) + 512U,
+                  peakBytes) ||
+      peakBytes > limits.bytes) {
+    return fail<MomentEstimate>(ErrorCode::ResourceLimit,
+                                "projected workspace exceeds byte limits");
+  }
+
+  try {
+    std::vector<detail::BinaryEndpoint> variances;
+    std::vector<Support> varianceSupports;
+    variances.reserve(map.rows());
+    varianceSupports.reserve(map.rows());
+    for (Index coordinate = 0U; coordinate < map.rows(); ++coordinate) {
+      const std::array<Index, 2U> diagonal{coordinate, coordinate};
+      auto variance =
+          projectedMoment(source, map, inputDimension, 2U, diagonal, limits);
+      if (!variance) {
+        return fail<MomentEstimate>(variance.status().code(),
+                                    "projected variance is unavailable");
+      }
+      if (!(variance.value().value.fraction() > 0.0)) {
+        return fail<MomentEstimate>(ErrorCode::InvalidDomain,
+                                    "projected variance must be positive");
+      }
+      variances.push_back(variance.value().value);
+      varianceSupports.push_back(variance.value().support);
+    }
+
+    std::vector<MomentTerm> outputTerms;
+    outputTerms.reserve(outputTermCount);
+    for (Index order = 1U; order <= 4U; ++order) {
+      if ((request.orders & (1U << (order - 1U))) == 0U) {
+        continue;
+      }
+      auto count = projectedTupleCount(map.rows(), order);
+      if (!count) {
+        return fail<MomentEstimate>(count.status().code(),
+                                    "projected output tuple count is invalid");
+      }
+      std::vector<Scalar> values;
+      values.reserve(count.value());
+      for (Extent ordinal = 0U; ordinal < count.value(); ++ordinal) {
+        std::array<Index, 4U> tuple{};
+        decodeTuple(ordinal, map.rows(), order, tuple);
+        Scalar value = 0.0;
+        if (order > 1U) {
+          auto moment = projectedMoment(
+              source, map, inputDimension, order,
+              std::span<const Index>(tuple).first(order), limits);
+          if (!moment) {
+            return fail<MomentEstimate>(moment.status().code(),
+                                        "projected moment is unavailable");
+          }
+          if (!supportEqual(moment.value().support,
+                            varianceSupports[tuple[0U]])) {
+            return fail<MomentEstimate>(ErrorCode::InvalidDomain,
+                                        "projected moment support differs from "
+                                        "its coordinate variance support");
+          }
+          for (Index axis = 1U; axis < order; ++axis) {
+            if (!supportEqual(moment.value().support,
+                              varianceSupports.at(tuple.at(axis)))) {
+              return fail<MomentEstimate>(
+                  ErrorCode::InvalidDomain,
+                  "projected coordinates have incompatible supports");
+            }
+          }
+          if (moment.value().value.fraction() != 0.0) {
+            double fraction = moment.value().value.fraction();
+            int exponent = moment.value().value.exponent();
+            for (Index axis = 0U; axis < order; ++axis) {
+              double varianceFraction = variances.at(tuple.at(axis)).fraction();
+              int varianceExponent = variances.at(tuple.at(axis)).exponent();
+              if ((varianceExponent % 2) != 0) {
+                varianceFraction *= 2.0;
+                --varianceExponent;
+              }
+              int deviationExponent = 0;
+              const double deviationFraction =
+                  std::frexp(std::sqrt(varianceFraction), &deviationExponent);
+              int adjustment = 0;
+              fraction = std::frexp(fraction / deviationFraction, &adjustment);
+              exponent +=
+                  adjustment - (varianceExponent / 2 + deviationExponent);
+            }
+            value = std::scalbn(fraction, exponent);
+            if (!std::isfinite(value) || value == 0.0) {
+              return fail<MomentEstimate>(
+                  ErrorCode::NonFiniteResult,
+                  "standardized projected moment is not representable");
+            }
+          }
+        }
+        values.push_back(value);
+      }
+      outputTerms.push_back(
+          MomentTerm{.order = order,
+                     .layout = MomentRepresentation::dense,
+                     .flattened_tuples = {},
+                     .values = Vector(std::span<const Scalar>{values})});
+    }
+    auto terms = Array<MomentTerm>::copy(outputTerms, limits);
+    if (!terms) {
+      return fail<MomentEstimate>(terms.status().code(),
+                                  "projected output exceeds configured limits");
+    }
+    const std::array<Index, 1U> outputShape{map.rows()};
+    auto shape = Array<Index>::copy(outputShape, limits);
+    if (!shape) {
+      return fail<MomentEstimate>(shape.status().code(),
+                                  "projected shape exceeds configured limits");
+    }
+    auto outputSupports = Array<Support>::copy(varianceSupports, limits);
+    if (!outputSupports) {
+      return fail<MomentEstimate>(
+          outputSupports.status().code(),
+          "projected support exceeds configured limits");
+    }
+    auto warnings =
+        Array<ErrorCode>::copy(source.diagnostics.warnings.view(), limits);
+    if (!warnings) {
+      return fail<MomentEstimate>(
+          warnings.status().code(),
+          "projected warnings exceed configured limits");
+    }
+    EstimatorDiagnostics diagnostics{
+        .estimand = source.diagnostics.estimand,
+        .weight = source.diagnostics.weight,
+        .center = source.diagnostics.center,
+        .approximation = source.diagnostics.approximation,
+        .global = source.diagnostics.global,
+        .coordinate_support = std::move(outputSupports).value(),
+        .tuple_support = {},
+        .reciprocal_condition = source.diagnostics.reciprocal_condition,
+        .numerical_error = std::nullopt,
+        .sampling_error = std::nullopt,
+        .rank = source.diagnostics.rank,
+        .algorithm = "standardized_projected_central_moments",
+        .premises = source.diagnostics.premises +
+                    "; exact linear projection standardized by positive "
+                    "projected variances",
+        .warnings = std::move(warnings).value()};
+    return Result<MomentEstimate>::success(
+        MomentEstimate{.observation_shape = std::move(shape).value(),
+                       .terms = std::move(terms).value(),
+                       .diagnostics = std::move(diagnostics),
+                       .population_mean = Vector(map.rows(), 0.0)});
+  } catch (const std::bad_alloc&) {
+    return fail<MomentEstimate>(ErrorCode::ResourceLimit,
+                                "projected standardization allocation failed");
+  }
+}
+
 } // namespace
 
 Result<MomentEstimate> marginalMoments(const MomentEstimate& source,
@@ -1061,6 +1409,10 @@ Result<MomentEstimate> standardizedMoments(const MomentEstimate& source,
   }
   if (request.contraction.has_value() ||
       request.representation == MomentRepresentation::contraction) {
+    if (request.representation == MomentRepresentation::contraction &&
+        request.contraction.has_value()) {
+      return standardizedProjection(source, request, dimension, limits);
+    }
     return fail<MomentEstimate>(ErrorCode::InvalidDomain,
                                 "standardization does not accept a linear "
                                 "contraction");
