@@ -13,22 +13,29 @@ void exactAndConservativeBounds() {
   const Scalar epsilon = std::numeric_limits<Scalar>::epsilon();
   const auto chebyshev = chebyshevBound(1.0, 2.0);
   const auto cantelli = cantelliBound(1.0, 1.0);
-  VSS_CHECK(chebyshev.hasValue() && cantelli.hasValue());
-  if (chebyshev && cantelli) {
+  const auto cantelliBelowBranch = cantelliBound(4.0, 1.0);
+  const auto cantelliAboveBranch = cantelliBound(1.0, 2.0);
+  VSS_CHECK(chebyshev.hasValue() && cantelli.hasValue() &&
+            cantelliBelowBranch.hasValue() && cantelliAboveBranch.hasValue());
+  if (chebyshev && cantelli && cantelliBelowBranch && cantelliAboveBranch) {
     VSS_CHECK(chebyshev.value() >= 0.25);
     VSS_CHECK(chebyshev.value() <= 0.25 * (1.0 + 16.0 * epsilon));
     VSS_CHECK(cantelli.value() >= 0.5);
     VSS_CHECK(cantelli.value() <= 0.5 * (1.0 + 16.0 * epsilon));
+    VSS_CHECK(cantelliBelowBranch.value() >= 0.8);
+    VSS_CHECK(cantelliBelowBranch.value() <= 0.8 * (1.0 + 16.0 * epsilon));
+    VSS_CHECK(cantelliAboveBranch.value() >= 0.2);
+    VSS_CHECK(cantelliAboveBranch.value() <= 0.2 * (1.0 + 16.0 * epsilon));
   }
   const auto zero = chebyshevBound(0.0, 3.0);
   const auto capped = chebyshevBound(9.0, 1.0);
   const auto midpointChebyshev = chebyshevBound(4.0, 2.0);
-  const auto tinyChebyshev = chebyshevBound(
-      std::numeric_limits<Scalar>::denorm_min(),
-      std::numeric_limits<Scalar>::max());
-  const auto tinyCantelli = cantelliBound(
-      std::numeric_limits<Scalar>::denorm_min(),
-      std::numeric_limits<Scalar>::max());
+  const auto tinyChebyshev =
+      chebyshevBound(std::numeric_limits<Scalar>::denorm_min(),
+                     std::numeric_limits<Scalar>::max());
+  const auto tinyCantelli =
+      cantelliBound(std::numeric_limits<Scalar>::denorm_min(),
+                    std::numeric_limits<Scalar>::max());
   VSS_CHECK(zero.hasValue() && zero.value() == 0.0);
   VSS_CHECK(capped.hasValue() && capped.value() == 1.0);
   VSS_CHECK(midpointChebyshev.hasValue() && midpointChebyshev.value() == 1.0);
@@ -54,3 +61,6 @@ int main() {
   exactAndConservativeBounds();
   invalidInputs();
 }
+
+// VSS-MATH-TRACEABILITY: C091 CASE-C091.cheb.directed
+// VSS-MATH-TRACEABILITY: C091 CASE-C091.cantelli.directed

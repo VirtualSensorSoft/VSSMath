@@ -1,10 +1,9 @@
-#include <vss/math/probability/MomentBounds.hpp>
-
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
 #include <vss/math/Error.hpp>
+#include <vss/math/probability/MomentBounds.hpp>
 
 namespace vss::math::probability {
 namespace {
@@ -16,19 +15,16 @@ Result<Scalar> validate(Scalar variance, Scalar radius) {
                                    "variance and radius must be finite");
   }
   if (variance < 0.0 || radius <= 0.0) {
-    return Result<Scalar>::failure(ErrorCode::InvalidDomain,
-                                   "variance must be nonnegative and radius positive");
+    return Result<Scalar>::failure(
+        ErrorCode::InvalidDomain,
+        "variance must be nonnegative and radius positive");
   }
   return Result<Scalar>::success(variance);
 }
 
-Scalar upward(Scalar value) noexcept {
-  return std::nextafter(value, infinity);
-}
+Scalar upward(Scalar value) noexcept { return std::nextafter(value, infinity); }
 
-Scalar downward(Scalar value) noexcept {
-  return std::nextafter(value, 0.0);
-}
+Scalar downward(Scalar value) noexcept { return std::nextafter(value, 0.0); }
 
 Scalar positiveUpper(Scalar value) noexcept {
   if (value == 0.0) {
