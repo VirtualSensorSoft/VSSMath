@@ -26,6 +26,8 @@ struct Distribution::State final {
   std::vector<Scalar> weights;
   std::vector<Scalar> atoms;
   std::vector<Scalar> masses;
+  std::vector<Scalar> cumulativeMasses;
+  std::vector<Scalar> survivalMasses;
   Index depth{1U};
 };
 
@@ -103,8 +105,8 @@ detail::DistributionFactory::empirical(std::vector<Scalar> atoms,
         ErrorCode::InvalidExtent,
         "empirical observations and masses must have equal nonzero length");
   }
-  if (atoms.size() > retainedCap || atoms.size() > limits.elements ||
-      atoms.size() > limits.bytes / (2U * sizeof(Scalar))) {
+  if (atoms.size() > retainedCap || atoms.size() > limits.elements / 4U ||
+      atoms.size() > limits.bytes / (4U * sizeof(Scalar))) {
     return Result<Distribution>::failure(
         ErrorCode::ResourceLimit, "empirical law exceeds its storage limit");
   }
@@ -138,6 +140,8 @@ detail::DistributionFactory::empirical(std::vector<Scalar> atoms,
       weighted.emplace_back(atoms[index], scaled);
     }
   }
+  std::vector<Scalar>().swap(atoms);
+  std::vector<Scalar>().swap(masses);
   std::sort(weighted.begin(), weighted.end(),
             [](const auto& left, const auto& right) {
               return left.first < right.first;
@@ -154,16 +158,22 @@ detail::DistributionFactory::empirical(std::vector<Scalar> atoms,
       uniqueMasses.push_back(mass);
     }
   }
-  Scalar total = 0.0;
+  std::vector<std::pair<Scalar, Scalar>>().swap(weighted);
+  long double total = 0.0L;
+  long double massCorrection = 0.0L;
   for (const Scalar mass : uniqueMasses) {
-    total += mass;
+    const long double adjusted =
+        static_cast<long double>(mass) - massCorrection;
+    const long double next = total + adjusted;
+    massCorrection = (next - total) - adjusted;
+    total = next;
   }
   if (!std::isfinite(total) || total <= 0.0) {
     return Result<Distribution>::failure(
         ErrorCode::NonFiniteResult, "empirical normalized mass is not finite");
   }
   for (Scalar& mass : uniqueMasses) {
-    mass /= total;
+    mass = static_cast<Scalar>(static_cast<long double>(mass) / total);
     if (mass == 0.0) {
       return Result<Distribution>::failure(
           ErrorCode::NonFiniteResult,
@@ -175,6 +185,20 @@ detail::DistributionFactory::empirical(std::vector<Scalar> atoms,
   state->measure = Measure::atom_mass;
   state->atoms = std::move(uniqueAtoms);
   state->masses = std::move(uniqueMasses);
+  state->cumulativeMasses.resize(state->masses.size());
+  state->survivalMasses.resize(state->masses.size());
+  long double cumulative = 0.0L;
+  for (Index index = 0U; index < state->masses.size(); ++index) {
+    cumulative += state->masses[index];
+    state->cumulativeMasses[index] = static_cast<Scalar>(cumulative);
+  }
+  long double survival = 0.0L;
+  for (Index index = state->masses.size(); index-- > 0U;) {
+    survival += state->masses[index];
+    state->survivalMasses[index] = static_cast<Scalar>(survival);
+  }
+  state->cumulativeMasses.back() = 1.0;
+  state->survivalMasses.front() = 1.0;
   return Result<Distribution>::success(Distribution(std::move(state)));
 }
 
@@ -222,7 +246,8 @@ Result<Distribution> detail::DistributionFactory::composite(
     return Result<Distribution>::failure(ErrorCode::ResourceLimit,
                                          "composite nesting exceeds depth 32");
   }
-  Scalar scaledTotal = 0.0;
+  long double scaledTotal = 0.0L;
+  long double weightCorrection = 0.0L;
   for (Scalar& weight : weights) {
     const bool positive = weight > 0.0;
     weight /= maximumWeight;
@@ -231,14 +256,19 @@ Result<Distribution> detail::DistributionFactory::composite(
                                            "positive composite weight is below "
                                            "representable normalization range");
     }
-    scaledTotal += weight;
+    const long double adjusted =
+        static_cast<long double>(weight) - weightCorrection;
+    const long double next = scaledTotal + adjusted;
+    weightCorrection = (next - scaledTotal) - adjusted;
+    scaledTotal = next;
   }
   if (!std::isfinite(scaledTotal) || scaledTotal <= 0.0) {
     return Result<Distribution>::failure(
         ErrorCode::NonFiniteResult, "composite weight total is not finite");
   }
   for (Scalar& weight : weights) {
-    weight /= scaledTotal;
+    weight =
+        static_cast<Scalar>(static_cast<long double>(weight) / scaledTotal);
   }
   auto state = std::make_shared<Distribution::State>();
   state->family = family;
@@ -1320,8 +1350,9 @@ Result<Distribution> empirical(ConstVectorView observations,
         ErrorCode::DimensionMismatch,
         "empirical observations and masses must have equal length");
   }
-  if (observations.size() > 1024U || observations.size() > limits.elements ||
-      observations.size() > limits.bytes / (2U * sizeof(Scalar))) {
+  if (observations.size() > 1024U ||
+      observations.size() > limits.elements / 4U ||
+      observations.size() > limits.bytes / (4U * sizeof(Scalar))) {
     return Result<Distribution>::failure(
         ErrorCode::ResourceLimit,
         "empirical input exceeds its configured storage limit");
@@ -2198,19 +2229,19 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
     [[fallthrough]];
   }
   case Family::empirical: {
-    Scalar cdf = 0.0;
-    Scalar survival = 0.0;
+    const auto upper =
+        std::upper_bound(state.atoms.begin(), state.atoms.end(), x);
+    const Index upperIndex = static_cast<Index>(upper - state.atoms.begin());
+    const Scalar cdf =
+        upperIndex == 0U ? 0.0 : state.cumulativeMasses[upperIndex - 1U];
+    const Scalar survival = upperIndex == state.atoms.size()
+                                ? 0.0
+                                : state.survivalMasses[upperIndex];
     Scalar mass = 0.0;
-    for (Index index = 0U; index < state.atoms.size(); ++index) {
-      const Scalar atomMass = state.masses[index];
-      if (state.atoms[index] <= x) {
-        cdf += atomMass;
-      } else {
-        survival += atomMass;
-      }
-      if (state.atoms[index] == x) {
-        mass = atomMass;
-      }
+    const auto exact =
+        std::lower_bound(state.atoms.begin(), state.atoms.end(), x);
+    if (exact != state.atoms.end() && *exact == x) {
+      mass = state.masses[static_cast<Index>(exact - state.atoms.begin())];
     }
     tails = {cdf == 0.0 ? negativeInfinity : std::log(cdf),
              survival == 0.0 ? negativeInfinity : std::log(survival)};
@@ -2734,6 +2765,25 @@ Result<Scalar> DistributionEngine::quantile(const Distribution& law,
   const auto& p = state.parameters;
   const Scalar infinity = std::numeric_limits<Scalar>::infinity();
   if (state.measure == Measure::atom_mass) {
+    if (state.family == Family::empirical ||
+        (state.family == Family::finite_convolution &&
+         state.components.empty())) {
+      if (probability == 0.0) {
+        return Result<Scalar>::success(state.atoms.front());
+      }
+      if (probability == 1.0) {
+        return Result<Scalar>::success(state.atoms.back());
+      }
+      const auto found =
+          std::lower_bound(state.cumulativeMasses.begin(),
+                           state.cumulativeMasses.end(), probability);
+      if (found == state.cumulativeMasses.end()) {
+        return Result<Scalar>::failure(ErrorCode::NoConvergence,
+                                       "atom masses do not normalize to one");
+      }
+      return Result<Scalar>::success(state.atoms[static_cast<Index>(
+          found - state.cumulativeMasses.begin())]);
+    }
     const Limits limits{1024U, 16U * 1024U * 1024U,
                         policy.iteration.max_evaluations};
     auto support = finiteAtoms(law, limits);

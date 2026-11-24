@@ -221,6 +221,25 @@ void quantilesMomentsSamplingAndComposites() {
       }
     }
   }
+
+  const std::array<Scalar, 2> tailObservations{0.0, 1.0};
+  const std::array<Scalar, 2> tailMasses{1.0e200, 1.0e188};
+  const auto tailObservationView =
+      ConstVectorView::create(tailObservations, tailObservations.size());
+  const auto tailMassView =
+      ConstVectorView::create(tailMasses, tailMasses.size());
+  const auto tailLaw = empirical(tailObservationView.value(),
+                                 tailMassView.value(), {32U, 1024U, 100U});
+  VSS_CHECK(tailLaw.hasValue());
+  if (tailLaw) {
+    const auto atFirstAtom = evaluate(tailLaw.value(), 0.0, policy());
+    VSS_CHECK(atFirstAtom.hasValue());
+    if (atFirstAtom) {
+      VSS_CHECK(std::abs(atFirstAtom.value().survival - 1.0e-12) < 3.0e-24);
+    }
+    VSS_CHECK(quantile(tailLaw.value(), 1.0 - 5.0e-13, policy()).value() ==
+              1.0);
+  }
 }
 
 void compositeInputLimitsPreflight() {
@@ -243,6 +262,15 @@ void compositeInputLimitsPreflight() {
     const auto limited =
         empirical(observationView.value(), massView.value(), {1U, 4096U, 100U});
     VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+
+    const auto oneByteShort = empirical(
+        observationView.value(), massView.value(),
+        {8U, 4U * 2U * sizeof(Scalar) - 1U, 100U});
+    VSS_CHECK(oneByteShort.status().code() == ErrorCode::ResourceLimit);
+    const auto exactStorage = empirical(
+        observationView.value(), massView.value(),
+        {8U, 4U * 2U * sizeof(Scalar), 100U});
+    VSS_CHECK(exactStorage.hasValue());
   }
 }
 
