@@ -61,6 +61,9 @@ add_library(vss_math STATIC
   src/covariance/UncertaintySummary.cpp
   src/differentiation/FiniteDifference.cpp
   src/probability/ChiSquare.cpp
+  src/probability/Distribution.cpp
+  src/probability/Likelihood.cpp
+  src/probability/Gaussian.cpp
   src/probability/Special.cpp
   src/statistics/Descriptive.cpp
   src/statistics/Order.cpp

@@ -1,0 +1,121 @@
+#include "Test.hpp"
+
+#include <array>
+#include <cmath>
+#include <vss/math/probability/Gaussian.hpp>
+#include <vss/math/probability/Likelihood.hpp>
+
+namespace {
+using namespace vss::math;
+using namespace vss::math::probability;
+
+SolvePolicy solvePolicy(RankPolicy rank = RankPolicy::supported_subspace) {
+  return {.iteration = {.abs = 1.0e-12,
+                        .rel = 1.0e-12,
+                        .max_iterations = 100U,
+                        .max_evaluations = 1000U,
+                        .bracket = std::nullopt},
+          .rank_abs = 1.0e-14,
+          .rank_rel = 1.0e-12,
+          .reciprocal_condition_floor = 0.0,
+          .rank = rank,
+          .restart = 0U};
+}
+
+ProbabilityPolicy probabilityPolicy() {
+  return {{1.0e-13, 1.0e-13, 1000U, 10000U, std::nullopt}, 10000U, 2.0e-9};
+}
+
+void likelihoodAtGaussianCenter() {
+  const std::array<Scalar, 2> locationValues{0.0, 0.0};
+  const auto location = ConstVectorView::create(locationValues, 2U);
+  Matrix covarianceMatrix(2U, 2U, 0.0);
+  covarianceMatrix.at(0U, 0U) = 1.0;
+  covarianceMatrix.at(1U, 1U) = 4.0;
+  const auto law = multivariateNormal(location.value(), covarianceMatrix.view(),
+                                      solvePolicy(), {128U, 4096U, 10000U});
+  VSS_CHECK(law.hasValue());
+  if (law) {
+    const auto result =
+        logLikelihood(law.value(), location.value(), probabilityPolicy());
+    VSS_CHECK(result.hasValue());
+    if (result) {
+      VSS_CHECK(std::abs(result.value() +
+                         std::log(4.0 * 3.14159265358979323846)) < 1.0e-12);
+    }
+  }
+}
+
+void gaussianConditioningAndReplay() {
+  const std::array<Scalar, 2> locationValues{0.0, 0.0};
+  const auto location = ConstVectorView::create(locationValues, 2U);
+  Matrix scale(2U, 2U, 0.0);
+  scale.at(0U, 0U) = 4.0;
+  scale.at(0U, 1U) = 2.0;
+  scale.at(1U, 0U) = 2.0;
+  scale.at(1U, 1U) = 4.0;
+  auto law = multivariateNormal(location.value(), scale.view(), solvePolicy(),
+                                {128U, 4096U, 10000U});
+  VSS_CHECK(law.hasValue());
+  if (law) {
+    const std::array<Index, 1> keep{0U};
+    const std::array<Index, 1> observed{1U};
+    const std::array<Scalar, 1> observedValues{2.0};
+    const auto values = ConstVectorView::create(observedValues, 1U);
+    auto conditional =
+        conditionalGaussian(law.value(), keep, observed, values.value(),
+                            solvePolicy(), {128U, 4096U, 10000U});
+    VSS_CHECK(conditional.hasValue());
+    if (conditional) {
+      VSS_CHECK(std::abs(conditional.value().location().at(0U) - 1.0) <
+                1.0e-12);
+      VSS_CHECK(std::abs(conditional.value().scale().at(0U, 0U) - 3.0) <
+                1.0e-12);
+    }
+    Rng first(9876U);
+    Rng replay(9876U);
+    auto a = multivariateNormalSample(law.value(), first, probabilityPolicy(),
+                                      {32U, 1024U, 1000U});
+    auto b = multivariateNormalSample(law.value(), replay, probabilityPolicy(),
+                                      {32U, 1024U, 1000U});
+    VSS_CHECK(a.hasValue() && b.hasValue());
+    if (a && b) {
+      VSS_CHECK(a.value().size() == 2U && b.value().size() == 2U);
+      VSS_CHECK(a.value().at(0U) == b.value().at(0U));
+      VSS_CHECK(a.value().at(1U) == b.value().at(1U));
+    }
+  }
+}
+
+void singularSupportIsPreserved() {
+  const std::array<Scalar, 2> center{0.0, 0.0};
+  const auto location = ConstVectorView::create(center, 2U);
+  Matrix scale(2U, 2U, 1.0);
+  auto law = multivariateNormal(location.value(), scale.view(), solvePolicy(),
+                                {128U, 4096U, 10000U});
+  VSS_CHECK(law.hasValue());
+  if (law) {
+    const std::array<Scalar, 2> onSupport{1.0, 1.0};
+    const std::array<Scalar, 2> offSupport{1.0, 2.0};
+    const auto onView = ConstVectorView::create(onSupport, 2U);
+    const auto offView = ConstVectorView::create(offSupport, 2U);
+    VSS_CHECK(std::isfinite(
+        logLikelihood(law.value(), onView.value(), probabilityPolicy())
+            .value()));
+    VSS_CHECK(logLikelihood(law.value(), offView.value(), probabilityPolicy())
+                  .value() == -std::numeric_limits<Scalar>::infinity());
+  }
+}
+
+} // namespace
+
+int main() {
+  likelihoodAtGaussianCenter();
+  gaussianConditioningAndReplay();
+  singularSupportIsPreserved();
+}
+
+// VSS-MATH-TRACEABILITY: C060 CASE-C060.normal.factor
+// VSS-MATH-TRACEABILITY: C061 CASE-C061.conditional-gaussian
+// VSS-MATH-TRACEABILITY: C061 CASE-C061.multivariate-sample-replay
+// VSS-MATH-TRACEABILITY: C059 CASE-C059.singular-conditional-correlated
