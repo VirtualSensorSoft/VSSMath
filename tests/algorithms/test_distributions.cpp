@@ -223,6 +223,29 @@ void quantilesMomentsSamplingAndComposites() {
   }
 }
 
+void compositeInputLimitsPreflight() {
+  const auto first = normal(0.0, 1.0);
+  const auto second = normal(1.0, 1.0);
+  VSS_CHECK(first.hasValue() && second.hasValue());
+  if (first && second) {
+    const std::array<WeightedLaw, 2> terms{WeightedLaw{first.value(), 0.5},
+                                           WeightedLaw{second.value(), 0.5}};
+    const auto limited = mixture(terms, policy(), {1U, 4096U, 100U});
+    VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+  }
+
+  const std::array<Scalar, 2> observations{1.0, 2.0};
+  const std::array<Scalar, 2> masses{1.0, 1.0};
+  const auto observationView = ConstVectorView::create(observations, 2U);
+  const auto massView = ConstVectorView::create(masses, 2U);
+  VSS_CHECK(observationView.hasValue() && massView.hasValue());
+  if (observationView && massView) {
+    const auto limited =
+        empirical(observationView.value(), massView.value(), {1U, 4096U, 100U});
+    VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+  }
+}
+
 void convolutionRegimes() {
   const std::array<Distribution, 0> noTerms{};
   const auto empty = finiteConvolution(noTerms, policy());
@@ -537,6 +560,7 @@ int main() {
   factoriesRejectInvalidParameters();
   evaluateNominalLawAnchors();
   quantilesMomentsSamplingAndComposites();
+  compositeInputLimitsPreflight();
   convolutionRegimes();
   familyQuantileMomentAndReplayGrid();
 }

@@ -64,11 +64,6 @@ multivariateNormal(ConstVectorView location, ConstMatrixView covariance,
 multivariateStudentT(ConstVectorView location, ConstMatrixView scale,
                      Scalar degreesOfFreedom, SolvePolicy policy,
                      Limits limits);
-[[nodiscard]] Result<Vector> mean(const JointDistribution& law,
-                                  ProbabilityPolicy policy, Limits limits);
-[[nodiscard]] Result<Matrix> covariance(const JointDistribution& law,
-                                        ProbabilityPolicy policy,
-                                        Limits limits);
 [[nodiscard]] Result<JointDistribution>
 conditionalGaussian(const JointDistribution& law, std::span<const Index> keep,
                     std::span<const Index> observed, ConstVectorView values,

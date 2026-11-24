@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <vss/math/probability/DistributionMoments.hpp>
 #include <vss/math/probability/Gaussian.hpp>
 #include <vss/math/probability/Likelihood.hpp>
 
@@ -43,6 +44,11 @@ void likelihoodAtGaussianCenter() {
       VSS_CHECK(std::abs(result.value() +
                          std::log(4.0 * 3.14159265358979323846)) < 1.0e-12);
     }
+    auto invalidPolicy = probabilityPolicy();
+    invalidPolicy.abs_log_error = 0.0;
+    VSS_CHECK(logLikelihood(law.value(), location.value(), invalidPolicy)
+                  .status()
+                  .code() == ErrorCode::InvalidTolerance);
   }
 }
 
@@ -177,6 +183,51 @@ void jointMomentsAndRankPolicy() {
   }
 }
 
+void singularConditioningAndEmptyMarginal() {
+  const std::array<Scalar, 2> center{0.0, 0.0};
+  const auto location = ConstVectorView::create(center, 2U);
+  Matrix scale(2U, 2U, 1.0);
+  const auto law = multivariateNormal(location.value(), scale.view(),
+                                      solvePolicy(), {64U, 2048U, 1000U});
+  VSS_CHECK(law.hasValue());
+  if (!law) {
+    return;
+  }
+  const std::array<Index, 1> keepFirst{0U};
+  const std::array<Index, 1> observeSecond{1U};
+  const std::array<Scalar, 1> observedValue{1.0};
+  const auto valueView = ConstVectorView::create(observedValue, 1U);
+  const auto conditional = conditionalGaussian(
+      law.value(), keepFirst, observeSecond, valueView.value(), solvePolicy(),
+      {64U, 2048U, 1000U});
+  VSS_CHECK(conditional.hasValue());
+  if (conditional) {
+    VSS_CHECK(std::abs(conditional.value().location().at(0U) - 1.0) < 1.0e-12);
+    VSS_CHECK(std::abs(conditional.value().scale().at(0U, 0U)) < 1.0e-12);
+  }
+
+  const std::array<Index, 2> observeBoth{0U, 1U};
+  const std::array<Scalar, 2> incompatible{0.0, 1.0};
+  const auto incompatibleView = ConstVectorView::create(incompatible, 2U);
+  const std::array<Index, 0> keepNone{};
+  const auto rejected = conditionalGaussian(law.value(), keepNone, observeBoth,
+                                            incompatibleView.value(),
+                                            solvePolicy(), {64U, 2048U, 1000U});
+  VSS_CHECK(rejected.status().code() == ErrorCode::InvalidDomain);
+
+  const std::array<Index, 0> observeNone{};
+  const std::array<Scalar, 0> noValues{};
+  const auto emptyView = ConstVectorView::create(noValues, 0U);
+  const auto marginal = conditionalGaussian(law.value(), keepFirst, observeNone,
+                                            emptyView.value(), solvePolicy(),
+                                            {64U, 2048U, 1000U});
+  VSS_CHECK(marginal.hasValue());
+  if (marginal) {
+    VSS_CHECK(marginal.value().dimension() == 1U);
+    VSS_CHECK(marginal.value().scale().at(0U, 0U) == 1.0);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -185,6 +236,7 @@ int main() {
   singularSupportIsPreserved();
   normalSamplingUsesOneWordPerRetainedCoordinate();
   jointMomentsAndRankPolicy();
+  singularConditioningAndEmptyMarginal();
 }
 
 // VSS-MATH-TRACEABILITY: C060 CASE-C060.normal.factor

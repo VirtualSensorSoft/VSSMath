@@ -6,6 +6,7 @@
 #include <vector>
 #include <vss/math/Error.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
+#include <vss/math/probability/DistributionMoments.hpp>
 #include <vss/math/probability/Gaussian.hpp>
 #include <vss/math/probability/Special.hpp>
 
@@ -252,7 +253,8 @@ detail::JointDistributionEngine::logLikelihood(const JointDistribution& law,
   }
   if (!std::isfinite(policy.iteration.abs) ||
       !std::isfinite(policy.iteration.rel) || policy.iteration.abs <= 0.0 ||
-      policy.iteration.rel <= 0.0 || policy.iteration.max_evaluations == 0U) {
+      !std::isfinite(policy.abs_log_error) || policy.iteration.rel <= 0.0 ||
+      policy.abs_log_error <= 0.0 || policy.iteration.max_evaluations == 0U) {
     return Result<Scalar>::failure(ErrorCode::InvalidTolerance,
                                    "joint likelihood policy is invalid");
   }
@@ -577,6 +579,36 @@ conditionalGaussian(const JointDistribution& law, std::span<const Index> keep,
       return failed(ErrorCode::InvalidDomain,
                     "observed values are inconsistent with singular support");
     }
+    Matrix observedPseudoInverse(observed.size(), observed.size(), 0.0);
+    for (Index k = 0U; k < observed.size(); ++k) {
+      if (eigenvalues.at(k) <= cutoff) {
+        continue;
+      }
+      for (Index row = 0U; row < observed.size(); ++row) {
+        for (Index column = 0U; column < observed.size(); ++column) {
+          observedPseudoInverse.at(row, column) += eigenvectors.at(row, k) *
+                                                   eigenvectors.at(column, k) /
+                                                   eigenvalues.at(k);
+        }
+      }
+    }
+    Matrix solvedCross(observed.size(), keep.size(), 0.0);
+    for (Index row = 0U; row < observed.size(); ++row) {
+      for (Index column = 0U; column < keep.size(); ++column) {
+        long double value = 0.0L;
+        for (Index inner = 0U; inner < observed.size(); ++inner) {
+          value +=
+              static_cast<long double>(observedPseudoInverse.at(row, inner)) *
+              source.scale.at(observed[inner], keep[column]);
+        }
+        if (!std::isfinite(value) ||
+            std::abs(value) > std::numeric_limits<Scalar>::max()) {
+          return failed(ErrorCode::NonFiniteResult,
+                        "conditional cross solve is not representable");
+        }
+        solvedCross.at(row, column) = static_cast<Scalar>(value);
+      }
+    }
     for (Index i = 0U; i < keep.size(); ++i) {
       long double shift = 0.0L;
       for (Index j = 0U; j < observed.size(); ++j) {
@@ -594,18 +626,9 @@ conditionalGaussian(const JointDistribution& law, std::span<const Index> keep,
       for (Index j = 0U; j < keep.size(); ++j) {
         long double reduction = 0.0L;
         for (Index a = 0U; a < observed.size(); ++a) {
-          for (Index b = 0U; b < observed.size(); ++b) {
-            long double inverse = 0.0L;
-            for (Index k = 0U; k < observed.size(); ++k) {
-              if (eigenvalues.at(k) > cutoff) {
-                inverse += static_cast<long double>(eigenvectors.at(a, k)) *
-                           eigenvectors.at(b, k) / eigenvalues.at(k);
-              }
-            }
-            reduction += static_cast<long double>(
-                             source.scale.at(keep[i], observed[a])) *
-                         inverse * source.scale.at(observed[b], keep[j]);
-          }
+          reduction +=
+              static_cast<long double>(source.scale.at(keep[i], observed[a])) *
+              solvedCross.at(a, j);
         }
         const long double updatedScale = conditionalScale.at(i, j) - reduction;
         if (!std::isfinite(updatedScale) ||

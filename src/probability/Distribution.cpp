@@ -302,6 +302,15 @@ detail::DistributionEngine::mixture(std::span<const WeightedLaw> terms,
     return Result<Distribution>::failure(ErrorCode::InvalidExtent,
                                          "mixture requires at least one term");
   }
+  if (terms.size() > 1024U || terms.size() > limits.elements ||
+      terms.size() >
+          limits.bytes / (sizeof(std::shared_ptr<const Distribution::State>) +
+                          sizeof(Scalar)) ||
+      terms.size() > limits.evaluations) {
+    return Result<Distribution>::failure(
+        ErrorCode::ResourceLimit,
+        "mixture input exceeds its configured storage or work limit");
+  }
   std::vector<std::shared_ptr<const Distribution::State>> components;
   std::vector<Scalar> weights;
   components.reserve(terms.size());
@@ -1310,6 +1319,12 @@ Result<Distribution> empirical(ConstVectorView observations,
     return Result<Distribution>::failure(
         ErrorCode::DimensionMismatch,
         "empirical observations and masses must have equal length");
+  }
+  if (observations.size() > 1024U || observations.size() > limits.elements ||
+      observations.size() > limits.bytes / (2U * sizeof(Scalar))) {
+    return Result<Distribution>::failure(
+        ErrorCode::ResourceLimit,
+        "empirical input exceeds its configured storage limit");
   }
   std::vector<Scalar> values;
   std::vector<Scalar> weights;
