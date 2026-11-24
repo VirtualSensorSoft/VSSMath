@@ -94,6 +94,9 @@ vss_math_add_algorithm_test(test_weighted_population
 vss_math_add_algorithm_test(test_population_moments
                              algorithms/test_moments.cpp
                              math.population_moments)
+vss_math_add_algorithm_test(test_moment_state
+                             algorithms/test_moment_state.cpp
+                             math.moment_state)
 vss_math_add_algorithm_test(test_fixed_weighted_third_moment
                              algorithms/test_fixed_weighted_third_moment.cpp
                              math.fixed_weighted_third_moment)
