@@ -510,6 +510,7 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
   bool allNormal = true;
   bool allDiscrete = true;
   Index normalCount = 0U;
+  Index poissonCount = 0U;
   Index gammaCount = 0U;
   long double gammaShape = 0.0L;
   Scalar commonGammaScale = 0.0;
@@ -532,6 +533,7 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
       normalVariance +=
           static_cast<long double>(state->parameters[1]) * state->parameters[1];
     }
+    poissonCount += state->family == Family::poisson ? 1U : 0U;
     if (state->family == Family::gamma || state->family == Family::chi_square) {
       const Scalar scale =
           state->family == Family::gamma ? state->parameters[1] : 2.0;
@@ -570,6 +572,39 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
           "common-scale gamma convolution shape overflows");
     }
     return gamma(static_cast<Scalar>(gammaShape), commonGammaScale);
+  }
+  const bool normalWithPoisson =
+      normalCount > 0U && poissonCount == 1U &&
+      terms.size() == normalCount + poissonCount &&
+      std::all_of(terms.begin(), terms.end(), [](const Distribution& term) {
+        return term.state_->family == Family::normal ||
+               term.state_->family == Family::poisson;
+      });
+  if (normalWithPoisson) {
+    if (!std::isfinite(normalMean) || !std::isfinite(normalVariance) ||
+        std::abs(normalMean) > std::numeric_limits<Scalar>::max() ||
+        normalVariance >
+            static_cast<long double>(std::numeric_limits<Scalar>::max()) *
+                std::numeric_limits<Scalar>::max()) {
+      return Result<Distribution>::failure(
+          ErrorCode::NonFiniteResult,
+          "normal and Poisson convolution parameters overflow");
+    }
+    auto combinedNormal =
+        normal(static_cast<Scalar>(normalMean),
+               static_cast<Scalar>(std::sqrt(normalVariance)));
+    if (!combinedNormal) {
+      return Result<Distribution>::failure(
+          combinedNormal.status().code(),
+          std::string(combinedNormal.status().message()));
+    }
+    const auto poissonState = std::find_if(
+        components.begin(), components.end(),
+        [](const auto& state) { return state->family == Family::poisson; });
+    std::vector<std::shared_ptr<const Distribution::State>> expression{
+        share(combinedNormal.value()), *poissonState};
+    return DistributionFactory::convolution(std::move(expression),
+                                            Measure::real_density, limits);
   }
   if (allDiscrete) {
     std::map<Scalar, Scalar> aggregate{{0.0, 1.0}};
@@ -1919,6 +1954,79 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       if (continuousState && discreteState) {
         Distribution continuousLaw(std::move(continuousState));
         Distribution discreteLaw(std::move(discreteState));
+        if (discreteLaw.state_->family == Family::poisson &&
+            continuousLaw.state_->family == Family::normal) {
+          const Scalar rate = discreteLaw.state_->parameters[0];
+          const Scalar logMaximumDensity =
+              -std::log(continuousLaw.state_->parameters[1]) -
+              0.5 * std::log(2.0 * std::numbers::pi_v<Scalar>);
+          Scalar logDensitySum = negativeInfinity;
+          Scalar logCdf = negativeInfinity;
+          Scalar logSurvival = negativeInfinity;
+          Scalar logMass = -rate;
+          std::uint64_t evaluations = 0U;
+          for (std::uint64_t count = 0U;; ++count) {
+            if (count > 9007199254740992ULL ||
+                ++evaluations > policy.iteration.max_evaluations) {
+              return Result<TailValues>::failure(
+                  ErrorCode::ResourceLimit,
+                  "Poisson-normal convolution evaluation cap exceeded");
+            }
+            auto shifted =
+                evaluate(continuousLaw, x - static_cast<Scalar>(count), policy);
+            if (!shifted) {
+              return Result<TailValues>::failure(
+                  shifted.status().code(),
+                  std::string(shifted.status().message()));
+            }
+            if (shifted.value().log_density_or_mass != negativeInfinity) {
+              logDensitySum = logAddExp(
+                  logDensitySum, logMass + shifted.value().log_density_or_mass);
+            }
+            logCdf =
+                logAddExp(logCdf, logMass + shifted.value().log_tails.log_cdf);
+            logSurvival = logAddExp(
+                logSurvival, logMass + shifted.value().log_tails.log_survival);
+
+            if (++evaluations > policy.iteration.max_evaluations) {
+              return Result<TailValues>::failure(
+                  ErrorCode::ResourceLimit,
+                  "Poisson-normal convolution evaluation cap exceeded");
+            }
+            auto remaining =
+                evaluate(discreteLaw, static_cast<Scalar>(count), policy);
+            if (!remaining) {
+              return Result<TailValues>::failure(
+                  remaining.status().code(),
+                  std::string(remaining.status().message()));
+            }
+            const Scalar logRemainder =
+                remaining.value().log_tails.log_survival;
+            const auto logTarget = [&](Scalar current) {
+              const Scalar absoluteRelative =
+                  logAddExp(std::log(policy.iteration.abs),
+                            std::log(policy.iteration.rel) + current);
+              const Scalar relativeLog =
+                  std::log(policy.abs_log_error) + current;
+              return std::min(absoluteRelative, relativeLog);
+            };
+            const bool densityResolved =
+                logRemainder + logMaximumDensity <= logTarget(logDensitySum);
+            const bool cdfResolved = logRemainder <= logTarget(logCdf);
+            const bool survivalResolved =
+                logRemainder <= logTarget(logSurvival);
+            if (densityResolved && cdfResolved && survivalResolved) {
+              return finiteTailValues(logDensitySum, {logCdf, logSurvival},
+                                      true);
+            }
+            if (rate == 0.0) {
+              return finiteTailValues(logDensitySum, {logCdf, logSurvival},
+                                      true);
+            }
+            logMass +=
+                std::log(rate) - std::log(static_cast<Scalar>(count + 1U));
+          }
+        }
         auto atoms =
             finiteAtoms(discreteLaw, {1024U, 16U * 1024U * 1024U,
                                       policy.iteration.max_evaluations});

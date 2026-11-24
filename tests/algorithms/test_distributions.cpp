@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <vss/math/ProbabilityPolicy.hpp>
 #include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/DistributionMoments.hpp>
@@ -302,6 +303,36 @@ void convolutionRegimes() {
           std::abs(
               variance(multiShift.value(), policy(), {8U, 128U, 100U}).value() -
               1.4375) < 1.0e-12);
+    }
+  }
+
+  const std::array<Distribution, 2> normalAndPoisson{gaussian.value(),
+                                                     poisson(1.0).value()};
+  const auto countMixture = finiteConvolution(normalAndPoisson, policy());
+  VSS_CHECK(countMixture.hasValue());
+  if (countMixture) {
+    const auto atZero = evaluate(countMixture.value(), 0.0, policy());
+    VSS_CHECK(atZero.hasValue());
+    if (atZero) {
+      long double mass = std::exp(-1.0L);
+      long double density = 0.0L;
+      long double cdf = 0.0L;
+      long double survival = 0.0L;
+      for (Index count = 0U; count <= 20U; ++count) {
+        const long double coordinate = -static_cast<long double>(count);
+        const long double normalDensity =
+            std::exp(-coordinate * coordinate / 2.0L) /
+            std::sqrt(2.0L * std::numbers::pi_v<long double>);
+        const long double normalCdf =
+            0.5L * std::erfc(-coordinate / std::sqrt(2.0L));
+        density += mass * normalDensity;
+        cdf += mass * normalCdf;
+        survival += mass * (1.0L - normalCdf);
+        mass /= static_cast<long double>(count + 1U);
+      }
+      VSS_CHECK(std::abs(atZero.value().density_or_mass - density) < 1.0e-12);
+      VSS_CHECK(std::abs(atZero.value().cdf - cdf) < 1.0e-12);
+      VSS_CHECK(std::abs(atZero.value().survival - survival) < 1.0e-12);
     }
   }
 
