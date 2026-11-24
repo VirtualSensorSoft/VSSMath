@@ -88,37 +88,57 @@ struct RollingMoments final {
   Index input_dimension{};
   /// @brief Immutable closure tuple metadata shared with both stack plans.
   Array<Index> tuple_orders;
+  /// @brief Flattened closure coordinates in tuple-order groups.
   Array<Index> tuple_indices;
+  /// @brief FIFO observations stored in arrival order, including evicted slots.
   Vector observations;
+  /// @brief Weights corresponding to the FIFO observation slots.
   Vector weights;
   /// @brief Front-stack observations and weights in transfer order.
   Vector front_observations;
+  /// @brief Weights corresponding to the front-stack observation slots.
   Vector front_weights;
   /// @brief Front-stack prefix means, anchors, offsets and centered sums.
   Vector front_means;
+  /// @brief Stable per-prefix anchor coordinates for front-stack means.
   Vector front_anchors;
+  /// @brief Mean offsets from the front-stack anchors.
   Vector front_offsets;
+  /// @brief Normalized centered moment sums for front-stack prefixes.
   Vector front_sums;
+  /// @brief Positive weight masses for front-stack prefixes.
   Vector front_masses;
+  /// @brief Positive observation counts for front-stack prefixes.
   Vector front_positive_counts;
+  /// @brief Encoded all-unit-weight flags for front-stack prefixes.
   Vector front_unit_flags;
+  /// @brief Normalized raw weight-power sums for front-stack prefixes.
   Vector front_weight_powers;
   /// @brief Back-stack prefix means, anchors, offsets and centered sums.
   Vector back_means;
+  /// @brief Stable per-prefix anchor coordinates for back-stack means.
   Vector back_anchors;
+  /// @brief Mean offsets from the back-stack anchors.
   Vector back_offsets;
+  /// @brief Normalized centered moment sums for back-stack prefixes.
   Vector back_sums;
+  /// @brief Positive weight masses for back-stack prefixes.
   Vector back_masses;
+  /// @brief Positive observation counts for back-stack prefixes.
   Vector back_positive_counts;
+  /// @brief Encoded all-unit-weight flags for back-stack prefixes.
   Vector back_unit_flags;
+  /// @brief Normalized raw weight-power sums for back-stack prefixes.
   Vector back_weight_powers;
   /// @brief Preallocated state workspaces used for transactional stack ops.
   mutable OnlineMoments work;
+  /// @brief Second preallocated state workspace for transfer and finalization.
   mutable OnlineMoments work2;
   /// @brief Maximum number of retained observations.
   Index capacity{};
   /// @brief Number of queue items represented by front/back stacks.
   Index front_count{};
+  /// @brief Number of queue items in the back stack.
   Index back_count{};
   /// @brief Current number of retained readings.
   Index count{};
