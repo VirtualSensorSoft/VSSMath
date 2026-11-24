@@ -1,11 +1,25 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <memory>
 #include <numbers>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
+#include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/DistributionMoments.hpp>
 #include <vss/math/probability/Gaussian.hpp>
 #include <vss/math/probability/Special.hpp>
@@ -305,7 +319,7 @@ detail::JointDistributionEngine::logLikelihood(const JointDistribution& law,
       return Result<Scalar>::failure(ErrorCode::NonFiniteResult,
                                      "Student-t degrees of freedom overflow");
     }
-    const Scalar rankValue = static_cast<Scalar>(state.rank);
+    const auto rankValue = static_cast<Scalar>(state.rank);
     auto first = logGamma((state.degreesOfFreedom + rankValue) / 2.0, policy);
     auto second = logGamma(state.degreesOfFreedom / 2.0, policy);
     if (!first || !second) {
@@ -440,13 +454,15 @@ Result<Scalar> logLikelihood(const JointDistribution& law,
   return detail::JointDistributionEngine::logLikelihood(law, jointDraw, policy);
 }
 
-Result<Vector> mean(const JointDistribution& law, ProbabilityPolicy,
+Result<Vector> mean(const JointDistribution& law, ProbabilityPolicy policy,
                     Limits limits) {
+  static_cast<void>(policy);
   return detail::JointMomentsEngine::mean(law, limits);
 }
 
-Result<Matrix> covariance(const JointDistribution& law, ProbabilityPolicy,
-                          Limits limits) {
+Result<Matrix> covariance(const JointDistribution& law,
+                          ProbabilityPolicy policy, Limits limits) {
+  static_cast<void>(policy);
   return detail::JointMomentsEngine::covariance(law, limits);
 }
 

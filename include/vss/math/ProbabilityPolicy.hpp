@@ -11,8 +11,11 @@ namespace vss::math {
 ///          draw limit is reserved for sampling operations and is not consumed
 ///          by deterministic special functions.
 struct ProbabilityPolicy final {
+  /// Iteration and convergence limits for iterative probability algorithms.
   IterPolicy iteration{};
+  /// Maximum random draws permitted by sampling operations.
   Index max_draws{};
+  /// Absolute error budget for log-domain probability calculations.
   Scalar abs_log_error{};
 };
 

@@ -1,6 +1,7 @@
 #ifndef VSS_MATH_PROBABILITY_DISTRIBUTION_HPP
 #define VSS_MATH_PROBABILITY_DISTRIBUTION_HPP
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -65,14 +66,22 @@ class DistributionEngine;
 class Distribution final {
 public:
   Distribution() = delete;
+  /// Copy an immutable law by sharing its retained state.
   Distribution(const Distribution&) noexcept = default;
+  /// Assign an immutable law by sharing its retained state.
   Distribution& operator=(const Distribution&) noexcept = default;
+  /// Transfer the immutable law state; the source becomes empty.
   Distribution(Distribution&&) noexcept = default;
+  /// Transfer the immutable law state; the source becomes empty.
   Distribution& operator=(Distribution&&) noexcept = default;
+  /// Destroy this law handle and release its shared state when unused.
   ~Distribution() = default;
 
+  /// Return the scalar law family represented by this value.
   [[nodiscard]] Family family() const noexcept;
+  /// Return whether evaluation uses a density, mass, or mixed measure.
   [[nodiscard]] Measure measure() const noexcept;
+  /// Return family-specific parameters in canonical order.
   [[nodiscard]] std::span<const Scalar> parameters() const noexcept;
 
 private:
@@ -83,27 +92,40 @@ private:
   std::shared_ptr<const State> state_;
 };
 
+/// @brief A scalar law and its non-negative mixture weight.
 struct WeightedLaw final {
+  /// Immutable component law included in a mixture.
   Distribution law;
+  /// Unnormalized non-negative component weight.
   Scalar weight;
 };
 
+/// @brief Density/mass and both tails returned by one law evaluation.
 struct TailValues final {
+  /// Probability density or probability mass at the queried value.
   Scalar density_or_mass{};
+  /// Natural logarithm of the density or mass.
   Scalar log_density_or_mass{};
+  /// Cumulative probability at the queried value.
   Scalar cdf{};
+  /// Complementary probability at the queried value.
   Scalar survival{};
+  /// Logarithms of the cumulative and complementary probabilities.
   LogTailPair log_tails{};
+  /// Whether the queried value belongs to the law's support.
   bool on_support{};
 };
 
+/// @brief Small deterministic pseudo-random generator for probability sampling.
 class Rng final {
 public:
+  /// Initialize the generator from a reproducible 64-bit seed.
   explicit Rng(std::uint64_t seed) noexcept;
+  /// Return the next 64-bit value and advance the generator state.
   [[nodiscard]] std::uint64_t next() noexcept;
 
 private:
-  std::uint64_t state_[4]{};
+  std::array<std::uint64_t, 4> state_{};
 };
 
 [[nodiscard]] Result<Distribution> normal(Scalar mean, Scalar sd);

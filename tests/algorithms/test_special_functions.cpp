@@ -4,11 +4,13 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <type_traits>
 #include <utility>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/VectorView.hpp>
 #include <vss/math/probability/Special.hpp>
@@ -55,8 +57,8 @@ void incompleteGammaPairedTails() {
   const auto integerShape = incompleteGamma(2.0, 1.0, policy());
   VSS_CHECK(integerShape.hasValue());
   if (integerShape) {
-    close(std::exp(integerShape.value().log_cdf), 1.0 - 2.0 / std::exp(1.0));
-    close(std::exp(integerShape.value().log_survival), 2.0 / std::exp(1.0));
+    close(std::exp(integerShape.value().log_cdf), 1.0 - 2.0 / std::numbers::e);
+    close(std::exp(integerShape.value().log_survival), 2.0 / std::numbers::e);
   }
   const auto halfShape = incompleteGamma(0.5, 0.5, policy());
   VSS_CHECK(halfShape.hasValue());
@@ -119,7 +121,7 @@ void logSumExpStableAndBoundaryCases() {
     const auto result = logSumExp(stableView.value());
     VSS_CHECK(result.hasValue());
     if (result) {
-      close(result.value(), 1000.0 + std::log(2.0));
+      close(result.value(), 1000.0 + std::numbers::ln2);
     }
   }
 

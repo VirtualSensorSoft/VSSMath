@@ -1,7 +1,6 @@
 #include "Test.hpp"
 
 #include <array>
-#include <cmath>
 #include <limits>
 #include <span>
 #include <utility>

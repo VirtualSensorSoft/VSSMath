@@ -11,7 +11,9 @@ namespace vss::math {
 ///          values are logarithms and are not required to exponentiate to a
 ///          sum of exactly one after rounding.
 struct LogTailPair final {
+  /// Natural logarithm of the cumulative probability.
   Scalar log_cdf{};
+  /// Natural logarithm of the complementary probability.
   Scalar log_survival{};
 };
 

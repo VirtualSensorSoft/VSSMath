@@ -2,6 +2,17 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
+#include <numbers>
+#include <optional>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
+#include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/DistributionMoments.hpp>
 #include <vss/math/probability/Gaussian.hpp>
 #include <vss/math/probability/Likelihood.hpp>
@@ -41,8 +52,8 @@ void likelihoodAtGaussianCenter() {
         logLikelihood(law.value(), location.value(), probabilityPolicy());
     VSS_CHECK(result.hasValue());
     if (result) {
-      VSS_CHECK(std::abs(result.value() +
-                         std::log(4.0 * 3.14159265358979323846)) < 1.0e-12);
+      VSS_CHECK(std::abs(result.value() + std::log(4.0 * std::numbers::pi)) <
+                1.0e-12);
     }
     auto invalidPolicy = probabilityPolicy();
     invalidPolicy.abs_log_error = 0.0;

@@ -5,9 +5,16 @@ source_root=$(cd "$(dirname "$0")/../.." && pwd)
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 case_root="$scratch/candidate"
+
+copy_tracked_source() {
+  (
+    cd "$source_root"
+    git ls-files -z | tar --null -T - -cf -
+  ) | (cd "$case_root" && tar -xf -)
+}
+
 mkdir -p "$case_root"
-cp -a "$source_root/." "$case_root/"
-rm -rf "$case_root/.git" "$case_root/build" "$case_root/build-"*
+copy_tracked_source
 git -C "$case_root" init -q
 checker="$case_root/scripts/check-documentation-policy.sh"
 metadata="$case_root/docs/development/documentation-policy.env"
@@ -17,8 +24,7 @@ fail() { echo "documentation policy test failed: $*" >&2; exit 1; }
 prepare_case() {
   rm -rf "$case_root"
   mkdir -p "$case_root"
-  cp -a "$source_root/." "$case_root/"
-  rm -rf "$case_root/.git" "$case_root/build" "$case_root/build-"*
+  copy_tracked_source
   git -C "$case_root" init -q
   checker="$case_root/scripts/check-documentation-policy.sh"
   metadata="$case_root/docs/development/documentation-policy.env"

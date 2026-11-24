@@ -1,21 +1,28 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <numbers>
 #include <string>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/probability/LogTailPair.hpp>
 #include <vss/math/probability/Special.hpp>
 
 namespace vss::math::probability {
 namespace {
 
 constexpr Scalar lanczosG = 7.0;
-constexpr Scalar lanczosCoefficients[] = {
+constexpr std::array<Scalar, 9> lanczosCoefficients{
     0.99999999999980993,  676.5203681218851,     -1259.1392167224028,
     771.32342877765313,   -176.61502916214059,   12.507343278686905,
     -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7};
 constexpr Scalar logSqrtTwoPi = 0.91893853320467274178032973640562;
-constexpr Scalar logTwo = 0.69314718055994530941723212145818;
+constexpr Scalar logTwo = std::numbers::ln2;
 constexpr Scalar tiny =
     std::numeric_limits<Scalar>::min() / std::numeric_limits<Scalar>::epsilon();
 
@@ -42,10 +49,11 @@ Status validatePolicy(const ProbabilityPolicy& policy, bool iterative) {
 }
 
 Scalar logGammaLanczos(Scalar x) {
-  Scalar sum = lanczosCoefficients[0];
+  Scalar sum = lanczosCoefficients.at(0U);
   const Scalar shifted = x - 1.0;
   for (Index index = 1U; index < std::size(lanczosCoefficients); ++index) {
-    sum += lanczosCoefficients[index] / (shifted + static_cast<Scalar>(index));
+    sum +=
+        lanczosCoefficients.at(index) / (shifted + static_cast<Scalar>(index));
   }
   const Scalar t = shifted + lanczosG + 0.5;
   return logSqrtTwoPi + (shifted + 0.5) * std::log(t) - t + std::log(sum);
@@ -105,7 +113,7 @@ Result<Scalar> gammaFractionLogUpper(Scalar shape, Scalar x,
                                policy.iteration.max_evaluations);
   bool converged = false;
   for (Index index = 1U; index <= limit; ++index) {
-    const Scalar i = static_cast<Scalar>(index);
+    const auto i = static_cast<Scalar>(index);
     const Scalar an = -i * (i - shape);
     b += 2.0;
     d = an * d + b;
@@ -155,7 +163,7 @@ Scalar betaFraction(Scalar a, Scalar b, Scalar x, Index maximumIterations,
   Scalar h = d;
   converged = false;
   for (Index index = 1U; index <= maximumIterations; ++index) {
-    const Scalar m = static_cast<Scalar>(index);
+    const auto m = static_cast<Scalar>(index);
     const Scalar m2 = 2.0 * m;
     Scalar aa = m * (b - m) * x / ((qam + m2) * (a + m2));
     d = 1.0 + aa * d;

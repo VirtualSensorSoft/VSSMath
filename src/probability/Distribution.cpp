@@ -2,6 +2,8 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -9,11 +11,19 @@
 #include <memory>
 #include <numbers>
 #include <numeric>
+#include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/probability/Distribution.hpp>
+#include <vss/math/probability/LogTailPair.hpp>
 #include <vss/math/probability/Special.hpp>
 
 namespace vss::math::probability {
@@ -208,7 +218,7 @@ Result<Distribution> detail::DistributionFactory::composite(
     std::vector<std::shared_ptr<const Distribution::State>> components,
     std::vector<Scalar> weights, Measure measure, Limits limits) {
   constexpr std::size_t retainedCap = 1024U;
-  constexpr std::size_t byteCap = 16U * 1024U * 1024U;
+  constexpr std::size_t byteCap = std::size_t{16U} * 1024U * 1024U;
   if (components.empty() || components.size() != weights.size()) {
     return Result<Distribution>::failure(
         ErrorCode::InvalidExtent,
@@ -401,7 +411,10 @@ detail::DistributionEngine::share(const Distribution& law) noexcept {
   return law.state_;
 }
 
+// Composite support traversal follows the stored, explicitly depth-capped
+// expression tree; this recursion is the representation's intended walk.
 Result<std::vector<std::pair<Scalar, Scalar>>>
+// NOLINTNEXTLINE(misc-no-recursion)
 detail::DistributionEngine::finiteAtoms(const Distribution& law,
                                         Limits limits) {
   if (!law.state_) {
@@ -480,7 +493,7 @@ detail::DistributionEngine::finiteAtoms(const Distribution& law,
       if (state.weights[index] == 0.0) {
         continue;
       }
-      Distribution component(state.components[index]);
+      const Distribution component(state.components[index]);
       auto atoms = finiteAtoms(component, limits);
       if (!atoms) {
         return Result<std::vector<std::pair<Scalar, Scalar>>>::failure(
@@ -742,7 +755,7 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
     std::uint64_t operations = 0U;
     const Limits supportLimits{
         std::min<std::size_t>(limits.elements, 1024U),
-        std::min<std::size_t>(limits.bytes, 16U * 1024U * 1024U),
+        std::min<std::size_t>(limits.bytes, std::size_t{16U} * 1024U * 1024U),
         limits.evaluations};
     for (const Distribution& term : terms) {
       auto support = finiteAtoms(term, supportLimits);
@@ -800,13 +813,11 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
   }
   const bool normalWithDiscrete =
       normalCount > 0U && normalCount < terms.size() &&
-      std::all_of(
-          terms.begin(), terms.end(),
-          [](const Distribution& term) {
-            return term.state_->family == Family::normal ||
-                   term.state_->measure == Measure::integer_mass ||
-                   term.state_->measure == Measure::atom_mass;
-          });
+      std::all_of(terms.begin(), terms.end(), [](const Distribution& term) {
+        return term.state_->family == Family::normal ||
+               term.state_->measure == Measure::integer_mass ||
+               term.state_->measure == Measure::atom_mass;
+      });
   const bool twoUniforms = terms.size() == 2U &&
                            terms[0].state_->family == Family::uniform &&
                            terms[1].state_->family == Family::uniform;
@@ -824,7 +835,7 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
     std::uint64_t operations = 0U;
     const Limits supportLimits{
         std::min<std::size_t>(limits.elements, 1024U),
-        std::min<std::size_t>(limits.bytes, 16U * 1024U * 1024U),
+        std::min<std::size_t>(limits.bytes, std::size_t{16U} * 1024U * 1024U),
         limits.evaluations};
     for (const Distribution& term : terms) {
       if (term.state_->family == Family::normal) {
@@ -844,12 +855,13 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
       std::map<Scalar, Scalar> next;
       for (const auto& [lhs, lhsMass] : aggregate) {
         for (const auto& [rhs, rhsMass] : support.value()) {
-          if (++operations > limits.evaluations ||
-              operations > policy.iteration.max_evaluations) {
+          if (operations >= limits.evaluations ||
+              operations >= policy.iteration.max_evaluations) {
             return Result<Distribution>::failure(
                 ErrorCode::ResourceLimit,
                 "normal and discrete convolution evaluation cap exceeded");
           }
+          ++operations;
           const Scalar atom = lhs + rhs;
           const Scalar mass = lhsMass * rhsMass;
           if (!std::isfinite(atom) ||
@@ -932,7 +944,7 @@ std::uint64_t Rng::next() noexcept {
 
 namespace {
 
-constexpr Scalar logTwo = 0.69314718055994530941723212145818;
+constexpr Scalar logTwo = std::numbers::ln2;
 
 Result<Distribution> make(Family family, Measure measure,
                           std::initializer_list<Scalar> parameters,
@@ -982,7 +994,7 @@ Result<LogTailPair> normalLogTails(Scalar z, ProbabilityPolicy policy) {
     return Result<LogTailPair>::failure(pair.status().code(),
                                         std::string(pair.status().message()));
   }
-  constexpr Scalar logHalf = -0.69314718055994530941723212145818;
+  constexpr Scalar logHalf = -std::numbers::ln2;
   const Scalar smaller = pair.value().log_survival + logHalf;
   return Result<LogTailPair>::success(
       z < 0.0 ? LogTailPair{smaller, logOneMinusExp(smaller)}
@@ -1022,7 +1034,7 @@ Result<Scalar> owenT(Scalar h, Scalar a, const ProbabilityPolicy& policy) {
   const auto integrand = [h](Scalar theta) {
     const Scalar cosine = std::cos(theta);
     const Scalar ratio = h / cosine;
-    return std::exp(-0.5 * ratio * ratio) / (2.0 * 3.14159265358979323846);
+    return std::exp(-0.5 * ratio * ratio) / (2.0 * std::numbers::pi);
   };
   const Scalar left = 0.0;
   const Scalar right = upper;
@@ -1402,7 +1414,8 @@ Result<Distribution> empirical(ConstVectorView observations,
 
 Result<Distribution> mixture(std::span<const WeightedLaw> terms,
                              ProbabilityPolicy policy) {
-  return mixture(terms, policy, {1024U, 16U * 1024U * 1024U, 100000U});
+  return mixture(terms, policy,
+                 {1024U, std::size_t{16U} * 1024U * 1024U, 100000U});
 }
 
 Result<Distribution> mixture(std::span<const WeightedLaw> terms,
@@ -1414,7 +1427,7 @@ Result<Distribution>
 finiteConvolution(std::span<const Distribution> independentTerms,
                   ProbabilityPolicy policy) {
   return finiteConvolution(independentTerms, policy,
-                           {1024U, 16U * 1024U * 1024U, 100000U});
+                           {1024U, std::size_t{16U} * 1024U * 1024U, 100000U});
 }
 
 Result<Distribution>
@@ -1426,6 +1439,9 @@ finiteConvolution(std::span<const Distribution> independentTerms,
 
 namespace detail {
 
+// This exhaustive family dispatcher centralizes each law's support and tail
+// contracts; composite cases recurse through the depth-limited law tree.
+// NOLINTNEXTLINE(readability-function-size,misc-no-recursion)
 Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
                                                 Scalar x,
                                                 ProbabilityPolicy policy) {
@@ -1505,7 +1521,7 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
                                          std::string(status.message()));
     }
     const Scalar logNorm = gammaNumerator.value() - gammaDenominator.value() -
-                           0.5 * std::log(nu * 3.14159265358979323846) -
+                           0.5 * std::log(nu * std::numbers::pi) -
                            std::log(p[2]);
     logDensity = logNorm - ((nu + 1.0) / 2.0) * std::log1p(z * z / nu);
     const Scalar ratio = nu / (nu + z * z);
@@ -1514,7 +1530,7 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       return Result<TailValues>::failure(
           betaTail.status().code(), std::string(betaTail.status().message()));
     }
-    constexpr Scalar logHalf = -0.69314718055994530941723212145818;
+    constexpr Scalar logHalf = -std::numbers::ln2;
     const Scalar smaller = betaTail.value().log_cdf + logHalf;
     tails = z < 0.0 ? LogTailPair{smaller, logOneMinusExp(smaller)}
                     : LogTailPair{logOneMinusExp(smaller), smaller};
@@ -1523,9 +1539,9 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
   }
   case Family::skew_normal: {
     const Scalar z = (x - p[0]) / p[1];
-    logDensity = std::log(2.0) - 0.5 * z * z - 0.9189385332046727 -
+    logDensity = std::numbers::ln2 - 0.5 * z * z - 0.9189385332046727 -
                  std::log(p[1]) +
-                 std::log(0.5 * std::erfc(-p[2] * z / std::sqrt(2.0)));
+                 std::log(0.5 * std::erfc(-p[2] * z / std::numbers::sqrt2));
     auto normalPair = gaussianTails(z);
     if (!normalPair) {
       return Result<TailValues>::failure(
@@ -1553,9 +1569,13 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
             ErrorCode::NonFiniteResult,
             "skew-normal CDF is outside the unit interval");
       }
-      tails = cdf == 0.0 ? LogTailPair{negativeInfinity, 0.0}
-                         : (cdf == 1.0 ? LogTailPair{0.0, negativeInfinity}
-                                       : lowerTail(std::log(cdf)));
+      if (cdf == 0.0) {
+        tails = {negativeInfinity, 0.0};
+      } else if (cdf == 1.0) {
+        tails = {0.0, negativeInfinity};
+      } else {
+        tails = lowerTail(std::log(cdf));
+      }
     }
     onSupport = std::isfinite(x);
     break;
@@ -1714,9 +1734,13 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
           {0.0, negativeInfinity, 1.0, 0.0, {0.0, negativeInfinity}, false});
     }
     const Scalar cdf = (x - lower) / width;
-    tails = cdf == 0.0 ? LogTailPair{negativeInfinity, 0.0}
-                       : (cdf == 1.0 ? LogTailPair{0.0, negativeInfinity}
-                                     : lowerTail(std::log(cdf)));
+    if (cdf == 0.0) {
+      tails = {negativeInfinity, 0.0};
+    } else if (cdf == 1.0) {
+      tails = {0.0, negativeInfinity};
+    } else {
+      tails = lowerTail(std::log(cdf));
+    }
     logDensity = -std::log(width);
     onSupport = true;
     break;
@@ -1761,9 +1785,13 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       cdf = (delta * delta) / (width * width);
       density = 2.0 * delta / (width * width);
     }
-    tails = cdf <= 0.0 ? LogTailPair{negativeInfinity, 0.0}
-                       : (cdf >= 1.0 ? LogTailPair{0.0, negativeInfinity}
-                                     : lowerTail(std::log(cdf)));
+    if (cdf <= 0.0) {
+      tails = {negativeInfinity, 0.0};
+    } else if (cdf >= 1.0) {
+      tails = {0.0, negativeInfinity};
+    } else {
+      tails = lowerTail(std::log(cdf));
+    }
     logDensity = density == 0.0 ? negativeInfinity : std::log(density);
     onSupport = true;
     break;
@@ -1778,11 +1806,16 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
     auto upperPair = gaussianTails(upperZ);
     auto atX = gaussianTails(z);
     if (!lowerPair || !upperPair || !atX) {
-      const Status& status = !lowerPair   ? lowerPair.status()
-                             : !upperPair ? upperPair.status()
-                                          : atX.status();
-      return Result<TailValues>::failure(status.code(),
-                                         std::string(status.message()));
+      const Status* status = nullptr;
+      if (!lowerPair) {
+        status = &lowerPair.status();
+      } else if (!upperPair) {
+        status = &upperPair.status();
+      } else {
+        status = &atX.status();
+      }
+      return Result<TailValues>::failure(status->code(),
+                                         std::string(status->message()));
     }
     Scalar logNormalizer = negativeInfinity;
     if (lowerZ >= 0.0) {
@@ -1822,11 +1855,22 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
     const Scalar probability = p[0];
     const bool atZero = x == 0.0;
     const bool atOne = x == 1.0;
-    const Scalar mass =
-        atZero ? 1.0 - probability : (atOne ? probability : 0.0);
+    Scalar mass = 0.0;
+    if (atZero) {
+      mass = 1.0 - probability;
+    } else if (atOne) {
+      mass = probability;
+    }
     logDensity = mass > 0.0 ? std::log(mass) : negativeInfinity;
-    const Scalar cdf = x < 0.0 ? 0.0 : (x < 1.0 ? 1.0 - probability : 1.0);
-    const Scalar survival = x < 0.0 ? 1.0 : (x < 1.0 ? probability : 0.0);
+    Scalar cdf = 1.0;
+    Scalar survival = 0.0;
+    if (x < 0.0) {
+      cdf = 0.0;
+      survival = 1.0;
+    } else if (x < 1.0) {
+      cdf = 1.0 - probability;
+      survival = probability;
+    }
     tails = {cdf == 0.0 ? negativeInfinity : std::log(cdf),
              survival == 0.0 ? negativeInfinity : std::log(survival)};
     onSupport = atZero || atOne;
@@ -1840,7 +1884,7 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       return Result<TailValues>::success(
           {0.0, negativeInfinity, 0.0, 1.0, {negativeInfinity, 0.0}, false});
     }
-    const Scalar n = static_cast<Scalar>(trials);
+    const auto n = static_cast<Scalar>(trials);
     if (x >= n || probability == 0.0 || probability == 1.0) {
       const Scalar atom = probability == 1.0 ? n : 0.0;
       const Scalar mass = (x == atom) ? 1.0 : 0.0;
@@ -1880,10 +1924,16 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       const auto gK = logGamma(k + 1.0, policy);
       const auto gR = logGamma(n - k + 1.0, policy);
       if (!gN || !gK || !gR) {
-        const Status& status =
-            !gN ? gN.status() : (!gK ? gK.status() : gR.status());
-        return Result<TailValues>::failure(status.code(),
-                                           std::string(status.message()));
+        const Status* status = nullptr;
+        if (!gN) {
+          status = &gN.status();
+        } else if (!gK) {
+          status = &gK.status();
+        } else {
+          status = &gR.status();
+        }
+        return Result<TailValues>::failure(status->code(),
+                                           std::string(status->message()));
       }
       logDensity = gN.value() - gK.value() - gR.value();
       if (k > 0.0) {
@@ -1978,11 +2028,16 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       auto second = logGamma(k + 1.0, policy);
       auto third = logGamma(successes, policy);
       if (!first || !second || !third) {
-        const Status& status = !first    ? first.status()
-                               : !second ? second.status()
-                                         : third.status();
-        return Result<TailValues>::failure(status.code(),
-                                           std::string(status.message()));
+        const Status* status = nullptr;
+        if (!first) {
+          status = &first.status();
+        } else if (!second) {
+          status = &second.status();
+        } else {
+          status = &third.status();
+        }
+        return Result<TailValues>::failure(status->code(),
+                                           std::string(status->message()));
       }
       logDensity = first.value() - second.value() - third.value() +
                    successes * std::log(probability);
@@ -2058,7 +2113,7 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
     }
     if (x == 0.0) {
       tails = {negativeInfinity, 0.0};
-      logDensity = shape == 1.0 ? -std::log(2.0) : negativeInfinity;
+      logDensity = shape == 1.0 ? -std::numbers::ln2 : negativeInfinity;
       break;
     }
     auto lg = logGamma(shape, policy);
@@ -2066,7 +2121,8 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       return Result<TailValues>::failure(lg.status().code(),
                                          std::string(lg.status().message()));
     }
-    logDensity = (shape - 1.0) * std::log(y) - y - lg.value() - std::log(2.0);
+    logDensity =
+        (shape - 1.0) * std::log(y) - y - lg.value() - std::numbers::ln2;
     auto pair = incompleteGamma(shape, y, policy);
     if (!pair) {
       return Result<TailValues>::failure(pair.status().code(),
@@ -2466,12 +2522,16 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
             auto cdfDenominator =
                 logGamma(betaShape + gammaShape + 1.0, policy);
             if (!betaNumerator || !densityDenominator || !cdfDenominator) {
-              const Status& status = !betaNumerator ? betaNumerator.status()
-                                     : !densityDenominator
-                                         ? densityDenominator.status()
-                                         : cdfDenominator.status();
-              return Result<TailValues>::failure(status.code(),
-                                                 std::string(status.message()));
+              const Status* status = nullptr;
+              if (!betaNumerator) {
+                status = &betaNumerator.status();
+              } else if (!densityDenominator) {
+                status = &densityDenominator.status();
+              } else {
+                status = &cdfDenominator.status();
+              }
+              return Result<TailValues>::failure(
+                  status->code(), std::string(status->message()));
             }
             const Scalar logX = std::log(x);
             densityLogScale = betaNumerator.value() -
@@ -2635,13 +2695,17 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
           const long double densityValue =
               densityPole ? std::numeric_limits<long double>::infinity()
                           : integrated[0];
-          Scalar logDensityValue =
-              densityPole ? positiveInfinity
-              : integrated[0] == 0.0L
-                  ? negativeInfinity
-                  : static_cast<Scalar>(std::log(densityValue)) +
-                        densityLogScale;
-          Scalar logCdf =
+          const Scalar logDensityValue = [&] {
+            if (densityPole) {
+              return positiveInfinity;
+            }
+            if (integrated[0] == 0.0L) {
+              return negativeInfinity;
+            }
+            return static_cast<Scalar>(std::log(densityValue)) +
+                   densityLogScale;
+          }();
+          Scalar const logCdf =
               integrated[1] == 0.0L
                   ? negativeInfinity
                   : static_cast<Scalar>(std::log(integrated[1])) + cdfLogScale;
@@ -2696,20 +2760,24 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
         }
       }
       if (continuousState && discreteState) {
-        Distribution continuousLaw(std::move(continuousState));
-        Distribution discreteLaw(std::move(discreteState));
+        Distribution const continuousLaw(std::move(continuousState));
+        Distribution const discreteLaw(std::move(discreteState));
         if (discreteLaw.state_->family == Family::poisson &&
             continuousLaw.state_->family == Family::gamma) {
           if (x < 0.0) {
-            return Result<TailValues>::success(
-                {0.0, negativeInfinity, 0.0, 1.0,
-                 {negativeInfinity, 0.0}, false});
+            return Result<TailValues>::success({0.0,
+                                                negativeInfinity,
+                                                0.0,
+                                                1.0,
+                                                {negativeInfinity, 0.0},
+                                                false});
           }
           constexpr Scalar exactIntegerLimit = 9007199254740992.0;
           if (std::floor(x) > exactIntegerLimit) {
             return Result<TailValues>::failure(
                 ErrorCode::ResourceLimit,
-                "Poisson-gamma convolution coordinate exceeds exact count range");
+                "Poisson-gamma convolution coordinate exceeds exact count "
+                "range");
           }
           const Scalar rate = discreteLaw.state_->parameters[0];
           Scalar logMass = rate == 0.0 ? 0.0 : -rate;
@@ -2736,33 +2804,32 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
             if (shifted.value().density_or_mass == positiveInfinity) {
               logDensitySum = positiveInfinity;
             } else if (logDensitySum != positiveInfinity &&
-                       shifted.value().log_density_or_mass != negativeInfinity) {
+                       shifted.value().log_density_or_mass !=
+                           negativeInfinity) {
               logDensitySum = logAddExp(
-                  logDensitySum,
-                  logMass + shifted.value().log_density_or_mass);
+                  logDensitySum, logMass + shifted.value().log_density_or_mass);
             }
             if (shifted.value().log_tails.log_cdf != negativeInfinity) {
-              logCdf = logAddExp(
-                  logCdf, logMass + shifted.value().log_tails.log_cdf);
+              logCdf = logAddExp(logCdf,
+                                 logMass + shifted.value().log_tails.log_cdf);
             }
             if (shifted.value().log_tails.log_survival != negativeInfinity) {
-              logSurvival = logAddExp(
-                  logSurvival,
-                  logMass + shifted.value().log_tails.log_survival);
+              logSurvival =
+                  logAddExp(logSurvival,
+                            logMass + shifted.value().log_tails.log_survival);
             }
             if (rate == 0.0) {
               break;
             }
-            logMass += std::log(rate) -
-                       std::log(static_cast<Scalar>(count + 1U));
+            logMass +=
+                std::log(rate) - std::log(static_cast<Scalar>(count + 1U));
           }
           if (++evaluations > policy.iteration.max_evaluations) {
             return Result<TailValues>::failure(
                 ErrorCode::ResourceLimit,
                 "Poisson-gamma convolution evaluation cap exceeded");
           }
-          auto countTail = evaluate(
-              discreteLaw, std::floor(x), policy);
+          auto countTail = evaluate(discreteLaw, std::floor(x), policy);
           if (!countTail) {
             return Result<TailValues>::failure(
                 countTail.status().code(),
@@ -2771,9 +2838,12 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
           logSurvival =
               logAddExp(logSurvival, countTail.value().log_tails.log_survival);
           if (logDensitySum == positiveInfinity) {
-            return Result<TailValues>::success(
-                {positiveInfinity, positiveInfinity, std::exp(logCdf),
-                 std::exp(logSurvival), {logCdf, logSurvival}, true});
+            return Result<TailValues>::success({positiveInfinity,
+                                                positiveInfinity,
+                                                std::exp(logCdf),
+                                                std::exp(logSurvival),
+                                                {logCdf, logSurvival},
+                                                true});
           }
           return finiteTailValues(logDensitySum, {logCdf, logSurvival}, true);
         }
@@ -2851,7 +2921,7 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
           }
         }
         auto atoms =
-            finiteAtoms(discreteLaw, {1024U, 16U * 1024U * 1024U,
+            finiteAtoms(discreteLaw, {1024U, std::size_t{16U} * 1024U * 1024U,
                                       policy.iteration.max_evaluations});
         if (!atoms) {
           return Result<TailValues>::failure(
@@ -2979,7 +3049,7 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
         return Result<TailValues>::failure(ErrorCode::ResourceLimit,
                                            "mixture evaluation cap exceeded");
       }
-      Distribution component(state.components[index]);
+      Distribution const component(state.components[index]);
       auto value = evaluate(component, x, policy);
       if (!value) {
         return Result<TailValues>::failure(
@@ -3014,6 +3084,8 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
   return finiteTailValues(logDensity, tails, onSupport);
 }
 
+// Composite moments recurse only through the explicitly depth-capped law tree.
+// NOLINTNEXTLINE(misc-no-recursion)
 Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
                                              Index order,
                                              ProbabilityPolicy policy) {
@@ -3038,16 +3110,16 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
   }
   const Distribution::State& state = *law.state_;
   const auto& p = state.parameters;
-  const long double k = static_cast<long double>(order);
+  const auto k = static_cast<long double>(order);
   const long double pi = std::numbers::pi_v<long double>;
-  const long double maxValue =
+  const auto maxValue =
       static_cast<long double>(std::numeric_limits<Scalar>::max());
   auto finish = [&](long double value) -> Result<Scalar> {
     if (!std::isfinite(value) || std::abs(value) > maxValue) {
       return Result<Scalar>::failure(ErrorCode::NonFiniteResult,
                                      "raw moment is outside scalar range");
     }
-    const Scalar converted = static_cast<Scalar>(value);
+    const auto converted = static_cast<Scalar>(value);
     if (!std::isfinite(converted)) {
       return Result<Scalar>::failure(ErrorCode::NonFiniteResult,
                                      "raw moment conversion is not finite");
@@ -3069,7 +3141,7 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
   auto finiteSupportMoment = [&]() -> Result<Scalar> {
     const Limits limits{
         std::min<Index>(1024U, policy.iteration.max_evaluations),
-        16U * 1024U * 1024U, policy.iteration.max_evaluations};
+        std::size_t{16U} * 1024U * 1024U, policy.iteration.max_evaluations};
     auto support = finiteAtoms(law, limits);
     if (!support) {
       return Result<Scalar>::failure(support.status().code(),
@@ -3360,7 +3432,7 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
     moments[0] = 1.0L;
     std::uint64_t operations = 0U;
     for (const auto& componentState : state.components) {
-      Distribution component(componentState);
+      Distribution const component(componentState);
       std::vector<long double> next(order + 1U, 0.0L);
       for (Index degree = 0U; degree <= order; ++degree) {
         auto componentMoment = rawMoment(component, degree, policy);
@@ -3387,7 +3459,7 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
     return finish(moments[order]);
   }
   case Family::binomial: {
-    const long double n = static_cast<long double>(state.integerParameter);
+    const auto n = static_cast<long double>(state.integerParameter);
     const long double probability = p[1];
     return factorialMomentSum([&](Index degree) {
       if (degree > state.integerParameter) {
@@ -3409,7 +3481,7 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
     const long double successes = p[0];
     const long double probability = p[1];
     return factorialMomentSum([&](Index degree) {
-      long double rising =
+      long double const rising =
           std::tgamma(successes + static_cast<long double>(degree)) /
           std::tgamma(successes);
       return rising * std::pow((1.0L - probability) / probability,
@@ -3435,7 +3507,7 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
       if (state.weights[index] == 0.0) {
         continue;
       }
-      Distribution component(state.components[index]);
+      Distribution const component(state.components[index]);
       auto moment = rawMoment(component, order, policy);
       if (!moment) {
         return Result<Scalar>::failure(moment.status().code(),
@@ -3500,7 +3572,7 @@ Result<Scalar> DistributionEngine::quantile(const Distribution& law,
       return Result<Scalar>::success(state.atoms[static_cast<Index>(
           found - state.cumulativeMasses.begin())]);
     }
-    const Limits limits{1024U, 16U * 1024U * 1024U,
+    const Limits limits{1024U, std::size_t{16U} * 1024U * 1024U,
                         policy.iteration.max_evaluations};
     auto support = finiteAtoms(law, limits);
     if (!support) {
@@ -3530,7 +3602,7 @@ Result<Scalar> DistributionEngine::quantile(const Distribution& law,
     case Family::negative_binomial:
       return Result<Scalar>::success(0.0);
     case Family::poisson:
-      return Result<Scalar>::success(p[0] == 0.0 ? 0.0 : 0.0);
+      return Result<Scalar>::success(0.0);
     case Family::gamma:
     case Family::chi_square:
     case Family::weibull:
@@ -3865,6 +3937,8 @@ Result<Scalar> DistributionEngine::quantile(const Distribution& law,
       "quantile did not meet residual and bracket tolerances");
 }
 
+// Composite sampling recursively visits the explicitly depth-capped law tree.
+// NOLINTNEXTLINE(misc-no-recursion)
 Result<Scalar> DistributionEngine::sample(const Distribution& law, Rng& rng,
                                           ProbabilityPolicy policy) {
   if (!law.state_) {
@@ -3879,6 +3953,7 @@ Result<Scalar> DistributionEngine::sample(const Distribution& law, Rng& rng,
       !law.state_->components.empty()) {
     std::uint64_t drawCount = 0U;
     const auto countLeaves =
+        // NOLINTNEXTLINE(misc-no-recursion): count leaves in the capped tree.
         [&](const auto& self,
             const std::shared_ptr<const Distribution::State>& state) -> bool {
       if (state->family != Family::finite_convolution ||
@@ -3886,12 +3961,10 @@ Result<Scalar> DistributionEngine::sample(const Distribution& law, Rng& rng,
         ++drawCount;
         return drawCount <= policy.max_draws;
       }
-      for (const auto& child : state->components) {
-        if (!self(self, child)) {
-          return false;
-        }
-      }
-      return true;
+      return std::ranges::all_of(
+          state->components,
+          // NOLINTNEXTLINE(misc-no-recursion): bounded law-tree visitor.
+          [&](const auto& child) { return self(self, child); });
     };
     if (!countLeaves(countLeaves, law.state_)) {
       return Result<Scalar>::failure(ErrorCode::ResourceLimit,
@@ -3899,7 +3972,7 @@ Result<Scalar> DistributionEngine::sample(const Distribution& law, Rng& rng,
     }
     long double total = 0.0L;
     for (const auto& componentState : law.state_->components) {
-      Distribution component(componentState);
+      Distribution const component(componentState);
       auto draw = sample(component, rng, policy);
       if (!draw) {
         return Result<Scalar>::failure(draw.status().code(),
@@ -3920,6 +3993,8 @@ Result<Scalar> DistributionEngine::sample(const Distribution& law, Rng& rng,
   return quantile(law, probability, policy);
 }
 
+// Composite variances recurse only through the explicitly depth-capped law
+// tree. NOLINTNEXTLINE(misc-no-recursion)
 Result<Scalar> DistributionEngine::variance(const Distribution& law,
                                             ProbabilityPolicy policy,
                                             Limits limits) {
@@ -4000,7 +4075,7 @@ Result<Scalar> DistributionEngine::variance(const Distribution& law,
       return Result<Scalar>::failure(status.code(),
                                      std::string(status.message()));
     }
-    Scalar logZ;
+    Scalar logZ = NAN;
     if (alpha >= 0.0L) {
       logZ =
           logDifference(lower.value().log_survival, upper.value().log_survival);
@@ -4080,7 +4155,7 @@ Result<Scalar> DistributionEngine::variance(const Distribution& law,
     }
     long double total = 0.0L;
     for (const auto& componentState : state.components) {
-      Distribution component(componentState);
+      Distribution const component(componentState);
       auto value = variance(component, policy, limits);
       if (!value) {
         return Result<Scalar>::failure(value.status().code(),
@@ -4102,7 +4177,7 @@ Result<Scalar> DistributionEngine::variance(const Distribution& law,
       if (state.weights[index] == 0.0) {
         continue;
       }
-      Distribution component(state.components[index]);
+      Distribution const component(state.components[index]);
       auto componentMean = rawMoment(component, 1U, policy);
       auto componentVariance = variance(component, policy, limits);
       if (!componentMean || !componentVariance) {

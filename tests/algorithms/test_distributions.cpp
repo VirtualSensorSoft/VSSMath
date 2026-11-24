@@ -1,11 +1,21 @@
 #include "Test.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdlib>
+#include <exception>
+#include <iostream>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <utility>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
 #include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/DistributionMoments.hpp>
 
@@ -109,10 +119,9 @@ void evaluateNominalLawAnchors() {
       }
     }
   };
-  const Scalar normalDensity = 1.0 / std::sqrt(2.0 * 3.14159265358979323846);
+  const Scalar normalDensity = 1.0 / std::sqrt(2.0 * std::numbers::pi);
   const Scalar expMinusOne = std::exp(-1.0);
-  checkLaw(studentT(1.0, 0.0, 1.0), 0.0, 1.0 / 3.14159265358979323846, 0.5,
-           0.5);
+  checkLaw(studentT(1.0, 0.0, 1.0), 0.0, std::numbers::inv_pi, 0.5, 0.5);
   checkLaw(laplace(0.0, 1.0), 0.0, 0.5, 0.5, 0.5);
   checkLaw(logistic(0.0, 1.0), 0.0, 0.25, 0.5, 0.5);
   checkLaw(lognormal(0.0, 1.0), 1.0, normalDensity, 0.5, 0.5);
@@ -126,7 +135,7 @@ void evaluateNominalLawAnchors() {
   checkLaw(triangular(0.0, 1.0, 2.0), 1.0, 1.0, 0.5, 0.5);
   checkLaw(
       truncatedNormal(0.0, 1.0, 0.0, std::numeric_limits<Scalar>::infinity()),
-      0.0, std::sqrt(2.0 / 3.14159265358979323846), 0.0, 1.0);
+      0.0, std::sqrt(2.0 * std::numbers::inv_pi), 0.0, 1.0);
   checkLaw(binomial(2U, 0.25), 0.0, 0.5625, 0.5625, 0.4375);
   checkLaw(poisson(1.0), 1.0, expMinusOne, 2.0 * expMinusOne,
            1.0 - 2.0 * expMinusOne);
@@ -263,13 +272,13 @@ void compositeInputLimitsPreflight() {
         empirical(observationView.value(), massView.value(), {1U, 4096U, 100U});
     VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
 
-    const auto oneByteShort = empirical(
-        observationView.value(), massView.value(),
-        {8U, 4U * 2U * sizeof(Scalar) - 1U, 100U});
+    const auto oneByteShort =
+        empirical(observationView.value(), massView.value(),
+                  {8U, std::size_t{4U} * 2U * sizeof(Scalar) - 1U, 100U});
     VSS_CHECK(oneByteShort.status().code() == ErrorCode::ResourceLimit);
-    const auto exactStorage = empirical(
-        observationView.value(), massView.value(),
-        {8U, 4U * 2U * sizeof(Scalar), 100U});
+    const auto exactStorage =
+        empirical(observationView.value(), massView.value(),
+                  {8U, std::size_t{4U} * 2U * sizeof(Scalar), 100U});
     VSS_CHECK(exactStorage.hasValue());
   }
 }
@@ -312,7 +321,7 @@ void convolutionRegimes() {
     const auto atHalf = evaluate(shiftedMixture.value(), 0.5, policy());
     VSS_CHECK(atHalf.hasValue());
     if (atHalf) {
-      const Scalar phi0 = 1.0 / std::sqrt(2.0 * 3.14159265358979323846);
+      const Scalar phi0 = 1.0 / std::sqrt(2.0 * std::numbers::pi);
       const Scalar phiHalf = phi0 * std::exp(-0.125);
       VSS_CHECK(std::abs(atHalf.value().density_or_mass -
                          0.5 * (phiHalf + phiHalf)) < 1.0e-12);
@@ -337,7 +346,7 @@ void convolutionRegimes() {
     const auto atOne = evaluate(multiShift.value(), 1.0, policy());
     const auto atTwo = evaluate(multiShift.value(), 2.0, policy());
     const auto phi = [](Scalar x) {
-      return std::exp(-0.5 * x * x) / std::sqrt(2.0 * 3.14159265358979323846);
+      return std::exp(-0.5 * x * x) / std::sqrt(2.0 * std::numbers::pi);
     };
     VSS_CHECK(atOne.hasValue() && atTwo.hasValue());
     if (atOne && atTwo) {
@@ -376,7 +385,7 @@ void convolutionRegimes() {
             std::exp(-coordinate * coordinate / 2.0L) /
             std::sqrt(2.0L * std::numbers::pi_v<long double>);
         const long double normalCdf =
-            0.5L * std::erfc(-coordinate / std::sqrt(2.0L));
+            0.5L * std::erfc(-coordinate / std::numbers::sqrt2_v<long double>);
         density += mass * normalDensity;
         cdf += mass * normalCdf;
         survival += mass * (1.0L - normalCdf);
@@ -393,8 +402,8 @@ void convolutionRegimes() {
         ErrorCode::ResourceLimit);
   }
 
-  const std::array<Distribution, 2> poissonAndGamma{
-      gamma(0.5, 1.0).value(), poisson(1.0).value()};
+  const std::array<Distribution, 2> poissonAndGamma{gamma(0.5, 1.0).value(),
+                                                    poisson(1.0).value()};
   const auto poleMixture = finiteConvolution(poissonAndGamma, policy());
   VSS_CHECK(poleMixture.hasValue());
   if (poleMixture) {
@@ -412,8 +421,8 @@ void convolutionRegimes() {
           density = std::numeric_limits<Scalar>::infinity();
           survival += mass;
         } else {
-          density += mass * std::exp(-residual) /
-                     (sqrtPi * std::sqrt(residual));
+          density +=
+              mass * std::exp(-residual) / (sqrtPi * std::sqrt(residual));
           cdf += mass * std::erf(std::sqrt(residual));
           survival += mass * std::erfc(std::sqrt(residual));
         }
@@ -459,7 +468,7 @@ void convolutionRegimes() {
     }
   }
 
-  for (const auto [firstShape, secondShape] :
+  for (const auto& [firstShape, secondShape] :
        {std::pair{0.25, 0.25}, std::pair{0.5, 0.5}, std::pair{0.75, 0.75},
         std::pair{0.25, 2.0}}) {
     const std::array<Distribution, 2> terms{gamma(firstShape, 1.0).value(),
@@ -473,10 +482,12 @@ void convolutionRegimes() {
     const auto atZero = evaluate(sum.value(), 0.0, policy());
     VSS_CHECK(atZero.hasValue());
     if (atZero) {
-      const Scalar expectedEndpoint =
-          shape < 1.0    ? std::numeric_limits<Scalar>::infinity()
-          : shape == 1.0 ? 1.0
-                         : 0.0;
+      Scalar expectedEndpoint = 0.0;
+      if (shape < 1.0) {
+        expectedEndpoint = std::numeric_limits<Scalar>::infinity();
+      } else if (shape == 1.0) {
+        expectedEndpoint = 1.0;
+      }
       VSS_CHECK(atZero.value().density_or_mass == expectedEndpoint);
     }
     const auto nearZero = evaluate(sum.value(), 1.0e-6, policy());
@@ -533,16 +544,23 @@ void convolutionRegimes() {
             width * power * std::pow(z, static_cast<long double>(power - 1U));
         const long double betaGap = x < 1.0 ? (1.0L - x) + q : q;
         const long double gammaCoordinate = x < 1.0 ? q : (x - 1.0L) + q;
-        const long double exponent =
-            collision ? a + b - 2.0L : (x < 1.0 ? b - 1.0L : a - 1.0L);
+        long double exponent = a - 1.0L;
+        if (collision) {
+          exponent = a + b - 2.0L;
+        } else if (x < 1.0) {
+          exponent = b - 1.0L;
+        }
         const long double integrand =
             normalizer * (collision ? 1.0L : std::pow(betaGap, a - 1.0L)) *
             (collision ? std::pow(q, exponent)
                        : std::pow(gammaCoordinate, b - 1.0L)) *
             std::exp(-gammaCoordinate) * jacobian;
-        const long double weight = index == 0U || index == midpointCount ? 1.0L
-                                   : index % 2U == 0U                    ? 2.0L
-                                                                         : 4.0L;
+        long double weight = 4.0L;
+        if (index == 0U || index == midpointCount) {
+          weight = 1.0L;
+        } else if (index % 2U == 0U) {
+          weight = 2.0L;
+        }
         total += weight * integrand;
       }
       return total / (3.0L * midpointCount);
@@ -550,7 +568,7 @@ void convolutionRegimes() {
     long double density = 0.0L;
     if (x < 1.0) {
       const Scalar split = std::min(x, 1.0 - x);
-      const Index power = static_cast<Index>(std::ceil(2.0 / b));
+      const auto power = static_cast<Index>(std::ceil(2.0 / b));
       density += integrate(0.0, split, power, true, false);
       for (Scalar lower = split; lower < x;) {
         const Scalar upper = std::min(x, 2.0 * lower);
@@ -559,7 +577,7 @@ void convolutionRegimes() {
       }
     } else if (x > 1.0) {
       const Scalar split = std::min(1.0, x - 1.0);
-      const Index power = static_cast<Index>(std::ceil(2.0 / a));
+      const auto power = static_cast<Index>(std::ceil(2.0 / a));
       density += integrate(0.0, split, power, true, false);
       for (Scalar lower = split; lower < 1.0;) {
         const Scalar upper = std::min(1.0, 2.0 * lower);
@@ -568,7 +586,7 @@ void convolutionRegimes() {
       }
     } else {
       const Scalar alpha = a + b - 1.0;
-      const Index power = static_cast<Index>(std::ceil(2.0 / alpha));
+      const auto power = static_cast<Index>(std::ceil(2.0 / alpha));
       density += integrate(0.0, 1.0, power, true, true);
     }
     return static_cast<Scalar>(density);
@@ -589,9 +607,12 @@ void convolutionRegimes() {
       const long double density = a * std::pow(coordinate, a - 1.0L) * jacobian;
       const auto gammaTails =
           evaluate(gammaLaw, static_cast<Scalar>(coordinate), policy());
-      const long double weight = index == intervalCount ? 1.0L
-                                 : index % 2U == 0U     ? 2.0L
-                                                        : 4.0L;
+      long double weight = 4.0L;
+      if (index == intervalCount) {
+        weight = 1.0L;
+      } else if (index % 2U == 0U) {
+        weight = 2.0L;
+      }
       total[0] += weight * density * gammaTails.value().cdf;
       total[1] += weight * density * gammaTails.value().survival;
     }
@@ -599,7 +620,7 @@ void convolutionRegimes() {
         static_cast<Scalar>(total[0] / (3.0L * intervalCount)),
         static_cast<Scalar>(total[1] / (3.0L * intervalCount))};
   };
-  for (const auto [betaShape, gammaShape] :
+  for (const auto& [betaShape, gammaShape] :
        {std::pair{0.25, 0.25}, std::pair{0.5, 0.5}, std::pair{0.75, 0.75},
         std::pair{0.25, 0.4}, std::pair{0.72, 0.81}}) {
     const std::array<Distribution, 2> terms{beta(1.0, betaShape).value(),
@@ -865,13 +886,23 @@ void familyQuantileMomentAndReplayGrid() {
 } // namespace
 
 int main() {
-  factoriesAcceptNominalFamilies();
-  factoriesRejectInvalidParameters();
-  evaluateNominalLawAnchors();
-  quantilesMomentsSamplingAndComposites();
-  compositeInputLimitsPreflight();
-  convolutionRegimes();
-  familyQuantileMomentAndReplayGrid();
+  try {
+    factoriesAcceptNominalFamilies();
+    factoriesRejectInvalidParameters();
+    evaluateNominalLawAnchors();
+    quantilesMomentsSamplingAndComposites();
+    compositeInputLimitsPreflight();
+    convolutionRegimes();
+    familyQuantileMomentAndReplayGrid();
+  } catch (const std::exception& error) {
+    std::cerr << "Unexpected exception in distribution tests: " << error.what()
+              << '\n';
+    return EXIT_FAILURE;
+  } catch (...) {
+    std::cerr << "Unexpected non-standard exception in distribution tests\n";
+    return EXIT_FAILURE;
+  }
+  return EXIT_SUCCESS;
 }
 
 // VSS-MATH-TRACEABILITY: C059 CASE-C059.normal.factory

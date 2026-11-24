@@ -31,17 +31,28 @@ class JointDistribution final {
 public:
   struct State;
   JointDistribution() = delete;
+  /// Copy the immutable joint law by sharing its retained state.
   JointDistribution(const JointDistribution&) noexcept = default;
+  /// Assign the immutable joint law by sharing its retained state.
   JointDistribution& operator=(const JointDistribution&) noexcept = default;
+  /// Transfer the immutable joint law state; the source becomes empty.
   JointDistribution(JointDistribution&&) noexcept = default;
+  /// Transfer the immutable joint law state; the source becomes empty.
   JointDistribution& operator=(JointDistribution&&) noexcept = default;
+  /// Destroy this joint-law handle and release its shared state when unused.
   ~JointDistribution() = default;
 
+  /// Return whether the law is multivariate normal or Student-t.
   [[nodiscard]] JointFamily family() const noexcept;
+  /// Return the ambient dimension of the represented random vector.
   [[nodiscard]] Extent dimension() const noexcept;
+  /// Return the numerical rank of the covariance or scale support.
   [[nodiscard]] Index supportRank() const noexcept;
+  /// Return Student-t degrees of freedom, or positive infinity for normal.
   [[nodiscard]] Scalar degreesOfFreedom() const noexcept;
+  /// Borrow the immutable location vector from the retained law state.
   [[nodiscard]] ConstVectorView location() const noexcept;
+  /// Borrow the immutable covariance or scale matrix from the retained state.
   [[nodiscard]] ConstMatrixView scale() const noexcept;
 
 private:

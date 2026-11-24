@@ -3,7 +3,13 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
 #include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/Likelihood.hpp>
 
 namespace {
