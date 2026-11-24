@@ -62,6 +62,7 @@ add_library(vss_math STATIC
   src/differentiation/FiniteDifference.cpp
   src/probability/ChiSquare.cpp
   src/probability/Distribution.cpp
+  src/probability/MomentBounds.cpp
   src/probability/Likelihood.cpp
   src/probability/Gaussian.cpp
   src/probability/Special.cpp
