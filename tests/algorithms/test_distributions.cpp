@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <utility>
 #include <vss/math/ProbabilityPolicy.hpp>
 #include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/DistributionMoments.hpp>
@@ -334,6 +335,11 @@ void convolutionRegimes() {
       VSS_CHECK(std::abs(atZero.value().cdf - cdf) < 1.0e-12);
       VSS_CHECK(std::abs(atZero.value().survival - survival) < 1.0e-12);
     }
+    auto cappedPolicy = policy();
+    cappedPolicy.iteration.max_evaluations = 1U;
+    VSS_CHECK(
+        evaluate(countMixture.value(), 0.0, cappedPolicy).status().code() ==
+        ErrorCode::ResourceLimit);
   }
 
   const std::array<Distribution, 2> commonScaleGammas{gamma(2.0, 2.0).value(),
@@ -352,6 +358,95 @@ void convolutionRegimes() {
       VSS_CHECK(std::abs(actualAtFive.value().density_or_mass -
                          expectedAtFive.value().density_or_mass) < 1.0e-13);
     }
+  }
+
+  for (const auto [firstShape, secondShape] :
+       {std::pair{0.25, 0.25}, std::pair{0.5, 0.5}, std::pair{0.75, 0.75},
+        std::pair{0.25, 2.0}}) {
+    const std::array<Distribution, 2> terms{gamma(firstShape, 1.0).value(),
+                                            gamma(secondShape, 1.0).value()};
+    const auto sum = finiteConvolution(terms, policy());
+    VSS_CHECK(sum.hasValue());
+    if (!sum) {
+      continue;
+    }
+    const Scalar shape = firstShape + secondShape;
+    const auto atZero = evaluate(sum.value(), 0.0, policy());
+    VSS_CHECK(atZero.hasValue());
+    if (atZero) {
+      const Scalar expectedEndpoint =
+          shape < 1.0    ? std::numeric_limits<Scalar>::infinity()
+          : shape == 1.0 ? 1.0
+                         : 0.0;
+      VSS_CHECK(atZero.value().density_or_mass == expectedEndpoint);
+    }
+    const auto nearZero = evaluate(sum.value(), 1.0e-6, policy());
+    const auto interior = evaluate(sum.value(), 2.0, policy());
+    VSS_CHECK(nearZero.hasValue() && interior.hasValue());
+    if (nearZero && interior) {
+      const auto reference = gamma(shape, 1.0);
+      VSS_CHECK(reference.hasValue());
+      if (reference) {
+        const auto expectedNearZero =
+            evaluate(reference.value(), 1.0e-6, policy());
+        const auto expectedInterior =
+            evaluate(reference.value(), 2.0, policy());
+        VSS_CHECK(expectedNearZero.hasValue() && expectedInterior.hasValue());
+        if (expectedNearZero && expectedInterior) {
+          VSS_CHECK(std::abs(nearZero.value().density_or_mass -
+                             expectedNearZero.value().density_or_mass) <
+                    1.0e-12);
+          VSS_CHECK(std::abs(interior.value().cdf -
+                             expectedInterior.value().cdf) < 1.0e-12);
+        }
+      }
+    }
+  }
+
+  const std::array<Distribution, 2> poissonTerms{poisson(1.25).value(),
+                                                 poisson(2.75).value()};
+  const auto poissonSum = finiteConvolution(poissonTerms, policy());
+  VSS_CHECK(poissonSum.hasValue());
+  if (poissonSum) {
+    VSS_CHECK(poissonSum.value().family() == Family::poisson);
+    const auto summedMass = evaluate(poissonSum.value(), 3.0, policy());
+    const auto referenceMass = evaluate(poisson(4.0).value(), 3.0, policy());
+    VSS_CHECK(summedMass.hasValue() && referenceMass.hasValue());
+    if (summedMass && referenceMass) {
+      VSS_CHECK(std::abs(summedMass.value().density_or_mass -
+                         referenceMass.value().density_or_mass) < 1.0e-14);
+    }
+  }
+
+  const std::array<Distribution, 2> binomialTerms{binomial(2U, 0.25).value(),
+                                                  binomial(3U, 0.25).value()};
+  const auto binomialSum = finiteConvolution(binomialTerms, policy());
+  VSS_CHECK(binomialSum.hasValue());
+  if (binomialSum) {
+    VSS_CHECK(binomialSum.value().family() == Family::binomial);
+    VSS_CHECK(std::abs(evaluate(binomialSum.value(), 2.0, policy())
+                           .value()
+                           .density_or_mass -
+                       evaluate(binomial(5U, 0.25).value(), 2.0, policy())
+                           .value()
+                           .density_or_mass) < 1.0e-14);
+  }
+
+  const std::array<Distribution, 2> negativeBinomialTerms{
+      negativeBinomial(1.25, 0.4).value(), negativeBinomial(2.75, 0.4).value()};
+  const auto negativeBinomialSum =
+      finiteConvolution(negativeBinomialTerms, policy());
+  VSS_CHECK(negativeBinomialSum.hasValue());
+  if (negativeBinomialSum) {
+    VSS_CHECK(negativeBinomialSum.value().family() ==
+              Family::negative_binomial);
+    VSS_CHECK(
+        std::abs(evaluate(negativeBinomialSum.value(), 3.0, policy())
+                     .value()
+                     .density_or_mass -
+                 evaluate(negativeBinomial(4.0, 0.4).value(), 3.0, policy())
+                     .value()
+                     .density_or_mass) < 1.0e-14);
   }
 
   const auto uniformA = uniform(0.0, 1.0);

@@ -508,6 +508,9 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
     return Result<Distribution>::success(terms.front());
   }
   bool allNormal = true;
+  bool allPoisson = true;
+  bool allBinomial = true;
+  bool allNegativeBinomial = true;
   bool allDiscrete = true;
   Index normalCount = 0U;
   Index poissonCount = 0U;
@@ -515,6 +518,11 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
   long double gammaShape = 0.0L;
   Scalar commonGammaScale = 0.0;
   bool commonGammaScaleSet = false;
+  Scalar commonCountProbability = 0.0;
+  bool commonCountProbabilitySet = false;
+  std::uint64_t binomialTrials = 0U;
+  long double poissonRate = 0.0L;
+  long double negativeBinomialSuccesses = 0.0L;
   std::vector<std::shared_ptr<const Distribution::State>> components;
   components.reserve(terms.size());
   long double normalMean = 0.0L;
@@ -527,6 +535,10 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
     }
     components.push_back(state);
     allNormal = allNormal && state->family == Family::normal;
+    allPoisson = allPoisson && state->family == Family::poisson;
+    allBinomial = allBinomial && state->family == Family::binomial;
+    allNegativeBinomial =
+        allNegativeBinomial && state->family == Family::negative_binomial;
     if (state->family == Family::normal) {
       ++normalCount;
       normalMean += state->parameters[0];
@@ -534,6 +546,34 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
           static_cast<long double>(state->parameters[1]) * state->parameters[1];
     }
     poissonCount += state->family == Family::poisson ? 1U : 0U;
+    if (state->family == Family::poisson) {
+      poissonRate += state->parameters[0];
+    }
+    if (state->family == Family::binomial) {
+      const Scalar probability = state->parameters[1];
+      if (!commonCountProbabilitySet) {
+        commonCountProbability = probability;
+        commonCountProbabilitySet = true;
+      }
+      allBinomial = allBinomial && probability == commonCountProbability;
+      if (state->integerParameter >
+          std::numeric_limits<std::uint64_t>::max() - binomialTrials) {
+        return Result<Distribution>::failure(
+            ErrorCode::SizeOverflow,
+            "binomial convolution trial count overflows");
+      }
+      binomialTrials += state->integerParameter;
+    }
+    if (state->family == Family::negative_binomial) {
+      const Scalar probability = state->parameters[1];
+      if (!commonCountProbabilitySet) {
+        commonCountProbability = probability;
+        commonCountProbabilitySet = true;
+      }
+      allNegativeBinomial =
+          allNegativeBinomial && probability == commonCountProbability;
+      negativeBinomialSuccesses += state->parameters[0];
+    }
     if (state->family == Family::gamma || state->family == Family::chi_square) {
       const Scalar scale =
           state->family == Family::gamma ? state->parameters[1] : 2.0;
@@ -563,6 +603,27 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
     }
     return normal(static_cast<Scalar>(normalMean),
                   static_cast<Scalar>(std::sqrt(normalVariance)));
+  }
+  if (allPoisson) {
+    if (!std::isfinite(poissonRate) ||
+        poissonRate > std::numeric_limits<Scalar>::max()) {
+      return Result<Distribution>::failure(
+          ErrorCode::NonFiniteResult, "Poisson convolution rate overflows");
+    }
+    return poisson(static_cast<Scalar>(poissonRate));
+  }
+  if (allBinomial) {
+    return binomial(binomialTrials, commonCountProbability);
+  }
+  if (allNegativeBinomial) {
+    if (!std::isfinite(negativeBinomialSuccesses) ||
+        negativeBinomialSuccesses > std::numeric_limits<Scalar>::max()) {
+      return Result<Distribution>::failure(
+          ErrorCode::NonFiniteResult,
+          "negative-binomial convolution shape overflows");
+    }
+    return negativeBinomial(static_cast<Scalar>(negativeBinomialSuccesses),
+                            commonCountProbability);
   }
   if (gammaCount == terms.size() && gammaCount > 1U) {
     if (!std::isfinite(gammaShape) ||
