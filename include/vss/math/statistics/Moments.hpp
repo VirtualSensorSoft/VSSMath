@@ -125,7 +125,21 @@ marginalMoments(const MomentEstimate& source, std::span<const Index> components,
 /// @return Standardized moment entries, or a typed validation/numerical error.
 /// @retval ErrorCode::InsufficientSamples A required source moment or center
 ///         is unavailable.
-/// @retval ErrorCode::InvalidDomain A requested component has zero variance.
+/// @retval ErrorCode::InvalidDomain A requested component has nonpositive
+///         variance, projected support is incompatible, or a contributing
+///         source term is absent.
+/// @retval ErrorCode::ResourceLimit The requested output or projection work
+///         exceeds the supplied limits.
+/// @retval ErrorCode::DimensionMismatch A projection map has the wrong input
+///         dimension.
+/// @retval ErrorCode::NonFiniteResult A standardized result is outside the
+///         finite output range.
+/// @details For a contraction request, the map is applied to the central
+///          moments before standardization. Projected variances are accumulated
+///          with exact dyadic arithmetic so their sign and normalization are
+///          retained even when the unstandardized variance is outside the
+///          representable @ref Scalar range. The returned contraction terms
+///          use dense layout over the one-dimensional output shape.
 [[nodiscard]] Result<MomentEstimate>
 standardizedMoments(const MomentEstimate& source, const MomentRequest& request,
                     Limits limits);

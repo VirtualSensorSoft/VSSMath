@@ -559,6 +559,212 @@ void shapesAndDistinctThirdMoment() {
   VSS_CHECK(rectangular.value().terms.view()[0].values.size() == 6U);
 }
 
+void standardizedLinearProjections() {
+  const Matrix observations =
+      matrix({{-2.0, -4.0, 7.0}, {0.0, 0.0, 7.0}, {2.0, 4.0, 7.0}});
+  const std::array<Index, 1U> shape{3U};
+  const auto source = estimateCentralMoments(
+      sample(observations, shape), unweighted(), CenterSpec{},
+      request(0x0aU, MomentRepresentation::dense), ampleLimits());
+  VSS_CHECK(source);
+  if (!source) {
+    return;
+  }
+
+  const Matrix selectVarying = matrix({{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}});
+  auto jointRequest = request(0x0aU, MomentRepresentation::contraction);
+  jointRequest.contraction = selectVarying.view();
+  const auto joint =
+      standardizedMoments(source.value(), jointRequest, ampleLimits());
+  VSS_CHECK(joint);
+  if (joint) {
+    const auto terms = joint.value().terms.view();
+    VSS_CHECK(terms.size() == 2U);
+    close(terms[0].values.at(1U), 1.0);
+    close(terms[1].values.at(0U), 1.5);
+    VSS_CHECK(joint.value().observation_shape.view().size() == 1U);
+    VSS_CHECK(joint.value().observation_shape.view()[0U] == 2U);
+    VSS_CHECK(joint.value().population_mean.has_value());
+    if (joint.value().population_mean) {
+      close(joint.value().population_mean->at(0U), 0.0);
+      close(joint.value().population_mean->at(1U), 0.0);
+    }
+  }
+
+  const std::array<Index, 2U> mixedTuple{0U, 1U};
+  const std::array<std::span<const Index>, 1U> mixedSelection{
+      std::span<const Index>{mixedTuple}};
+  auto selectedMixedRequest = request(0x02U, MomentRepresentation::selected);
+  selectedMixedRequest.selected = mixedSelection;
+  const auto selectedMixed =
+      standardizedMoments(source.value(), selectedMixedRequest, ampleLimits());
+  VSS_CHECK(selectedMixed);
+  if (selectedMixed) {
+    close(selectedMixed.value().terms.view()[0U].values.at(0U), 1.0);
+  }
+  auto selectedFirstRequest = request(0x01U, MomentRepresentation::selected);
+  const std::array<Index, 1U> firstTuple{1U};
+  const std::array<std::span<const Index>, 1U> firstSelection{
+      std::span<const Index>{firstTuple}};
+  selectedFirstRequest.selected = firstSelection;
+  const auto selectedFirst =
+      standardizedMoments(source.value(), selectedFirstRequest, ampleLimits());
+  VSS_CHECK(selectedFirst);
+  if (selectedFirst) {
+    close(selectedFirst.value().terms.view()[0U].values.at(0U), 0.0);
+  }
+  const std::array<Index, 4U> selectedFourthTuple{0U, 0U, 0U, 0U};
+  const std::array<std::span<const Index>, 1U> selectedFourth{
+      std::span<const Index>{selectedFourthTuple}};
+  auto selectedFourthRequest = request(0x08U, MomentRepresentation::selected);
+  selectedFourthRequest.selected = selectedFourth;
+  const auto selectedFourthResult =
+      standardizedMoments(source.value(), selectedFourthRequest, ampleLimits());
+  VSS_CHECK(selectedFourthResult);
+  if (selectedFourthResult) {
+    close(selectedFourthResult.value().terms.view()[0U].values.at(0U), 1.5);
+  }
+  const auto fullConstantRequest = standardizedMoments(
+      source.value(), request(0x0aU, MomentRepresentation::dense),
+      ampleLimits());
+  VSS_CHECK(!fullConstantRequest);
+  VSS_CHECK(fullConstantRequest.status().code() == ErrorCode::InvalidDomain);
+
+  const Matrix wrongShapeMap = matrix({{1.0, 0.0}, {0.0, 1.0}});
+  auto wrongShapeRequest = request(0x02U, MomentRepresentation::contraction);
+  wrongShapeRequest.contraction = wrongShapeMap.view();
+  const auto wrongShape =
+      standardizedMoments(source.value(), wrongShapeRequest, ampleLimits());
+  VSS_CHECK(!wrongShape);
+  VSS_CHECK(wrongShape.status().code() == ErrorCode::DimensionMismatch);
+
+  const Matrix cancel = matrix({{1.0, -0.5, 0.0}});
+  auto cancelRequest = request(0x0aU, MomentRepresentation::contraction);
+  cancelRequest.contraction = cancel.view();
+  const auto canceled =
+      standardizedMoments(source.value(), cancelRequest, ampleLimits());
+  VSS_CHECK(!canceled);
+  VSS_CHECK(canceled.status().code() == ErrorCode::InvalidDomain);
+
+  auto negativeVarianceSource = source.value();
+  std::vector<MomentTerm> negativeTerms(
+      negativeVarianceSource.terms.view().begin(),
+      negativeVarianceSource.terms.view().end());
+  std::vector<Scalar> negativeSecond;
+  negativeSecond.reserve(negativeTerms[0U].values.size());
+  for (Index i = 0U; i < negativeTerms[0U].values.size(); ++i) {
+    negativeSecond.push_back(negativeTerms[0U].values.at(i));
+  }
+  negativeSecond[0U] = -1.0;
+  negativeTerms[0U].values = Vector(std::span<const Scalar>{negativeSecond});
+  const auto negativeOwned =
+      Array<MomentTerm>::copy(negativeTerms, ampleLimits());
+  VSS_CHECK(negativeOwned);
+  if (negativeOwned) {
+    negativeVarianceSource.terms = negativeOwned.value();
+    const auto negative = standardizedMoments(negativeVarianceSource,
+                                              jointRequest, ampleLimits());
+    VSS_CHECK(!negative);
+    VSS_CHECK(negative.status().code() == ErrorCode::InvalidDomain);
+  }
+
+  const Matrix tiny = matrix({{std::numeric_limits<Scalar>::min(), 0.0, 0.0}});
+  auto tinyRequest = request(0x0aU, MomentRepresentation::contraction);
+  tinyRequest.contraction = tiny.view();
+  const auto tinyProjection =
+      standardizedMoments(source.value(), tinyRequest, ampleLimits());
+  VSS_CHECK(tinyProjection);
+  if (tinyProjection) {
+    close(tinyProjection.value().terms.view()[0].values.at(0U), 1.0);
+    close(tinyProjection.value().terms.view()[1].values.at(0U), 1.5);
+  }
+
+  const Matrix identity = matrix({{1.0, 0.0}, {0.0, 1.0}});
+  const Matrix twoCoordinateValues =
+      matrix({{-2.0, -4.0}, {0.0, 0.0}, {2.0, 4.0}});
+  const std::array<Index, 1U> twoCoordinateShape{2U};
+  const auto twoCoordinateSource = estimateCentralMoments(
+      sample(twoCoordinateValues, twoCoordinateShape), unweighted(),
+      CenterSpec{}, request(0x0aU, MomentRepresentation::dense), ampleLimits());
+  VSS_CHECK(twoCoordinateSource);
+  if (twoCoordinateSource) {
+    auto identityRequest = request(0x0aU, MomentRepresentation::contraction);
+    identityRequest.contraction = identity.view();
+    const auto identityResult = standardizedMoments(
+        twoCoordinateSource.value(), identityRequest, ampleLimits());
+    const auto ordinary = standardizedMoments(
+        twoCoordinateSource.value(),
+        request(0x0aU, MomentRepresentation::dense), ampleLimits());
+    VSS_CHECK(identityResult && ordinary);
+    if (identityResult && ordinary) {
+      for (Index order = 0U; order < 2U; ++order) {
+        const auto actual = identityResult.value().terms.view()[order].values;
+        const auto expected = ordinary.value().terms.view()[order].values;
+        VSS_CHECK(actual.size() == expected.size());
+        for (Index i = 0U; i < actual.size(); ++i) {
+          close(actual.at(i), expected.at(i));
+        }
+      }
+    }
+  }
+
+  auto missingCross = source.value();
+  std::vector<MomentTerm> incompleteTerms(missingCross.terms.view().begin(),
+                                          missingCross.terms.view().end());
+  const std::array<Index, 4U> diagonalTuples{0U, 0U, 1U, 1U};
+  const auto diagonalMetadata =
+      Array<Index>::copy(diagonalTuples, ampleLimits());
+  VSS_CHECK(diagonalMetadata);
+  if (diagonalMetadata) {
+    incompleteTerms[0U].layout = MomentRepresentation::selected;
+    incompleteTerms[0U].flattened_tuples = diagonalMetadata.value();
+    incompleteTerms[0U].values =
+        vector({source.value().terms.view()[0U].values.at(0U),
+                source.value().terms.view()[0U].values.at(4U)});
+    const auto ownedTerms =
+        Array<MomentTerm>::copy(incompleteTerms, ampleLimits());
+    VSS_CHECK(ownedTerms);
+    if (ownedTerms) {
+      missingCross.terms = ownedTerms.value();
+      const auto missing =
+          standardizedMoments(missingCross, jointRequest, ampleLimits());
+      VSS_CHECK(!missing);
+      VSS_CHECK(missing.status().code() == ErrorCode::InvalidDomain);
+    }
+  }
+
+  auto incompatibleSupportSource = source.value();
+  std::vector<Support> coordinateSupports(
+      3U, incompatibleSupportSource.diagnostics.global);
+  ++coordinateSupports[1U].positive;
+  const auto copiedSupports =
+      Array<Support>::copy(coordinateSupports, ampleLimits());
+  VSS_CHECK(copiedSupports);
+  if (copiedSupports) {
+    incompatibleSupportSource.diagnostics.coordinate_support =
+        copiedSupports.value();
+    const auto mismatch = standardizedMoments(incompatibleSupportSource,
+                                              jointRequest, ampleLimits());
+    VSS_CHECK(!mismatch);
+    VSS_CHECK(mismatch.status().code() == ErrorCode::InvalidDomain);
+  }
+
+  const Limits elementCap{.elements = 1U,
+                          .bytes = std::numeric_limits<std::size_t>::max(),
+                          .evaluations = 0U};
+  const auto limited =
+      standardizedMoments(source.value(), jointRequest, elementCap);
+  VSS_CHECK(!limited);
+  VSS_CHECK(limited.status().code() == ErrorCode::ResourceLimit);
+  const Limits byteCap{.elements = std::numeric_limits<std::size_t>::max(),
+                       .bytes = 1U,
+                       .evaluations = 0U};
+  const auto byteLimited =
+      standardizedMoments(source.value(), jointRequest, byteCap);
+  VSS_CHECK(!byteLimited);
+  VSS_CHECK(byteLimited.status().code() == ErrorCode::ResourceLimit);
+}
+
 void dependentCorrectionMixedMoment() {
   // Enumerate (2u, 3(v - u)) for independent signs u and v. The shared
   // sign generates a negative covariance and a nonzero mixed fourth moment.
@@ -784,6 +990,7 @@ int main() try {
   marginalAndStandardizedTransforms();
   layoutsAndOrdering();
   shapesAndDistinctThirdMoment();
+  standardizedLinearProjections();
   dependentCorrectionMixedMoment();
   weightedContractionAndKnownCenter();
   supportAndValidation();

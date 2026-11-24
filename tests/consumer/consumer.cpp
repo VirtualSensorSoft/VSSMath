@@ -1262,8 +1262,19 @@ int main() {
       .contraction = std::nullopt};
   const auto installedStandardized = statistics::standardizedMoments(
       transformSource.value(), selectedFourthRequest, transformLimits);
+  Matrix standardizedMap(1U, 2U);
+  standardizedMap.at(0U, 0U) = 1.0;
+  standardizedMap.at(0U, 1U) = 0.0;
+  const statistics::MomentRequest projectedStandardizedRequest{
+      .orders = 0x0aU,
+      .representation = statistics::MomentRepresentation::contraction,
+      .selected = {},
+      .contraction = standardizedMap.view()};
+  const auto installedProjectedStandardized = statistics::standardizedMoments(
+      transformSource.value(), projectedStandardizedRequest, transformLimits);
   if (!require(
           installedMarginal.hasValue() && installedStandardized.hasValue() &&
+              installedProjectedStandardized.hasValue() &&
               installedMarginal.value().observation_shape.view()[0U] == 1U &&
               std::abs(
                   installedMarginal.value().terms.view()[0U].values.at(0U) -
@@ -1271,7 +1282,17 @@ int main() {
               std::abs(
                   installedStandardized.value().terms.view()[0U].values.at(0U) -
                   1.5) < 1.0e-12,
-          "installed marginal/standardized moment APIs failed")) {
+          "installed marginal/standardized moment APIs failed") ||
+      !require(
+          std::abs(
+              installedProjectedStandardized.value().terms.view()[0U].values.at(
+                  0U) -
+              1.0) < 1.0e-12 &&
+              std::abs(installedProjectedStandardized.value()
+                           .terms.view()[1U]
+                           .values.at(0U) -
+                       1.5) < 1.0e-12,
+          "installed projected standardization API failed")) {
     return 1;
   }
 
