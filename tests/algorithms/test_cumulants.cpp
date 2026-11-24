@@ -185,6 +185,28 @@ void asymmetricMixedFourthPairingsAndPackedSource() {
       cumulantsToCentralMoments(cumulant.value(), selected, ample());
   VSS_CHECK(!recovered &&
             recovered.status().code() == ErrorCode::InvalidDomain);
+
+  const Matrix paired = matrix({{-1.0, -2.0}, {-1.0, -2.0}, {2.0, 4.0}});
+  const auto pairedMoments =
+      central(paired, 0x0fU, MomentRepresentation::dense);
+  const auto pairedCumulants = centralMomentsToCumulants(
+      pairedMoments, request(0x0fU, MomentRepresentation::dense), ample());
+  VSS_CHECK(pairedCumulants);
+  if (pairedCumulants) {
+    close(pairedCumulants.value().terms.view()[2U].values.at(1U), 4.0);
+    close(pairedCumulants.value().terms.view()[3U].values.at(3U), -24.0);
+    const std::array<Index, 4U> permutedTuple{1U, 0U, 1U, 0U};
+    const std::array<std::span<const Index>, 1U> permutedSelection{
+        std::span<const Index>{permutedTuple}};
+    auto inverseRequest = request(0x08U, MomentRepresentation::selected);
+    inverseRequest.selected = permutedSelection;
+    const auto permutedInverse = cumulantsToCentralMoments(
+        pairedCumulants.value(), inverseRequest, ample());
+    VSS_CHECK(permutedInverse);
+    if (permutedInverse) {
+      close(permutedInverse.value().terms.view()[0U].values.at(0U), 24.0);
+    }
+  }
 }
 
 void rectangularCumulantProjectionRoundTrip() {
