@@ -393,6 +393,54 @@ void convolutionRegimes() {
         ErrorCode::ResourceLimit);
   }
 
+  const std::array<Distribution, 2> poissonAndGamma{
+      gamma(0.5, 1.0).value(), poisson(1.0).value()};
+  const auto poleMixture = finiteConvolution(poissonAndGamma, policy());
+  VSS_CHECK(poleMixture.hasValue());
+  if (poleMixture) {
+    const Scalar sqrtPi = std::sqrt(std::numbers::pi_v<Scalar>);
+    const auto referenceAt = [sqrtPi](Scalar x) {
+      Scalar mass = std::exp(-1.0);
+      Scalar density = 0.0;
+      Scalar cdf = 0.0;
+      Scalar survival = 0.0;
+      Scalar cumulativeCountMass = 0.0;
+      const auto lastCount = static_cast<Index>(std::floor(x));
+      for (Index count = 0U; count <= lastCount; ++count) {
+        const Scalar residual = x - static_cast<Scalar>(count);
+        if (residual == 0.0) {
+          density = std::numeric_limits<Scalar>::infinity();
+          survival += mass;
+        } else {
+          density += mass * std::exp(-residual) /
+                     (sqrtPi * std::sqrt(residual));
+          cdf += mass * std::erf(std::sqrt(residual));
+          survival += mass * std::erfc(std::sqrt(residual));
+        }
+        cumulativeCountMass += mass;
+        mass /= static_cast<Scalar>(count + 1U);
+      }
+      survival += std::max(0.0, 1.0 - cumulativeCountMass);
+      return std::array<Scalar, 3>{density, cdf, survival};
+    };
+    for (const Scalar x : {0.0, 1.0, 2.0, 1.0 - 0x1p-16, 1.0 + 0x1p-16,
+                           2.0 - 0x1p-16, 2.0 + 0x1p-16}) {
+      const auto actual = evaluate(poleMixture.value(), x, policy());
+      const auto expected = referenceAt(x);
+      VSS_CHECK(actual.hasValue());
+      if (actual) {
+        if (std::isinf(expected[0])) {
+          VSS_CHECK(actual.value().density_or_mass == expected[0]);
+        } else {
+          VSS_CHECK(std::abs(actual.value().density_or_mass - expected[0]) <=
+                    2.0e-12 * expected[0]);
+        }
+        VSS_CHECK(std::abs(actual.value().cdf - expected[1]) < 2.0e-14);
+        VSS_CHECK(std::abs(actual.value().survival - expected[2]) < 2.0e-14);
+      }
+    }
+  }
+
   const std::array<Distribution, 2> commonScaleGammas{gamma(2.0, 2.0).value(),
                                                       chiSquare(4.0).value()};
   const auto gammaSum = finiteConvolution(commonScaleGammas, policy());

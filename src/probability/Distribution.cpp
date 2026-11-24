@@ -673,6 +673,16 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
     }
     return gamma(static_cast<Scalar>(gammaShape), commonGammaScale);
   }
+  const bool poissonWithGamma =
+      terms.size() == 2U && poissonCount == 1U && gammaCount == 1U &&
+      std::all_of(terms.begin(), terms.end(), [](const Distribution& term) {
+        return term.state_->family == Family::gamma ||
+               term.state_->family == Family::poisson;
+      });
+  if (poissonWithGamma) {
+    return DistributionFactory::convolution(std::move(components),
+                                            Measure::real_density, limits);
+  }
   const bool normalWithPoisson =
       normalCount > 0U && poissonCount == 1U &&
       terms.size() == normalCount + poissonCount &&
@@ -2061,6 +2071,85 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       if (continuousState && discreteState) {
         Distribution continuousLaw(std::move(continuousState));
         Distribution discreteLaw(std::move(discreteState));
+        if (discreteLaw.state_->family == Family::poisson &&
+            continuousLaw.state_->family == Family::gamma) {
+          if (x < 0.0) {
+            return Result<TailValues>::success(
+                {0.0, negativeInfinity, 0.0, 1.0,
+                 {negativeInfinity, 0.0}, false});
+          }
+          constexpr Scalar exactIntegerLimit = 9007199254740992.0;
+          if (std::floor(x) > exactIntegerLimit) {
+            return Result<TailValues>::failure(
+                ErrorCode::ResourceLimit,
+                "Poisson-gamma convolution coordinate exceeds exact count range");
+          }
+          const Scalar rate = discreteLaw.state_->parameters[0];
+          Scalar logMass = rate == 0.0 ? 0.0 : -rate;
+          Scalar logDensitySum = negativeInfinity;
+          Scalar logCdf = negativeInfinity;
+          Scalar logSurvival = negativeInfinity;
+          std::uint64_t evaluations = 0U;
+          for (std::uint64_t count = 0U;; ++count) {
+            if (static_cast<Scalar>(count) > x) {
+              break;
+            }
+            if (++evaluations > policy.iteration.max_evaluations) {
+              return Result<TailValues>::failure(
+                  ErrorCode::ResourceLimit,
+                  "Poisson-gamma convolution evaluation cap exceeded");
+            }
+            const Scalar residual = x - static_cast<Scalar>(count);
+            auto shifted = evaluate(continuousLaw, residual, policy);
+            if (!shifted) {
+              return Result<TailValues>::failure(
+                  shifted.status().code(),
+                  std::string(shifted.status().message()));
+            }
+            if (shifted.value().density_or_mass == positiveInfinity) {
+              logDensitySum = positiveInfinity;
+            } else if (logDensitySum != positiveInfinity &&
+                       shifted.value().log_density_or_mass != negativeInfinity) {
+              logDensitySum = logAddExp(
+                  logDensitySum,
+                  logMass + shifted.value().log_density_or_mass);
+            }
+            if (shifted.value().log_tails.log_cdf != negativeInfinity) {
+              logCdf = logAddExp(
+                  logCdf, logMass + shifted.value().log_tails.log_cdf);
+            }
+            if (shifted.value().log_tails.log_survival != negativeInfinity) {
+              logSurvival = logAddExp(
+                  logSurvival,
+                  logMass + shifted.value().log_tails.log_survival);
+            }
+            if (rate == 0.0) {
+              break;
+            }
+            logMass += std::log(rate) -
+                       std::log(static_cast<Scalar>(count + 1U));
+          }
+          if (++evaluations > policy.iteration.max_evaluations) {
+            return Result<TailValues>::failure(
+                ErrorCode::ResourceLimit,
+                "Poisson-gamma convolution evaluation cap exceeded");
+          }
+          auto countTail = evaluate(
+              discreteLaw, std::floor(x), policy);
+          if (!countTail) {
+            return Result<TailValues>::failure(
+                countTail.status().code(),
+                std::string(countTail.status().message()));
+          }
+          logSurvival =
+              logAddExp(logSurvival, countTail.value().log_tails.log_survival);
+          if (logDensitySum == positiveInfinity) {
+            return Result<TailValues>::success(
+                {positiveInfinity, positiveInfinity, std::exp(logCdf),
+                 std::exp(logSurvival), {logCdf, logSurvival}, true});
+          }
+          return finiteTailValues(logDensitySum, {logCdf, logSurvival}, true);
+        }
         if (discreteLaw.state_->family == Family::poisson &&
             continuousLaw.state_->family == Family::normal) {
           const Scalar rate = discreteLaw.state_->parameters[0];
