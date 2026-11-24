@@ -187,6 +187,41 @@ void asymmetricMixedFourthPairingsAndPackedSource() {
             recovered.status().code() == ErrorCode::InvalidDomain);
 }
 
+void rectangularCumulantProjectionRoundTrip() {
+  const Matrix source = matrix(
+      {{0.0, 0.0, 0.0}, {1.0, 0.0, 1.0}, {0.0, 2.0, -1.0}, {1.0, 1.0, 2.0}});
+  const Matrix projected =
+      matrix({{0.0, 0.0}, {1.0, -1.0}, {4.0, 3.0}, {3.0, -1.0}});
+  const auto dense = request(0x0fU, MomentRepresentation::dense);
+  const auto sourceCumulants = centralMomentsToCumulants(
+      central(source, 0x0fU, MomentRepresentation::dense), dense, ample());
+  VSS_CHECK(sourceCumulants);
+
+  const Matrix map = matrix({{1.0, 2.0, 0.0}, {0.0, 1.0, -1.0}});
+  auto contraction = request(0x0fU, MomentRepresentation::contraction);
+  contraction.contraction = map.view();
+  const std::array<MomentEstimate, 1U> inputs{sourceCumulants.value()};
+  const Vector unitWeight(std::array<Scalar, 1U>{1.0});
+  const auto mapped = cumulantsOfIndependentSum(inputs, unitWeight.view(),
+                                                contraction, ample());
+  VSS_CHECK(mapped);
+  close(mapped.value().terms.view()[2U].values.at(1U), 15.0 / 8.0);
+  close(mapped.value().terms.view()[3U].values.at(3U), -45.0 / 16.0);
+
+  const auto recovered =
+      cumulantsToCentralMoments(mapped.value(), dense, ample());
+  VSS_CHECK(recovered);
+  const auto direct = central(projected, 0x0fU, MomentRepresentation::dense);
+  for (Index order = 0U; order < direct.terms.view().size(); ++order) {
+    const auto& expected = direct.terms.view()[order].values;
+    const auto& actual = recovered.value().terms.view()[order].values;
+    VSS_CHECK(actual.size() == expected.size());
+    for (Index i = 0U; i < expected.size(); ++i) {
+      close(actual.at(i), expected.at(i));
+    }
+  }
+}
+
 void missingMeanDependencyAndValidation() {
   const Matrix observations = matrix({{-1.0}, {1.0}});
   auto moments = central(observations, 0x0fU, MomentRepresentation::dense);
@@ -440,6 +475,7 @@ void weightedSumContractionAndSelectedFourth() {
 int main() try {
   symmetricTwoPointRoundTrip();
   asymmetricMixedFourthPairingsAndPackedSource();
+  rectangularCumulantProjectionRoundTrip();
   missingMeanDependencyAndValidation();
   exactFallbackResolvesLargeCancellation();
   independentCumulantAndCentralMomentSums();

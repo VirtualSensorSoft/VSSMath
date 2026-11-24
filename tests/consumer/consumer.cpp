@@ -1222,6 +1222,16 @@ int main() {
       transformSourceRequest, transformLimits);
   static_assert(std::is_same_v<decltype(transformSource),
                                const Result<statistics::MomentEstimate>>);
+  using ComponentMoment = Result<Scalar> (MultivariateMoments::*)(Index) const;
+  static_assert(
+      std::is_same_v<decltype(&MultivariateMoments::componentSkewness),
+                     ComponentMoment>);
+  static_assert(
+      std::is_same_v<decltype(&MultivariateMoments::componentKurtosis),
+                     ComponentMoment>);
+  static_assert(
+      std::is_same_v<decltype(&MultivariateMoments::componentExcessKurtosis),
+                     ComponentMoment>);
   if (!transformSource.hasValue()) {
     std::cerr << "math_consumer: source moment code="
               << static_cast<int>(transformSource.status().code()) << ", "
