@@ -41,6 +41,7 @@
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Descriptive.hpp>
 #include <vss/math/statistics/MomentDiagnostics.hpp>
+#include <vss/math/statistics/MomentState.hpp>
 #include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Order.hpp>
 #include <vss/math/statistics/Population.hpp>
@@ -506,6 +507,63 @@ bool verifyWeightedPopulationContracts() {
                  "installed equal-mass effective sample count is incorrect");
 }
 
+bool verifyInstalledMomentStateContracts() {
+  using namespace vss::math;
+  constexpr Limits limits{4096U, 262144U, 0U};
+  const statistics::MomentRequest request{
+      .orders = 0x0eU,
+      .representation = statistics::MomentRepresentation::component,
+      .selected = {},
+      .contraction = std::nullopt};
+  auto left = statistics::makeOnlineMoments({}, request, limits);
+  auto right = statistics::makeOnlineMoments({}, request, limits);
+  const Vector one{std::array<Scalar, 1U>{1.0}};
+  const Vector two{std::array<Scalar, 1U>{2.0}};
+  if (!require(left.hasValue() && right.hasValue(),
+               "installed online moment factories failed")) {
+    return false;
+  }
+  if (!require(statistics::add(left.value(), one.view(), 1.0).ok() &&
+                   statistics::add(right.value(), two.view(), 1.0).ok() &&
+                   statistics::merge(left.value(), right.value()).ok(),
+               "installed online add/merge failed")) {
+    return false;
+  }
+  const auto online =
+      statistics::finalize(left.value(), WeightRule::empirical, limits);
+  if (!require(online.hasValue() &&
+                   std::abs(online.value().terms.view()[0].values.at(0U) -
+                            0.25) < 1.0e-12,
+               "installed online finalize failed")) {
+    return false;
+  }
+  auto rolling = statistics::makeRollingMoments({}, 2U, request, limits);
+  if (!require(rolling.hasValue(), "installed rolling factory failed")) {
+    return false;
+  }
+  const Vector four{std::array<Scalar, 1U>{4.0}};
+  if (!require(statistics::add(rolling.value(), one.view(), 1.0).ok() &&
+                   statistics::add(rolling.value(), two.view(), 1.0).ok() &&
+                   statistics::add(rolling.value(), four.view(), 1.0).ok(),
+               "installed rolling add failed")) {
+    return false;
+  }
+  auto window =
+      statistics::finalize(rolling.value(), WeightRule::empirical, limits);
+  if (!require(window.hasValue() &&
+                   window.value().population_mean->at(0U) == 3.0 &&
+                   statistics::evict(rolling.value()).ok() &&
+                   statistics::reset(rolling.value()).ok() &&
+                   statistics::reset(left.value()).ok(),
+               "installed rolling finalize/evict/reset failed")) {
+    return false;
+  }
+  return requireError(
+      statistics::finalize(left.value(), WeightRule::empirical, limits),
+      ErrorCode::InsufficientSamples,
+      "installed reset retained old online samples");
+}
+
 } // namespace
 
 int main() {
@@ -516,6 +574,9 @@ int main() {
     return 1;
   }
   if (!verifyWeightedPopulationContracts()) {
+    return 1;
+  }
+  if (!verifyInstalledMomentStateContracts()) {
     return 1;
   }
 
