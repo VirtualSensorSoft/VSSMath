@@ -1,9 +1,25 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <numeric>
+#include <optional>
+#include <span>
+#include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/MomentState.hpp>
+#include <vss/math/statistics/Moments.hpp>
 
 namespace vss::math::statistics {
 namespace {
@@ -141,15 +157,15 @@ ErrorCode preflightRequest(Index dimension, const MomentRequest& request,
       const Index n = dimension + order - 1U;
       std::array<Index, 4U> factors{};
       for (Index i = 0U; i < order; ++i) {
-        factors[i] = n - order + 1U + i;
+        factors.at(i) = n - order + 1U + i;
       }
       Index denominator = 1U;
       for (Index i = 2U; i <= order; ++i) {
         denominator *= i;
       }
       for (Index i = 0U; i < order && denominator > 1U; ++i) {
-        const Index divisor = std::gcd(factors[i], denominator);
-        factors[i] /= divisor;
+        const Index divisor = std::gcd(factors.at(i), denominator);
+        factors.at(i) /= divisor;
         denominator /= divisor;
       }
       if (denominator != 1U) {
@@ -157,7 +173,7 @@ ErrorCode preflightRequest(Index dimension, const MomentRequest& request,
       }
       count = 1U;
       for (Index i = 0U; i < order; ++i) {
-        if (!checkedMultiply(count, factors[i], count)) {
+        if (!checkedMultiply(count, factors.at(i), count)) {
           return ErrorCode::SizeOverflow;
         }
       }
@@ -210,7 +226,7 @@ std::vector<Key> requestedKeys(Index d, const MomentRequest& request,
                                ErrorCode& error) {
   std::vector<Key> result;
   error = ErrorCode::None;
-  if (request.orders == 0U || (request.orders & 0xf0U) != 0U) {
+  if (d == 0U || request.orders == 0U || (request.orders & 0xf0U) != 0U) {
     error = ErrorCode::InvalidDomain;
     return result;
   }
@@ -229,13 +245,13 @@ std::vector<Key> requestedKeys(Index d, const MomentRequest& request,
           return {};
         }
         Key key{};
-        key[0] = order;
+        key.at(0) = order;
         for (Index axis = 0U; axis < order; ++axis) {
           if (tuple[axis] >= d) {
             error = ErrorCode::IndexOutOfRange;
             return {};
           }
-          key[axis + 1U] = tuple[axis];
+          key.at(axis + 1U) = tuple[axis];
         }
         result.push_back(key);
       }
@@ -244,8 +260,10 @@ std::vector<Key> requestedKeys(Index d, const MomentRequest& request,
     if (layout == MomentRepresentation::component) {
       for (Index i = 0U; i < d; ++i) {
         Key key{};
-        key[0] = order;
-        std::fill_n(key.begin() + 1, order, i);
+        key.at(0) = order;
+        for (Index axis = 0U; axis < order; ++axis) {
+          key.at(axis + 1U) = i;
+        }
         result.push_back(key);
       }
       continue;
@@ -261,10 +279,10 @@ std::vector<Key> requestedKeys(Index d, const MomentRequest& request,
       }
       for (Index n = 0U; n < count; ++n) {
         Key key{};
-        key[0] = order;
+        key.at(0) = order;
         Index value = n;
         for (Index axis = order; axis > 0U; --axis) {
-          key[axis] = value % d;
+          key.at(axis) = value % d;
           value /= d;
         }
         result.push_back(key);
@@ -273,30 +291,27 @@ std::vector<Key> requestedKeys(Index d, const MomentRequest& request,
     }
     if (layout == MomentRepresentation::packed) {
       Key key{};
-      key[0] = order;
-      const auto append = [&](auto&& self, Index axis, Index first) -> void {
-        if (axis == order) {
-          result.push_back(key);
-          return;
+      key.at(0) = order;
+      std::array<Index, 4U> coordinates{};
+      bool hasNext = true;
+      while (hasNext) {
+        for (Index axis = 0U; axis < order; ++axis) {
+          key.at(axis + 1U) = coordinates.at(axis);
         }
-        // A fourth-order key uses positions 1 through 4. Keep an explicit
-        // bound for the compiler and fail closed if this helper is ever
-        // reached with a malformed order or recursion state.
-        if (axis >= key.size() - 1U) {
-          error = ErrorCode::InvalidDomain;
-          return;
+        result.push_back(key);
+        Index axis = order;
+        while (axis > 0U && coordinates.at(axis - 1U) == d - 1U) {
+          --axis;
         }
-        for (Index i = first; i < d; ++i) {
-          key[axis + 1U] = i;
-          self(self, axis + 1U, i);
-          if (error != ErrorCode::None) {
-            return;
+        if (axis == 0U) {
+          hasNext = false;
+        } else {
+          const Index next = coordinates.at(axis - 1U) + 1U;
+          coordinates.at(axis - 1U) = next;
+          for (Index following = axis; following < order; ++following) {
+            coordinates.at(following) = next;
           }
         }
-      };
-      append(append, 0U, 0U);
-      if (error != ErrorCode::None) {
-        return {};
       }
       continue;
     }
@@ -312,17 +327,17 @@ std::vector<Key> requestedKeys(Index d, const MomentRequest& request,
 std::vector<Key> closure(const std::vector<Key>& requested) {
   std::vector<Key> result;
   for (const Key& key : requested) {
-    const Index order = key[0];
+    const Index order = key.at(0);
     const Index masks = 1U << order;
     for (Index mask = 0U; mask < masks; ++mask) {
       Key child{};
       Index next = 0U;
       for (Index axis = 0U; axis < order; ++axis) {
         if ((mask & (1U << axis)) == 0U) {
-          child[++next] = key[axis + 1U];
+          child.at(++next) = key.at(axis + 1U);
         }
       }
-      child[0] = next;
+      child.at(0) = next;
       if (next > 1U) {
         result.push_back(child);
       }
@@ -338,10 +353,10 @@ Index findKey(const OnlineMoments& state, const Key& key) {
   const auto indices = state.tuple_indices.view();
   Index offset = 0U;
   for (Index i = 0U; i < orders.size(); ++i) {
-    if (orders[i] == key[0]) {
+    if (orders[i] == key.at(0)) {
       bool same = true;
-      for (Index j = 0U; j < key[0]; ++j) {
-        same = same && indices[offset + j] == key[j + 1U];
+      for (Index j = 0U; j < key.at(0); ++j) {
+        same = same && indices[offset + j] == key.at(j + 1U);
       }
       if (same) {
         return i;
@@ -360,9 +375,9 @@ Key keyAt(const OnlineMoments& state, Index index) {
   for (Index i = 0U; i < index; ++i) {
     offset += orders[i];
   }
-  key[0] = orders[index];
-  for (Index i = 0U; i < key[0]; ++i) {
-    key[i + 1U] = indices[offset + i];
+  key.at(0) = orders[index];
+  for (Index i = 0U; i < key.at(0); ++i) {
+    key.at(i + 1U) = indices[offset + i];
   }
   return key;
 }
@@ -415,12 +430,12 @@ bool validOnlineState(const OnlineMoments& state) {
   const auto orders = state.tuple_orders.view();
   const auto indices = state.tuple_indices.view();
   Index expectedIndices = 0U;
-  for (Index i = 0U; i < orders.size(); ++i) {
-    if (orders[i] < 2U || orders[i] > 4U ||
-        expectedIndices > std::numeric_limits<Index>::max() - orders[i]) {
+  for (const Index order : orders) {
+    if (order < 2U || order > 4U ||
+        expectedIndices > std::numeric_limits<Index>::max() - order) {
       return false;
     }
-    expectedIndices += orders[i];
+    expectedIndices += order;
   }
   if (expectedIndices != indices.size()) {
     return false;
@@ -429,12 +444,12 @@ bool validOnlineState(const OnlineMoments& state) {
   Key previous{};
   for (Index i = 0U; i < orders.size(); ++i) {
     Key key{};
-    key[0] = orders[i];
+    key.at(0) = orders[i];
     for (Index axis = 0U; axis < orders[i]; ++axis) {
       if (indices[offset + axis] >= outputD) {
         return false;
       }
-      key[axis + 1U] = indices[offset + axis];
+      key.at(axis + 1U) = indices[offset + axis];
     }
     if (i > 0U && !(previous < key)) {
       return false;
@@ -526,7 +541,7 @@ Result<OnlineMoments> makeOnlineFromOwned(const Array<Index>& shape,
   auto keys = closure(outputs);
   std::size_t indexCount = 0U;
   for (const auto& key : keys) {
-    if (!checkedAdd(indexCount, key[0], indexCount)) {
+    if (!checkedAdd(indexCount, key.at(0), indexCount)) {
       return Result<OnlineMoments>::failure(ErrorCode::SizeOverflow,
                                             "online tuple storage overflows");
     }
@@ -555,7 +570,7 @@ Result<OnlineMoments> makeOnlineFromOwned(const Array<Index>& shape,
   const Index outputDimension = request.contraction.has_value()
                                     ? request.contraction->rows()
                                     : inputDimension;
-  const Index indexEntries = static_cast<Index>(indexCount);
+  const auto indexEntries = static_cast<Index>(indexCount);
   Index elementBudget = 0U;
   Index byteBudget = 0U;
   const auto include = [&](Index count, Index elementBytes) {
@@ -610,9 +625,9 @@ Result<OnlineMoments> makeOnlineFromOwned(const Array<Index>& shape,
   orders.reserve(keys.size());
   indices.reserve(indexCount);
   for (const auto& key : keys) {
-    orders.push_back(key[0]);
-    for (Index axis = 0U; axis < key[0]; ++axis) {
-      indices.push_back(key[axis + 1U]);
+    orders.push_back(key.at(0));
+    for (Index axis = 0U; axis < key.at(0); ++axis) {
+      indices.push_back(key.at(axis + 1U));
     }
   }
   auto ownedOrders = Array<Index>::copy(orders, limits);
@@ -685,19 +700,19 @@ void copyPrefix(const RollingMoments& rolling, bool front, Index slot,
   const auto& powers =
       front ? rolling.front_weight_powers : rolling.back_weight_powers;
   for (Index i = 0U; i < d; ++i) {
-    target.mean.data()[i] = means.at(slot * d + i);
-    target.anchor.data()[i] = anchors.at(slot * d + i);
-    target.mean_offset.data()[i] = offsets.at(slot * d + i);
+    target.mean.at(i) = means.at(slot * d + i);
+    target.anchor.at(i) = anchors.at(slot * d + i);
+    target.mean_offset.at(i) = offsets.at(slot * d + i);
   }
   for (Index i = 0U; i < q; ++i) {
-    target.centered_sums.data()[i] = sums.at(slot * q + i);
+    target.centered_sums.at(i) = sums.at(slot * q + i);
   }
   target.mass = masses.at(slot);
   target.count = slot + 1U;
   target.positive_count = static_cast<Index>(positives.at(slot));
   target.all_unit_weights = units.at(slot) != 0.0;
   for (Index i = 0U; i < 3U; ++i) {
-    target.raw_weight_powers[i] = powers.at(slot * 3U + i);
+    target.raw_weight_powers.at(i) = powers.at(slot * 3U + i);
   }
 }
 
@@ -716,18 +731,18 @@ void storePrefix(RollingMoments& rolling, bool front, Index slot,
   auto& powers =
       front ? rolling.front_weight_powers : rolling.back_weight_powers;
   for (Index i = 0U; i < d; ++i) {
-    means.data()[slot * d + i] = source.mean.at(i);
-    anchors.data()[slot * d + i] = source.anchor.at(i);
-    offsets.data()[slot * d + i] = source.mean_offset.at(i);
+    means.at(slot * d + i) = source.mean.at(i);
+    anchors.at(slot * d + i) = source.anchor.at(i);
+    offsets.at(slot * d + i) = source.mean_offset.at(i);
   }
   for (Index i = 0U; i < q; ++i) {
-    sums.data()[slot * q + i] = source.centered_sums.at(i);
+    sums.at(slot * q + i) = source.centered_sums.at(i);
   }
-  masses.data()[slot] = source.mass;
-  positives.data()[slot] = static_cast<Scalar>(source.positive_count);
-  units.data()[slot] = source.all_unit_weights ? 1.0 : 0.0;
+  masses.at(slot) = source.mass;
+  positives.at(slot) = static_cast<Scalar>(source.positive_count);
+  units.at(slot) = source.all_unit_weights ? 1.0 : 0.0;
   for (Index i = 0U; i < 3U; ++i) {
-    powers.data()[slot * 3U + i] = source.raw_weight_powers[i];
+    powers.at(slot * 3U + i) = source.raw_weight_powers.at(i);
   }
 }
 
@@ -800,7 +815,7 @@ Result<MomentEstimate> makeEstimate(const OnlineMoments& state, WeightRule rule,
         ErrorCode::InvalidDomain, "unweighted state contains non-unit weights");
   }
   std::vector<std::span<const Index>> selected;
-  MomentRequest request = borrowedRequest(state.stored_request, selected);
+  const MomentRequest request = borrowedRequest(state.stored_request, selected);
   bool valid = false;
   const Index d = dimensions(state.output_shape.view(), valid);
   if (!valid || preflightRequest(d, request, state.limits) != ErrorCode::None) {
@@ -822,7 +837,7 @@ Result<MomentEstimate> makeEstimate(const OnlineMoments& state, WeightRule rule,
   }
   if (request.representation == MomentRepresentation::selected) {
     for (const Key& key : outputs) {
-      if (!checkedAdd(flatEntries, key[0], flatEntries)) {
+      if (!checkedAdd(flatEntries, key.at(0), flatEntries)) {
         return Result<MomentEstimate>::failure(
             ErrorCode::SizeOverflow, "selected result layout overflows");
       }
@@ -877,7 +892,7 @@ Result<MomentEstimate> makeEstimate(const OnlineMoments& state, WeightRule rule,
     }
     std::vector<Key> orderKeys;
     for (const Key& key : outputs) {
-      if (key[0] == order) {
+      if (key.at(0) == order) {
         orderKeys.push_back(key);
       }
     }
@@ -885,10 +900,10 @@ Result<MomentEstimate> makeEstimate(const OnlineMoments& state, WeightRule rule,
     std::vector<Index> flat;
     values.reserve(orderKeys.size());
     for (const Key& key : orderKeys) {
-      if (key[0] == 1U) {
+      if (key.at(0) == 1U) {
         values.push_back(0.0);
         if (request.representation == MomentRepresentation::selected) {
-          flat.push_back(key[1]);
+          flat.push_back(key.at(1));
         }
         continue;
       }
@@ -900,7 +915,7 @@ Result<MomentEstimate> makeEstimate(const OnlineMoments& state, WeightRule rule,
       values.push_back(state.centered_sums.at(current));
       if (request.representation == MomentRepresentation::selected) {
         for (Index axis = 0U; axis < order; ++axis) {
-          flat.push_back(key[axis + 1U]);
+          flat.push_back(key.at(axis + 1U));
         }
       }
     }
@@ -926,9 +941,9 @@ Result<MomentEstimate> makeEstimate(const OnlineMoments& state, WeightRule rule,
                   .effective_count = std::nullopt,
                   .degrees_of_freedom = std::nullopt,
                   .squared_weight_mass = std::nullopt};
-  support.normalized_weight_powers[0] = state.raw_weight_powers[0];
-  support.normalized_weight_powers[1] = state.raw_weight_powers[1];
-  support.normalized_weight_powers[2] = state.raw_weight_powers[2];
+  support.normalized_weight_powers[0] = state.raw_weight_powers.at(0);
+  support.normalized_weight_powers[1] = state.raw_weight_powers.at(1);
+  support.normalized_weight_powers[2] = state.raw_weight_powers.at(2);
   EstimatorDiagnostics diagnostics{
       .estimand = Estimand::observed,
       .weight = rule,
@@ -1049,15 +1064,16 @@ Result<OnlineMoments> makeOnlineMoments(std::span<const Index> shape,
     }
     ownedMap = std::move(copy);
   }
-  OwnedMomentRequest ownedRequest{.orders = request.orders,
-                                  .representation = request.representation,
-                                  .selected = std::move(ownedSelected).value(),
-                                  .contraction = std::move(ownedMap)};
+  const OwnedMomentRequest ownedRequest{
+      .orders = request.orders,
+      .representation = request.representation,
+      .selected = std::move(ownedSelected).value(),
+      .contraction = std::move(ownedMap)};
   return makeOnlineFromOwned(ownedShape.value(), ownedRequest, limits);
 }
 
 Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
-  const Status input = validateObservation(state, observation, weight);
+  Status input = validateObservation(state, observation, weight);
   if (!input.ok()) {
     return input;
   }
@@ -1077,7 +1093,7 @@ Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
                 "online weight mass is not representable");
   }
   const Scalar ratio = weight / total;
-  VectorView scratch =
+  const VectorView scratch =
       VectorView::create(state.scratch_sums.data() == nullptr
                              ? std::span<Scalar>{}
                              : std::span<Scalar>{state.scratch_sums.data(),
@@ -1095,22 +1111,22 @@ Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
         return fail(ErrorCode::NonFiniteResult,
                     "projected online observation is not finite");
       }
-      state.scratch_observation.data()[row] = value;
+      state.scratch_observation.at(row) = value;
     }
   } else {
     for (Index i = 0U; i < d; ++i) {
-      state.scratch_observation.data()[i] = observation.at(i);
+      state.scratch_observation.at(i) = observation.at(i);
     }
   }
   for (Index i = 0U; i < d; ++i) {
     if (oldMass == 0.0) {
-      state.scratch_delta.data()[i] = 0.0;
-      state.scratch_mean.data()[i] = 0.0;
+      state.scratch_delta.at(i) = 0.0;
+      state.scratch_mean.at(i) = 0.0;
     } else {
-      state.scratch_delta.data()[i] =
+      state.scratch_delta.at(i) =
           (state.scratch_observation.at(i) - state.anchor.at(i)) -
           state.mean_offset.at(i);
-      state.scratch_mean.data()[i] =
+      state.scratch_mean.at(i) =
           state.mean_offset.at(i) + ratio * state.scratch_delta.at(i);
     }
     if (!std::isfinite(state.scratch_delta.at(i)) ||
@@ -1123,7 +1139,7 @@ Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
   for (Index entry = 0U; entry < state.centered_sums.size(); ++entry) {
     const Key key = keyAt(state, entry);
     ScaledAccumulator sum;
-    const Index order = key[0];
+    const Index order = key.at(0);
     for (Index mask = 0U; mask < (1U << order); ++mask) {
       Key child{};
       Index childOrder = 0U;
@@ -1132,12 +1148,12 @@ Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
         if ((mask & (1U << axis)) != 0U) {
           shift = scaledMultiply(shift, scaled(-ratio));
           shift = scaledMultiply(
-              shift, scaled(state.scratch_delta.at(key[axis + 1U])));
+              shift, scaled(state.scratch_delta.at(key.at(axis + 1U))));
         } else {
-          child[++childOrder] = key[axis + 1U];
+          child.at(++childOrder) = key.at(axis + 1U);
         }
       }
-      child[0] = childOrder;
+      child.at(0) = childOrder;
       if (childOrder == 0U) {
         sum.add(scaledMultiply(shift, scaled(oldMass / total)));
       } else if (childOrder > 1U) {
@@ -1149,7 +1165,7 @@ Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
     }
     ScaledValue point = scaled(ratio);
     for (Index axis = 0U; axis < order; ++axis) {
-      const Index coordinate = key[axis + 1U];
+      const Index coordinate = key.at(axis + 1U);
       const Scalar residual = oldMass == 0.0
                                   ? 0.0
                                   : (state.scratch_observation.at(coordinate) -
@@ -1167,16 +1183,16 @@ Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
   }
   for (Index i = 0U; i < d; ++i) {
     if (oldMass == 0.0) {
-      state.anchor.data()[i] = state.scratch_observation.at(i);
-      state.mean_offset.data()[i] = 0.0;
-      state.mean.data()[i] = state.anchor.at(i);
+      state.anchor.at(i) = state.scratch_observation.at(i);
+      state.mean_offset.at(i) = 0.0;
+      state.mean.at(i) = state.anchor.at(i);
     } else {
-      state.mean_offset.data()[i] = state.scratch_mean.at(i);
-      state.mean.data()[i] = state.anchor.at(i) + state.mean_offset.at(i);
+      state.mean_offset.at(i) = state.scratch_mean.at(i);
+      state.mean.at(i) = state.anchor.at(i) + state.mean_offset.at(i);
     }
   }
   for (Index i = 0U; i < state.centered_sums.size(); ++i) {
-    state.centered_sums.data()[i] = scratch.at(i);
+    state.centered_sums.at(i) = scratch.at(i);
   }
   state.mass = total;
   ++state.count;
@@ -1184,10 +1200,10 @@ Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
   state.all_unit_weights = state.all_unit_weights && weight == 1.0;
   for (Index power = 1U; power <= 3U; ++power) {
     const Scalar oldRatio = oldMass / total;
-    Scalar nextPower = state.raw_weight_powers[power - 1U] *
+    Scalar nextPower = state.raw_weight_powers.at(power - 1U) *
                        std::pow(oldRatio, static_cast<Scalar>(power));
     nextPower += std::pow(weight / total, static_cast<Scalar>(power));
-    state.raw_weight_powers[power - 1U] = nextPower;
+    state.raw_weight_powers.at(power - 1U) = nextPower;
   }
   return Status::success();
 }
@@ -1279,12 +1295,12 @@ Status merge(OnlineMoments& destination, const OnlineMoments& source) {
                   "online state storage is malformed");
     }
     for (Index i = 0U; i < destination.mean.size(); ++i) {
-      destination.mean.data()[i] = source.mean.at(i);
-      destination.anchor.data()[i] = source.anchor.at(i);
-      destination.mean_offset.data()[i] = source.mean_offset.at(i);
+      destination.mean.at(i) = source.mean.at(i);
+      destination.anchor.at(i) = source.anchor.at(i);
+      destination.mean_offset.at(i) = source.mean_offset.at(i);
     }
     for (Index i = 0U; i < destination.centered_sums.size(); ++i) {
-      destination.centered_sums.data()[i] = source.centered_sums.at(i);
+      destination.centered_sums.at(i) = source.centered_sums.at(i);
     }
     destination.mass = source.mass;
     destination.count += source.count;
@@ -1302,11 +1318,11 @@ Status merge(OnlineMoments& destination, const OnlineMoments& source) {
   const Scalar rightRatio = source.mass / total;
   const Index d = destination.mean.size();
   for (Index i = 0U; i < d; ++i) {
-    destination.scratch_delta.data()[i] =
+    destination.scratch_delta.at(i) =
         (source.anchor.at(i) - destination.anchor.at(i)) +
         (source.mean_offset.at(i) - destination.mean_offset.at(i));
     const bool keepDestinationAnchor = destination.mass >= source.mass;
-    destination.scratch_mean.data()[i] =
+    destination.scratch_mean.at(i) =
         keepDestinationAnchor ? destination.mean_offset.at(i) +
                                     rightRatio * destination.scratch_delta.at(i)
                               : source.mean_offset.at(i) -
@@ -1321,7 +1337,7 @@ Status merge(OnlineMoments& destination, const OnlineMoments& source) {
                   "merged online mean is not representable");
     }
   }
-  VectorView scratch =
+  const VectorView scratch =
       VectorView::create(std::span<Scalar>{destination.scratch_sums.data(),
                                            destination.scratch_sums.size()},
                          destination.scratch_sums.size())
@@ -1329,7 +1345,7 @@ Status merge(OnlineMoments& destination, const OnlineMoments& source) {
   for (Index entry = 0U; entry < destination.centered_sums.size(); ++entry) {
     const Key key = keyAt(destination, entry);
     ScaledAccumulator sum;
-    const Index order = key[0];
+    const Index order = key.at(0);
     for (Index mask = 0U; mask < (1U << order); ++mask) {
       for (Index side = 0U; side < 2U; ++side) {
         const auto& block = side == 0U ? destination : source;
@@ -1342,12 +1358,12 @@ Status merge(OnlineMoments& destination, const OnlineMoments& source) {
             const Scalar signedRatio = side == 0U ? -rightRatio : leftRatio;
             shift = scaledMultiply(shift, scaled(signedRatio));
             shift = scaledMultiply(
-                shift, scaled(destination.scratch_delta.at(key[axis + 1U])));
+                shift, scaled(destination.scratch_delta.at(key.at(axis + 1U))));
           } else {
-            child[++childOrder] = key[axis + 1U];
+            child.at(++childOrder) = key.at(axis + 1U);
           }
         }
-        child[0] = childOrder;
+        child.at(0) = childOrder;
         Scalar moment = 0.0;
         if (childOrder == 0U) {
           moment = 1.0;
@@ -1369,14 +1385,14 @@ Status merge(OnlineMoments& destination, const OnlineMoments& source) {
   }
   for (Index i = 0U; i < d; ++i) {
     if (destination.mass < source.mass) {
-      destination.anchor.data()[i] = source.anchor.at(i);
+      destination.anchor.at(i) = source.anchor.at(i);
     }
-    destination.mean_offset.data()[i] = destination.scratch_mean.at(i);
-    destination.mean.data()[i] =
+    destination.mean_offset.at(i) = destination.scratch_mean.at(i);
+    destination.mean.at(i) =
         destination.anchor.at(i) + destination.mean_offset.at(i);
   }
   for (Index i = 0U; i < destination.centered_sums.size(); ++i) {
-    destination.centered_sums.data()[i] = scratch.at(i);
+    destination.centered_sums.at(i) = scratch.at(i);
   }
   destination.mass = total;
   destination.count += source.count;
@@ -1384,11 +1400,12 @@ Status merge(OnlineMoments& destination, const OnlineMoments& source) {
   destination.all_unit_weights =
       destination.all_unit_weights && source.all_unit_weights;
   for (Index power = 1U; power <= 3U; ++power) {
-    const Scalar exponent = static_cast<Scalar>(power);
-    destination.raw_weight_powers[power - 1U] =
+    const auto exponent = static_cast<Scalar>(power);
+    destination.raw_weight_powers.at(power - 1U) =
         std::pow(leftRatio, exponent) *
-            destination.raw_weight_powers[power - 1U] +
-        std::pow(rightRatio, exponent) * source.raw_weight_powers[power - 1U];
+            destination.raw_weight_powers.at(power - 1U) +
+        std::pow(rightRatio, exponent) *
+            source.raw_weight_powers.at(power - 1U);
   }
   return Status::success();
 }
@@ -1403,13 +1420,13 @@ Status reset(OnlineMoments& state) {
     return fail(ErrorCode::InvalidDomain, "online state structure is invalid");
   }
   for (Index i = 0U; i < state.mean.size(); ++i) {
-    state.mean.data()[i] = 0.0;
-    state.anchor.data()[i] = 0.0;
-    state.mean_offset.data()[i] = 0.0;
+    state.mean.at(i) = 0.0;
+    state.anchor.at(i) = 0.0;
+    state.mean_offset.at(i) = 0.0;
   }
   for (Index i = 0U; i < state.centered_sums.size(); ++i) {
-    state.centered_sums.data()[i] = 0.0;
-    state.scratch_sums.data()[i] = 0.0;
+    state.centered_sums.at(i) = 0.0;
+    state.scratch_sums.at(i) = 0.0;
   }
   state.mass = 0.0;
   state.raw_weight_powers = {};
@@ -1417,8 +1434,8 @@ Status reset(OnlineMoments& state) {
   state.positive_count = 0U;
   state.all_unit_weights = true;
   for (Index i = 0U; i < state.scratch_delta.size(); ++i) {
-    state.scratch_delta.data()[i] = 0.0;
-    state.scratch_mean.data()[i] = 0.0;
+    state.scratch_delta.at(i) = 0.0;
+    state.scratch_mean.at(i) = 0.0;
   }
   return Status::success();
 }
@@ -1470,11 +1487,10 @@ Result<RollingMoments> makeRollingMoments(std::span<const Index> shape,
     }
   }
   Index mapElements = 0U;
-  if (emptyOnline.value().stored_request.contraction.has_value() &&
-      !checkedMultiply(
-          emptyOnline.value().stored_request.contraction->rows(),
-          emptyOnline.value().stored_request.contraction->columns(),
-          mapElements)) {
+  const auto& contraction = emptyOnline.value().stored_request.contraction;
+  if (contraction.has_value() &&
+      !checkedMultiply(contraction->rows(), contraction->columns(),
+                       mapElements)) {
     return Result<RollingMoments>::failure(
         ErrorCode::SizeOverflow, "rolling contraction size overflows");
   }
@@ -1635,7 +1651,7 @@ Status add(RollingMoments& state, ConstVectorView observation, Scalar weight) {
                     "rolling back stack is malformed");
       }
       static_cast<void>(reset(state.work));
-      const Status singleton =
+      Status singleton =
           add(state.work, item.value(), state.weights.at(backSlot));
       if (!singleton.ok()) {
         return singleton;
@@ -1648,10 +1664,10 @@ Status add(RollingMoments& state, ConstVectorView observation, Scalar weight) {
         }
       }
       for (Index i = 0U; i < d; ++i) {
-        state.front_observations.data()[stagedFrontCount * d + i] =
+        state.front_observations.at(stagedFrontCount * d + i) =
             item.value().at(i);
       }
-      state.front_weights.data()[stagedFrontCount] = state.weights.at(backSlot);
+      state.front_weights.at(stagedFrontCount) = state.weights.at(backSlot);
       storePrefix(state, true, stagedFrontCount, state.work);
       ++stagedFrontCount;
     }
@@ -1665,14 +1681,14 @@ Status add(RollingMoments& state, ConstVectorView observation, Scalar weight) {
   } else {
     static_cast<void>(reset(state.work));
   }
-  const Status added = add(state.work, observation, weight);
+  Status added = add(state.work, observation, weight);
   if (!added.ok()) {
     return added;
   }
   for (Index i = 0U; i < d; ++i) {
-    state.observations.data()[stagedBackCount * d + i] = observation.at(i);
+    state.observations.at(stagedBackCount * d + i) = observation.at(i);
   }
-  state.weights.data()[stagedBackCount] = weight;
+  state.weights.at(stagedBackCount) = weight;
   storePrefix(state, false, stagedBackCount, state.work);
   ++stagedBackCount;
   state.front_count = stagedFrontCount;
@@ -1702,7 +1718,7 @@ Status evict(RollingMoments& state) {
                     "rolling back stack is malformed");
       }
       static_cast<void>(reset(state.work));
-      const Status singleton =
+      Status singleton =
           add(state.work, item.value(), state.weights.at(backSlot));
       if (!singleton.ok()) {
         return singleton;
@@ -1715,10 +1731,10 @@ Status evict(RollingMoments& state) {
         }
       }
       for (Index i = 0U; i < d; ++i) {
-        state.front_observations.data()[stagedFrontCount * d + i] =
+        state.front_observations.at(stagedFrontCount * d + i) =
             item.value().at(i);
       }
-      state.front_weights.data()[stagedFrontCount] = state.weights.at(backSlot);
+      state.front_weights.at(stagedFrontCount) = state.weights.at(backSlot);
       storePrefix(state, true, stagedFrontCount, state.work);
       ++stagedFrontCount;
     }
@@ -1761,36 +1777,36 @@ Status reset(RollingMoments& state) {
     return fail(ErrorCode::InvalidDomain, "rolling state structure is invalid");
   }
   for (Index i = 0U; i < state.weights.size(); ++i) {
-    state.weights.data()[i] = 0.0;
-    state.front_weights.data()[i] = 0.0;
+    state.weights.at(i) = 0.0;
+    state.front_weights.at(i) = 0.0;
   }
   for (Index i = 0U; i < state.observations.size(); ++i) {
-    state.observations.data()[i] = 0.0;
-    state.front_observations.data()[i] = 0.0;
+    state.observations.at(i) = 0.0;
+    state.front_observations.at(i) = 0.0;
   }
   for (Index i = 0U; i < state.front_means.size(); ++i) {
-    state.front_means.data()[i] = 0.0;
-    state.front_anchors.data()[i] = 0.0;
-    state.front_offsets.data()[i] = 0.0;
-    state.back_means.data()[i] = 0.0;
-    state.back_anchors.data()[i] = 0.0;
-    state.back_offsets.data()[i] = 0.0;
+    state.front_means.at(i) = 0.0;
+    state.front_anchors.at(i) = 0.0;
+    state.front_offsets.at(i) = 0.0;
+    state.back_means.at(i) = 0.0;
+    state.back_anchors.at(i) = 0.0;
+    state.back_offsets.at(i) = 0.0;
   }
   for (Index i = 0U; i < state.front_sums.size(); ++i) {
-    state.front_sums.data()[i] = 0.0;
-    state.back_sums.data()[i] = 0.0;
+    state.front_sums.at(i) = 0.0;
+    state.back_sums.at(i) = 0.0;
   }
   for (Index i = 0U; i < state.capacity; ++i) {
-    state.front_masses.data()[i] = 0.0;
-    state.front_positive_counts.data()[i] = 0.0;
-    state.front_unit_flags.data()[i] = 1.0;
-    state.back_masses.data()[i] = 0.0;
-    state.back_positive_counts.data()[i] = 0.0;
-    state.back_unit_flags.data()[i] = 1.0;
+    state.front_masses.at(i) = 0.0;
+    state.front_positive_counts.at(i) = 0.0;
+    state.front_unit_flags.at(i) = 1.0;
+    state.back_masses.at(i) = 0.0;
+    state.back_positive_counts.at(i) = 0.0;
+    state.back_unit_flags.at(i) = 1.0;
   }
   for (Index i = 0U; i < state.front_weight_powers.size(); ++i) {
-    state.front_weight_powers.data()[i] = 0.0;
-    state.back_weight_powers.data()[i] = 0.0;
+    state.front_weight_powers.at(i) = 0.0;
+    state.back_weight_powers.at(i) = 0.0;
   }
   static_cast<void>(reset(state.work));
   static_cast<void>(reset(state.work2));
