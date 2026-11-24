@@ -539,6 +539,25 @@ void shapesAndDistinctThirdMoment() {
   close(cross.value().terms.view()[0].values.at(6U), -10.0);
 }
 
+void dependentCorrectionMixedMoment() {
+  // Enumerate (2u, 3(v - u)) for independent signs u and v. The shared
+  // sign generates a negative covariance and a nonzero mixed fourth moment.
+  const Matrix corrected =
+      matrix({{2.0, 0.0}, {2.0, -6.0}, {-2.0, 6.0}, {-2.0, 0.0}});
+  const std::array<Index, 1U> shape{2U};
+  const auto result = estimateCentralMoments(
+      sample(corrected, shape), unweighted(), CenterSpec{},
+      request(0x0aU, MomentRepresentation::dense), ampleLimits());
+  VSS_CHECK(result);
+  const auto terms = result.value().terms.view();
+  VSS_CHECK(terms.size() == 2U);
+  close(terms[0].values.at(0U), 4.0);
+  close(terms[0].values.at(1U), -6.0);
+  close(terms[0].values.at(2U), -6.0);
+  close(terms[0].values.at(3U), 18.0);
+  close(terms[1].values.at(3U), 72.0); // Row-major tuple (0, 0, 1, 1).
+}
+
 void weightedContractionAndKnownCenter() {
   const Matrix values = matrix({{1.0, 2.0}, {3.0, 0.0}});
   const Vector weights = vector({1.0, 3.0});
@@ -742,6 +761,7 @@ int main() try {
   marginalAndStandardizedTransforms();
   layoutsAndOrdering();
   shapesAndDistinctThirdMoment();
+  dependentCorrectionMixedMoment();
   weightedContractionAndKnownCenter();
   supportAndValidation();
   return 0;
