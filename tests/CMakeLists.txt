@@ -107,6 +107,16 @@ vss_math_add_algorithm_test(test_cumulants algorithms/test_cumulants.cpp
                              math.cumulants)
 vss_math_add_algorithm_test(test_chi_square algorithms/test_chi_square.cpp
                              math.probability PRIVATE_DETAIL)
+vss_math_add_algorithm_test(test_special_functions
+                             algorithms/test_special_functions.cpp
+                             math.probability.special_functions)
+vss_math_add_algorithm_test(test_distributions
+                             algorithms/test_distributions.cpp
+                             math.probability.distributions)
+vss_math_add_algorithm_test(test_likelihood algorithms/test_likelihood.cpp
+                             math.probability.likelihood)
+vss_math_add_algorithm_test(test_gaussian algorithms/test_gaussian.cpp
+                             math.probability.gaussian)
 vss_math_add_test(test_error_precedence unit/test_error_precedence.cpp
                   math.error_precedence)
 vss_math_add_test(test_numerical_boundaries unit/test_numerical_boundaries.cpp
