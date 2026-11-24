@@ -119,6 +119,9 @@ vss_math_add_algorithm_test(test_composite
 vss_math_add_algorithm_test(test_moment_bounds
                              algorithms/test_moment_bounds.cpp
                              math.probability.moment_bounds)
+vss_math_add_algorithm_test(test_sampling_design
+                             algorithms/test_sampling_design.cpp
+                             math.probability.sampling_design)
 vss_math_add_algorithm_test(test_likelihood algorithms/test_likelihood.cpp
                              math.probability.likelihood)
 vss_math_add_algorithm_test(test_gaussian algorithms/test_gaussian.cpp
