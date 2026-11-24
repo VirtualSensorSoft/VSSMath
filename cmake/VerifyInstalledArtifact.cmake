@@ -147,11 +147,14 @@ set(vss_expected_files
   include/vss/math/covariance/Covariance.hpp
   include/vss/math/differentiation/FiniteDifference.hpp
   include/vss/math/probability/ChiSquare.hpp
+  include/vss/math/probability/Composite.hpp
   include/vss/math/probability/Distribution.hpp
   include/vss/math/probability/DistributionMoments.hpp
   include/vss/math/probability/Gaussian.hpp
   include/vss/math/probability/Likelihood.hpp
   include/vss/math/probability/LogTailPair.hpp
+  include/vss/math/probability/MomentBounds.hpp
+  include/vss/math/probability/SamplingDesign.hpp
   include/vss/math/probability/Special.hpp
   include/vss/math/ProbabilityPolicy.hpp
   include/vss/math/statistics/Descriptive.hpp
@@ -178,6 +181,7 @@ set(vss_expected_files
   include/vss/math/linear/SymmetricEigen.hpp
   include/vss/math/linear/TriangularSolve.hpp
   include/vss/math/version.hpp
+  share/doc/VirtualSensorMath/THIRD_PARTY_NOTICES.md
   lib/cmake/VirtualSensorMath/VirtualSensorMathConfig.cmake
   lib/cmake/VirtualSensorMath/VirtualSensorMathConfigVersion.cmake
   lib/cmake/VirtualSensorMath/VirtualSensorMathTargets.cmake

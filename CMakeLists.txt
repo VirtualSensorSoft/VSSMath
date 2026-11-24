@@ -174,6 +174,10 @@ install(FILES
   "${CMAKE_CURRENT_BINARY_DIR}/generated/vss/math/version.hpp"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/vss/math"
   COMPONENT Development)
+install(FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/VirtualSensorMath"
+  COMPONENT Development)
 install(EXPORT VirtualSensorMathTargets
   FILE VirtualSensorMathTargets.cmake
   NAMESPACE VirtualSensorSoft::

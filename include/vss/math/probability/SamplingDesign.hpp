@@ -16,24 +16,37 @@ enum class SamplingDesignKind : std::uint8_t { sobol, latin_hypercube };
 
 /// @brief Owned metadata needed to interpret and reproduce a design.
 struct SamplingDesignProvenance final {
+  /// Sampling construction whose exact version is recorded below.
   SamplingDesignKind kind{SamplingDesignKind::latin_hypercube};
+  /// Version of the coordinate and permutation algorithms.
   std::uint32_t algorithm_version{1U};
+  /// Number of most-significant coordinate bits converted to Scalar.
   std::uint32_t coordinate_bits{52U};
+  /// Number of direction bits used by a Sobol sequence; zero for LHS.
   std::uint32_t direction_bits{0U};
+  /// Whether a fixed seed-derived digital shift was applied.
   bool digital_shift{false};
+  /// Seed used to derive a Sobol shift; absent for unscrambled Sobol and LHS.
   std::optional<std::uint64_t> seed;
+  /// SHA-256 identity of the direction table; empty for LHS.
   std::string direction_table_sha256;
+  /// Absolute first sequence index; zero for prefix and LHS designs.
   std::uint64_t first_index{0U};
+  /// Number of coordinates in each point.
   Index dimension{0U};
+  /// Number of generated points.
   Index count{0U};
 };
 
 /// @brief Owns points from one reproducible sampling design.
 struct SampleDesign final {
+  /// Owning row-major matrix with one sampled point per row.
   Matrix points;
-  /// Legacy seed field; zero when the design consumes a caller-owned Rng.
+  /// Seed of a seeded Sobol design, or zero when no design seed is applicable.
   std::uint64_t seed{0U};
+  /// Stable algorithm name and version string.
   std::string algorithm;
+  /// Reproducibility metadata populated for every successful design.
   std::optional<SamplingDesignProvenance> provenance{std::nullopt};
 };
 

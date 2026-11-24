@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -38,6 +39,9 @@
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/Sparse.hpp>
 #include <vss/math/linear/Structured.hpp>
+#include <vss/math/probability/Composite.hpp>
+#include <vss/math/probability/MomentBounds.hpp>
+#include <vss/math/probability/SamplingDesign.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Descriptive.hpp>
 #include <vss/math/statistics/MomentDiagnostics.hpp>
@@ -564,6 +568,77 @@ bool verifyInstalledMomentStateContracts() {
       "installed reset retained old online samples");
 }
 
+bool verifyInstalledProbabilityAndSamplingContracts() {
+  using namespace vss::math;
+  using namespace vss::math::probability;
+  const ProbabilityPolicy policy{
+      {1.0e-12, 1.0e-12, 4096U, 100000U, std::nullopt}, 100000U, 1.0e-10};
+  const auto standardNormal = normal(0.0, 1.0);
+  const auto uniformLaw = uniform(0.0, 2.0);
+  if (!require(standardNormal.hasValue() && uniformLaw.hasValue(),
+               "installed probability constructors failed")) {
+    return false;
+  }
+  const std::array<WeightedLaw, 2U> mixtureTerms{
+      {{standardNormal.value(), 1.0}, {standardNormal.value(), 1.0}}};
+  const auto mixed = mixture(mixtureTerms, policy);
+  if (!require(mixed.hasValue(), "installed mixture construction failed")) {
+    return false;
+  }
+  const auto logDensity = mixtureLogPdf(mixed.value(), 0.0, policy);
+  const auto truncated = truncatedDistribution(
+      uniformLaw.value(), IntervalSupport{0.0, 1.0, true, true}, policy);
+  const auto event = censoredLogProbability(
+      standardNormal.value(),
+      IntervalSupport{-std::numeric_limits<Scalar>::infinity(), 0.0, false,
+                      true},
+      policy);
+  const auto bin = quantizedLikelihood(
+      standardNormal.value(), IntervalSupport{-0.5, 0.5, true, true}, policy);
+  const auto chebyshev = chebyshevBound(1.0, 2.0);
+  const auto cantelli = cantelliBound(1.0, 1.0);
+  if (!require(truncated.hasValue(),
+               "installed truncation constructor failed")) {
+    return false;
+  }
+  const auto median = quantile(truncated.value(), 0.5, policy);
+  if (!require(
+          mixed.hasValue() && logDensity.hasValue() &&
+              std::abs(logDensity.value() +
+                       0.5 * std::log(2.0 * std::numbers::pi)) < 2.0e-12 &&
+              median.hasValue() && std::abs(median.value() - 0.5) < 2.0e-10 &&
+              event.hasValue() &&
+              std::abs(event.value() - std::log(0.5)) < 1.0e-14 &&
+              bin.hasValue() && chebyshev.hasValue() &&
+              std::abs(chebyshev.value() - 0.25) < 1.0e-15 &&
+              cantelli.hasValue() && std::abs(cantelli.value() - 0.5) < 1.0e-15,
+          "installed composite probability APIs failed")) {
+    return false;
+  }
+
+  const auto sobol = sobolDesign(2U, 2U, 42U, true, Limits{32U, 32768U, 0U});
+  Rng generator(42U);
+  const auto latin = latinHypercube(2U, 4U, generator, Limits{32U, 8192U, 0U});
+  if (!require(sobol.hasValue() && latin.hasValue(),
+               "installed sampling-design constructors failed")) {
+    return false;
+  }
+  if (!require(sobol.value().provenance.has_value() &&
+                   latin.value().provenance.has_value() &&
+                   sobol.value().points.rows() == 4U &&
+                   sobol.value().points.columns() == 2U &&
+                   sobol.value().provenance->digital_shift &&
+                   sobol.value().provenance->seed == 42U &&
+                   latin.value().points.rows() == 4U &&
+                   latin.value().points.columns() == 2U &&
+                   latin.value().provenance->kind ==
+                       SamplingDesignKind::latin_hypercube,
+               "installed sampling-design APIs failed")) {
+    return false;
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -577,6 +652,9 @@ int main() {
     return 1;
   }
   if (!verifyInstalledMomentStateContracts()) {
+    return 1;
+  }
+  if (!verifyInstalledProbabilityAndSamplingContracts()) {
     return 1;
   }
 
