@@ -2,28 +2,49 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <new>
 #include <optional>
+#include <span>
+#include <utility>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/MomentState.hpp>
+#include <vss/math/statistics/Moments.hpp>
+#include <vss/math/statistics/Population.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 using namespace vss::math;
 using namespace vss::math::statistics;
 
 namespace {
-bool countAllocations = false;
-std::size_t observedAllocations = 0U;
+// Test-only state for verifying the accumulator's allocation-free contract.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+std::atomic<bool> countAllocations{false};
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+std::atomic<std::size_t> observedAllocations{0U};
 } // namespace
 
 void* operator new(std::size_t size) {
-  if (countAllocations) {
-    ++observedAllocations;
+  if (countAllocations.load(std::memory_order_relaxed)) {
+    observedAllocations.fetch_add(1U, std::memory_order_relaxed);
   }
-  if (void* allocation = std::malloc(size == 0U ? 1U : size)) {
+  // Global allocation replacement is isolated to this test executable.
+  // Mutable storage is required by the operator new contract.
+  // NOLINTNEXTLINE(misc-const-correctness,cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+  if (void* const allocation = std::malloc(size == 0U ? 1U : size)) {
     return allocation;
   }
   throw std::bad_alloc{};
@@ -31,12 +52,22 @@ void* operator new(std::size_t size) {
 
 void* operator new[](std::size_t size) { return ::operator new(size); }
 
-void operator delete(void* allocation) noexcept { std::free(allocation); }
-void operator delete[](void* allocation) noexcept { std::free(allocation); }
-void operator delete(void* allocation, std::size_t) noexcept {
+void operator delete(void* allocation) noexcept {
+  // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
   std::free(allocation);
 }
-void operator delete[](void* allocation, std::size_t) noexcept {
+void operator delete[](void* allocation) noexcept {
+  // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+  std::free(allocation);
+}
+void operator delete(void* allocation, std::size_t size) noexcept {
+  static_cast<void>(size);
+  // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+  std::free(allocation);
+}
+void operator delete[](void* allocation, std::size_t size) noexcept {
+  static_cast<void>(size);
+  // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
   std::free(allocation);
 }
 
@@ -44,11 +75,25 @@ namespace {
 
 bool close(Scalar actual, Scalar expected) {
   return std::abs(actual - expected) <=
-         1.0e-12 + 1.0e-10 * std::max(std::abs(actual), std::abs(expected));
+         1.0e-12 + (1.0e-10 * std::max(std::abs(actual), std::abs(expected)));
+}
+
+void checkPopulationMean(const Result<MomentEstimate>& result,
+                         Scalar expected) {
+  VSS_CHECK(result);
+  if (!result) {
+    return;
+  }
+  const auto& mean = result.value().population_mean;
+  VSS_CHECK(mean.has_value());
+  if (mean) {
+    VSS_CHECK(close(mean.value().at(0U), expected));
+  }
 }
 
 void emptyAndMergedOnlineMoments() {
-  constexpr Limits limits{4096U, 262144U, 0U};
+  constexpr Limits limits{
+      .elements = 4096U, .bytes = 262144U, .evaluations = 0U};
   const MomentRequest request{.orders = 0x0eU,
                               .representation = MomentRepresentation::component,
                               .selected = {},
@@ -108,7 +153,8 @@ void emptyAndMergedOnlineMoments() {
 }
 
 void weightedOffsetAndReset() {
-  constexpr Limits limits{4096U, 262144U, 0U};
+  constexpr Limits limits{
+      .elements = 4096U, .bytes = 262144U, .evaluations = 0U};
   const MomentRequest request{.orders = 0x0eU,
                               .representation = MomentRepresentation::component,
                               .selected = {},
@@ -213,7 +259,7 @@ void weightedOffsetAndReset() {
                   .code() == ErrorCode::NonFiniteResult);
     const auto unchanged =
         finalize(overflowRollback.value(), WeightRule::empirical, limits);
-    VSS_CHECK(unchanged && unchanged.value().population_mean->at(0U) == 1.0);
+    checkPopulationMean(unchanged, 1.0);
     VSS_CHECK(unchanged &&
               unchanged.value().terms.view()[0].values.at(0U) == 0.0);
   }
@@ -230,7 +276,7 @@ void weightedOffsetAndReset() {
         finalize(offset.value(), WeightRule::empirical, limits);
     VSS_CHECK(estimate);
     if (estimate) {
-      VSS_CHECK(close(estimate.value().population_mean->at(0U), anchor + 0.0));
+      checkPopulationMean(estimate, anchor + 0.0);
       VSS_CHECK(
           close(estimate.value().terms.view()[0].values.at(0U), 23.0 / 2.0));
       VSS_CHECK(
@@ -271,7 +317,7 @@ void weightedOffsetAndReset() {
   if (replayA && replayA2 && replayB && replayC) {
     const std::array<Scalar, 6U> values{1.0, 2.0, 4.0, 8.0, 16.0, 32.0};
     for (Index i = 0U; i < values.size(); ++i) {
-      const Vector sample{std::array<Scalar, 1U>{values[i]}};
+      const Vector sample{std::array<Scalar, 1U>{values.at(i)}};
       VSS_CHECK(add(replayA.value(), sample.view(), 1.0).ok());
       VSS_CHECK(add(replayA2.value(), sample.view(), 1.0).ok());
       VSS_CHECK(
@@ -296,7 +342,7 @@ void weightedOffsetAndReset() {
             replayMerged.value().terms.view()[term].values.at(0U);
         VSS_CHECK(std::bit_cast<std::uint64_t>(actual) ==
                   std::bit_cast<std::uint64_t>(sameTree));
-        VSS_CHECK(close(alternate, actual));
+        VSS_CHECK(close(actual, alternate));
       }
     }
   }
@@ -370,7 +416,8 @@ void weightedOffsetAndReset() {
 }
 
 void rollingCapacityEvictionAndReset() {
-  constexpr Limits limits{4096U, 262144U, 0U};
+  constexpr Limits limits{
+      .elements = 4096U, .bytes = 262144U, .evaluations = 0U};
   const MomentRequest request{.orders = 0x0fU,
                               .representation = MomentRepresentation::component,
                               .selected = {},
@@ -383,16 +430,18 @@ void rollingCapacityEvictionAndReset() {
   VSS_CHECK(evict(rolling.value()).code() == ErrorCode::InsufficientSamples);
   const std::array<Scalar, 3U> inputs{1.0, 2.0, 4.0};
   for (Index i = 0U; i < inputs.size(); ++i) {
-    const Scalar value = inputs[i];
+    const Scalar value = inputs.at(i);
     const Vector observation{std::array<Scalar, 1U>{value}};
     VSS_CHECK(add(rolling.value(), observation.view(), 1.0).ok());
     const auto current =
         finalize(rolling.value(), WeightRule::empirical, limits);
     VSS_CHECK(current);
     if (current) {
-      const Scalar expectedMean = i == 0U ? 1.0 : (i == 1U ? 1.5 : 3.0);
-      const Scalar expectedVariance = i == 0U ? 0.0 : (i == 1U ? 0.25 : 1.0);
-      VSS_CHECK(close(current.value().population_mean->at(0U), expectedMean));
+      constexpr std::array<Scalar, 3U> expectedMeans{1.0, 1.5, 3.0};
+      constexpr std::array<Scalar, 3U> expectedVariances{0.0, 0.25, 1.0};
+      const Scalar expectedMean = expectedMeans.at(i);
+      const Scalar expectedVariance = expectedVariances.at(i);
+      checkPopulationMean(current, expectedMean);
       VSS_CHECK(close(current.value().terms.view()[1].values.at(0U),
                       expectedVariance));
     }
@@ -400,7 +449,7 @@ void rollingCapacityEvictionAndReset() {
   auto estimate = finalize(rolling.value(), WeightRule::empirical, limits);
   VSS_CHECK(estimate);
   if (estimate) {
-    VSS_CHECK(close(estimate.value().population_mean->at(0U), 3.0));
+    checkPopulationMean(estimate, 3.0);
     VSS_CHECK(close(estimate.value().terms.view()[1].values.at(0U), 1.0));
     VSS_CHECK(close(estimate.value().terms.view()[2].values.at(0U), 0.0));
     VSS_CHECK(close(estimate.value().terms.view()[3].values.at(0U), 1.0));
@@ -411,12 +460,12 @@ void rollingCapacityEvictionAndReset() {
   VSS_CHECK(add(rolling.value(), invalid.view(), -1.0).code() ==
             ErrorCode::DimensionMismatch);
   estimate = finalize(rolling.value(), WeightRule::empirical, limits);
-  VSS_CHECK(estimate && close(estimate.value().population_mean->at(0U), 3.0));
+  checkPopulationMean(estimate, 3.0);
   VSS_CHECK(estimate &&
             close(estimate.value().terms.view()[1].values.at(0U), 1.0));
   VSS_CHECK(evict(rolling.value()).ok());
   estimate = finalize(rolling.value(), WeightRule::empirical, limits);
-  VSS_CHECK(estimate && close(estimate.value().population_mean->at(0U), 4.0));
+  checkPopulationMean(estimate, 4.0);
   VSS_CHECK(close(estimate.value().terms.view()[1].values.at(0U), 0.0));
   observedAllocations = 0U;
   countAllocations = true;
@@ -452,12 +501,12 @@ void rollingCapacityEvictionAndReset() {
       VSS_CHECK(add(wrapped.value(), observation.view(), 1.0).ok());
     }
     estimate = finalize(wrapped.value(), WeightRule::empirical, limits);
-    VSS_CHECK(estimate && close(estimate.value().population_mean->at(0U), 6.0));
+    checkPopulationMean(estimate, 6.0);
     VSS_CHECK(estimate &&
               close(estimate.value().terms.view()[1].values.at(0U), 4.0));
     VSS_CHECK(evict(wrapped.value()).ok());
     estimate = finalize(wrapped.value(), WeightRule::empirical, limits);
-    VSS_CHECK(estimate && close(estimate.value().population_mean->at(0U), 8.0));
+    checkPopulationMean(estimate, 8.0);
   }
 
   auto negativeWeight = makeRollingMoments({}, 2U, request, limits);
@@ -493,20 +542,21 @@ void rollingCapacityEvictionAndReset() {
       VSS_CHECK(add(recovery.value(), observation.view(), weight).ok());
     }
     estimate = finalize(recovery.value(), WeightRule::empirical, limits);
-    VSS_CHECK(estimate && close(estimate.value().population_mean->at(0U), 1.5));
+    checkPopulationMean(estimate, 1.5);
     VSS_CHECK(estimate &&
               close(estimate.value().terms.view()[1].values.at(0U), 0.25));
   }
 }
 
 void shapedOnlineMatchesBatch() {
-  constexpr Limits limits{4096U, 262144U, 0U};
+  constexpr Limits limits{
+      .elements = 4096U, .bytes = 262144U, .evaluations = 0U};
   const std::array<Index, 1U> shape{2U};
   Matrix sample{3U, 2U};
   const std::array<Scalar, 6U> cells{1.0, 2.0, 2.0, 0.0, 4.0, 3.0};
   for (Index row = 0U; row < 3U; ++row) {
     for (Index column = 0U; column < 2U; ++column) {
-      sample.at(row, column) = cells[row * 2U + column];
+      sample.at(row, column) = cells.at((row * 2U) + column);
     }
   }
   const MomentRequest request{.orders = 0x0eU,
@@ -548,9 +598,10 @@ void shapedOnlineMatchesBatch() {
               batch.value().diagnostics.global.weight_mass);
     for (Index power = 0U; power < 3U; ++power) {
       const auto actual =
-          streamed.value().diagnostics.global.normalized_weight_powers[power];
+          streamed.value().diagnostics.global.normalized_weight_powers.at(
+              power);
       const auto expected =
-          batch.value().diagnostics.global.normalized_weight_powers[power];
+          batch.value().diagnostics.global.normalized_weight_powers.at(power);
       VSS_CHECK(actual.has_value() == expected.has_value());
       if (actual && expected) {
         VSS_CHECK(close(*actual, *expected));
@@ -633,9 +684,13 @@ void shapedOnlineMatchesBatch() {
 } // namespace
 
 int main() {
-  emptyAndMergedOnlineMoments();
-  weightedOffsetAndReset();
-  rollingCapacityEvictionAndReset();
-  shapedOnlineMatchesBatch();
-  return 0;
+  try {
+    emptyAndMergedOnlineMoments();
+    weightedOffsetAndReset();
+    rollingCapacityEvictionAndReset();
+    shapedOnlineMatchesBatch();
+    return 0;
+  } catch (const std::exception&) {
+    return 1;
+  }
 }
