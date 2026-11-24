@@ -279,12 +279,25 @@ std::vector<Key> requestedKeys(Index d, const MomentRequest& request,
           result.push_back(key);
           return;
         }
+        // A fourth-order key uses positions 1 through 4. Keep an explicit
+        // bound for the compiler and fail closed if this helper is ever
+        // reached with a malformed order or recursion state.
+        if (axis >= key.size() - 1U) {
+          error = ErrorCode::InvalidDomain;
+          return;
+        }
         for (Index i = first; i < d; ++i) {
           key[axis + 1U] = i;
           self(self, axis + 1U, i);
+          if (error != ErrorCode::None) {
+            return;
+          }
         }
       };
       append(append, 0U, 0U);
+      if (error != ErrorCode::None) {
+        return {};
+      }
       continue;
     }
     error = ErrorCode::InvalidDomain;

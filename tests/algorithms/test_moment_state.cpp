@@ -484,7 +484,8 @@ void rollingCapacityEvictionAndReset() {
   auto recovery = makeRollingMoments({}, 2U, request, limits);
   VSS_CHECK(recovery);
   if (recovery) {
-    for (const auto [value, weight] : std::array<std::pair<Scalar, Scalar>, 3U>{
+    for (const auto& [value, weight] :
+         std::array<std::pair<Scalar, Scalar>, 3U>{
              std::pair<Scalar, Scalar>{1.0e12, 1.0e12},
              std::pair<Scalar, Scalar>{1.0, 1.0},
              std::pair<Scalar, Scalar>{2.0, 1.0}}) {
