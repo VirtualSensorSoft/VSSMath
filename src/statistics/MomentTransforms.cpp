@@ -1,4 +1,5 @@
 #include "ExactProductSum.hpp"
+#include "MomentInterval.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1025,7 +1026,7 @@ void decodeTuple(Extent ordinal, Extent dimension, Index order,
                  std::array<Index, 4U>& tuple) {
   for (Index axis = order; axis > 0U;) {
     --axis;
-    tuple[axis] = ordinal % dimension;
+    tuple.at(axis) = ordinal % dimension;
     ordinal /= dimension;
   }
 }
@@ -1053,8 +1054,9 @@ projectedMoment(const MomentEstimate& source, ConstMatrixView map,
     std::array<Scalar, 4U> coefficients{};
     bool structuralZero = false;
     for (Index axis = 0U; axis < outputOrder; ++axis) {
-      coefficients[axis] = map.at(outputTuple[axis], sourceTuple[axis]);
-      structuralZero = structuralZero || coefficients[axis] == 0.0;
+      coefficients.at(axis) =
+          map.at(outputTuple.subspan(axis).front(), sourceTuple.at(axis));
+      structuralZero = structuralZero || coefficients.at(axis) == 0.0;
     }
     if (structuralZero) {
       continue;
@@ -1084,7 +1086,7 @@ projectedMoment(const MomentEstimate& source, ConstMatrixView map,
     std::array<Scalar, 5U> factors{};
     factors[0U] = sourceValue.value();
     for (Index axis = 0U; axis < outputOrder; ++axis) {
-      factors[axis + 1U] = coefficients[axis];
+      factors.at(axis + 1U) = coefficients.at(axis);
     }
     if (!sum.add(std::span<const Scalar>(factors).first(outputOrder + 1U))) {
       return fail<ProjectedMoment>(ErrorCode::NonFiniteResult,
@@ -1176,14 +1178,14 @@ Result<MomentEstimate> standardizedProjection(const MomentEstimate& source,
   Extent warningBytes = 0U;
   Extent premiseBytes = 0U;
   Extent termBytes = 0U;
-  const Extent outputTermCount =
+  const auto outputTermCount =
       static_cast<Extent>(std::popcount(request.orders));
   Extent peakBytes = 0U;
   if (!checkedMultiply(outputValueCount, 2U * sizeof(Scalar), valueBytes) ||
       !checkedMultiply(map.rows(),
-                       2U * sizeof(Scalar) +
-                           2U * sizeof(detail::BinaryEndpoint) +
-                           2U * sizeof(Support),
+                       (2U * sizeof(Scalar)) +
+                           (2U * sizeof(detail::BinaryEndpoint)) +
+                           (2U * sizeof(Support)),
                        meanBytes) ||
       !checkedMultiply(source.diagnostics.warnings.view().size(),
                        sizeof(ErrorCode), warningBytes) ||
@@ -1194,7 +1196,7 @@ Result<MomentEstimate> standardizedProjection(const MomentEstimate& source,
       !checkedAdd(peakBytes, warningBytes, peakBytes) ||
       !checkedAdd(peakBytes, premiseBytes, peakBytes) ||
       !checkedAdd(peakBytes,
-                  2U * sizeof(Index) + sizeof(ExactProductSum) + 512U,
+                  (2U * sizeof(Index)) + sizeof(ExactProductSum) + 512U,
                   peakBytes) ||
       peakBytes > limits.bytes) {
     return fail<MomentEstimate>(ErrorCode::ResourceLimit,
@@ -1255,7 +1257,7 @@ Result<MomentEstimate> standardizedProjection(const MomentEstimate& source,
           }
           for (Index axis = 1U; axis < order; ++axis) {
             if (!supportEqual(moment.value().support,
-                              varianceSupports[tuple[axis]])) {
+                              varianceSupports.at(tuple.at(axis)))) {
               return fail<MomentEstimate>(
                   ErrorCode::InvalidDomain,
                   "projected coordinates have incompatible supports");
@@ -1265,8 +1267,8 @@ Result<MomentEstimate> standardizedProjection(const MomentEstimate& source,
             double fraction = moment.value().value.fraction();
             int exponent = moment.value().value.exponent();
             for (Index axis = 0U; axis < order; ++axis) {
-              double varianceFraction = variances[tuple[axis]].fraction();
-              int varianceExponent = variances[tuple[axis]].exponent();
+              double varianceFraction = variances.at(tuple.at(axis)).fraction();
+              int varianceExponent = variances.at(tuple.at(axis)).exponent();
               if ((varianceExponent % 2) != 0) {
                 varianceFraction *= 2.0;
                 --varianceExponent;
