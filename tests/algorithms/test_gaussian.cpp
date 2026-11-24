@@ -107,12 +107,84 @@ void singularSupportIsPreserved() {
   }
 }
 
+void normalSamplingUsesOneWordPerRetainedCoordinate() {
+  const std::array<Scalar, 1> center{3.0};
+  const auto location = ConstVectorView::create(center, 1U);
+  Matrix scale(1U, 1U, 4.0);
+  const auto law = multivariateNormal(location.value(), scale.view(),
+                                      solvePolicy(), {32U, 1024U, 1000U});
+  VSS_CHECK(law.hasValue());
+  if (!law) {
+    return;
+  }
+  Rng actual(444U);
+  Rng expected(444U);
+  const auto draw = multivariateNormalSample(
+      law.value(), actual, probabilityPolicy(), {32U, 1024U, 1000U});
+  VSS_CHECK(draw.hasValue());
+  (void)expected.next();
+  VSS_CHECK(actual.next() == expected.next());
+}
+
+void jointMomentsAndRankPolicy() {
+  const std::array<Scalar, 2> center{1.0, -2.0};
+  const auto location = ConstVectorView::create(center, 2U);
+  Matrix scale(2U, 2U, 0.0);
+  scale.at(0U, 0U) = 2.0;
+  scale.at(0U, 1U) = 0.5;
+  scale.at(1U, 0U) = 0.5;
+  scale.at(1U, 1U) = 4.0;
+  const auto student = multivariateStudentT(location.value(), scale.view(), 3.0,
+                                            solvePolicy(), {64U, 2048U, 1000U});
+  VSS_CHECK(student.hasValue());
+  if (student) {
+    const auto studentMean =
+        mean(student.value(), probabilityPolicy(), {16U, 512U, 1000U});
+    const auto studentCovariance =
+        covariance(student.value(), probabilityPolicy(), {32U, 1024U, 1000U});
+    VSS_CHECK(studentMean.hasValue() && studentCovariance.hasValue());
+    if (studentMean && studentCovariance) {
+      VSS_CHECK(studentMean.value().at(0U) == 1.0);
+      VSS_CHECK(studentMean.value().at(1U) == -2.0);
+      VSS_CHECK(std::abs(studentCovariance.value().at(0U, 0U) - 6.0) < 1.0e-12);
+      VSS_CHECK(std::abs(studentCovariance.value().at(0U, 1U) - 1.5) < 1.0e-12);
+      VSS_CHECK(std::abs(studentCovariance.value().at(1U, 1U) - 12.0) <
+                1.0e-12);
+    }
+  }
+
+  const std::array<Scalar, 3> singularCenter{0.0, 0.0, 0.0};
+  const auto singularLocation = ConstVectorView::create(singularCenter, 3U);
+  Matrix singular(3U, 3U, 0.0);
+  singular.at(0U, 0U) = 1.0;
+  singular.at(0U, 1U) = 1.0;
+  singular.at(1U, 0U) = 1.0;
+  singular.at(1U, 1U) = 1.0;
+  singular.at(2U, 2U) = 1.0;
+  const auto rankOne =
+      multivariateNormal(singularLocation.value(), singular.view(),
+                         solvePolicy(), {64U, 2048U, 1000U});
+  VSS_CHECK(rankOne.hasValue());
+  if (rankOne) {
+    const std::array<Index, 1> keep{2U};
+    const std::array<Index, 2> observed{0U, 1U};
+    const std::array<Scalar, 2> observedValue{0.0, 0.0};
+    const auto values = ConstVectorView::create(observedValue, 2U);
+    const auto strict = conditionalGaussian(
+        rankOne.value(), keep, observed, values.value(),
+        solvePolicy(RankPolicy::reject), {64U, 2048U, 1000U});
+    VSS_CHECK(strict.status().code() == ErrorCode::RankDeficient);
+  }
+}
+
 } // namespace
 
 int main() {
   likelihoodAtGaussianCenter();
   gaussianConditioningAndReplay();
   singularSupportIsPreserved();
+  normalSamplingUsesOneWordPerRetainedCoordinate();
+  jointMomentsAndRankPolicy();
 }
 
 // VSS-MATH-TRACEABILITY: C060 CASE-C060.normal.factor

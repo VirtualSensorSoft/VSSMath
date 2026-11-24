@@ -386,7 +386,7 @@ detail::JointDistributionEngine::sample(const JointDistribution& law, Rng& rng,
                                    "joint distribution is moved from");
   }
   const auto& state = *law.state_;
-  const std::uint64_t words = 2U * ((state.rank + 1U) / 2U);
+  const std::uint64_t words = state.rank;
   if (policy.max_draws < words) {
     return Result<Vector>::failure(ErrorCode::ResourceLimit,
                                    "joint normal sample exceeds draw limit");
@@ -397,17 +397,21 @@ detail::JointDistributionEngine::sample(const JointDistribution& law, Rng& rng,
                                    "joint sample exceeds output limits");
   }
   Vector standard(state.rank, 0.0);
-  Index destination = 0U;
-  while (destination < state.rank) {
-    const Scalar u1 =
-        (static_cast<Scalar>(rng.next() >> 12U) + 0.5) * 0x1.0p-52;
-    const Scalar u2 =
-        (static_cast<Scalar>(rng.next() >> 12U) + 0.5) * 0x1.0p-52;
-    const Scalar radius = std::sqrt(-2.0 * std::log(u1));
-    const Scalar angle = 2.0 * std::numbers::pi_v<Scalar> * u2;
-    standard.at(destination++) = radius * std::cos(angle);
-    if (destination < state.rank) {
-      standard.at(destination++) = radius * std::sin(angle);
+  if (state.rank > 0U) {
+    auto standardNormal = normal(0.0, 1.0);
+    if (!standardNormal) {
+      return Result<Vector>::failure(
+          standardNormal.status().code(),
+          std::string(standardNormal.status().message()));
+    }
+    for (Index index = 0U; index < state.rank; ++index) {
+      auto draw =
+          vss::math::probability::sample(standardNormal.value(), rng, policy);
+      if (!draw) {
+        return Result<Vector>::failure(draw.status().code(),
+                                       std::string(draw.status().message()));
+      }
+      standard.at(index) = draw.value();
     }
   }
   Vector result(state.location);
@@ -531,6 +535,16 @@ conditionalGaussian(const JointDistribution& law, std::span<const Index> keep,
     const Scalar cutoff = std::max(
         policy.rank_abs,
         policy.rank_rel * std::max(0.0, eigen.value().maximumEigenvalue()));
+    Index observedRank = 0U;
+    for (Index k = 0U; k < observed.size(); ++k) {
+      if (eigenvalues.at(k) > cutoff) {
+        ++observedRank;
+      }
+    }
+    if (observedRank < observed.size() && policy.rank == RankPolicy::reject) {
+      return failed(ErrorCode::RankDeficient,
+                    "observed covariance is rank deficient under policy");
+    }
     Vector solved(observed.size(), 0.0);
     long double residualNorm = 0.0L;
     long double nullNorm = 0.0L;
