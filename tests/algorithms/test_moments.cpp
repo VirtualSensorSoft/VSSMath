@@ -496,6 +496,8 @@ void shapesAndDistinctThirdMoment() {
       estimateCentralMoments(sample(points, vectorShape), unweighted(),
                              CenterSpec{}, selectedRequest, ampleLimits());
   VSS_CHECK(result);
+  VSS_CHECK(
+      std::ranges::equal(result.value().observation_shape.view(), vectorShape));
   close(result.value().terms.view()[0].values.at(0U), 1.0 / 32.0);
 
   const Matrix shapeValues = matrix(
@@ -516,6 +518,10 @@ void shapesAndDistinctThirdMoment() {
         estimateCentralMoments(sample(shapeValues, shape), unweighted(),
                                CenterSpec{}, fourthRequest, ampleLimits());
     VSS_CHECK(fourth);
+    VSS_CHECK(fourth.value().observation_shape.view().size() == shape.size());
+    for (Index axis = 0U; axis < shape.size(); ++axis) {
+      VSS_CHECK(fourth.value().observation_shape.view()[axis] == shape[axis]);
+    }
     close(fourth.value().terms.view()[0].values.at(0U), 84.0);
   }
 
@@ -530,13 +536,27 @@ void shapesAndDistinctThirdMoment() {
   VSS_CHECK(matrixResult.value().observation_shape.view()[0] == 2U);
   VSS_CHECK(matrixResult.value().observation_shape.view()[1] == 2U);
 
+  // Centered coordinates 1 and 2 are (-3,-4), (0,2), and (3,2).
   const Matrix crossValues = matrix(
-      {{-2.0, 3.0, -5.0, -7.0}, {0.0, 0.0, 0.0, 0.0}, {2.0, -3.0, 5.0, 7.0}});
+      {{1.0, 0.0, 0.0, 2.0}, {1.0, 3.0, 6.0, 2.0}, {1.0, 6.0, 6.0, 2.0}});
   const auto cross = estimateCentralMoments(
-      sample(crossValues, matrixShape), unweighted(), CenterSpec{},
-      request(0x02U, MomentRepresentation::dense), ampleLimits());
+      sample(crossValues, shapes[2]), unweighted(), CenterSpec{},
+      request(0x0eU, MomentRepresentation::dense), ampleLimits());
   VSS_CHECK(cross);
-  close(cross.value().terms.view()[0].values.at(6U), -10.0);
+  const auto crossTerms = cross.value().terms.view();
+  close(crossTerms[0].values.at(6U), 6.0);
+  close(crossTerms[1].values.at(22U), -6.0);
+  close(crossTerms[2].values.at(90U), 60.0);
+
+  const Matrix sixCoordinates(1U, 6U);
+  const std::array<Index, 2U> rectangularShape{2U, 3U};
+  const auto rectangular = estimateCentralMoments(
+      sample(sixCoordinates, rectangularShape), unweighted(), CenterSpec{},
+      request(0x02U, MomentRepresentation::component), ampleLimits());
+  VSS_CHECK(rectangular);
+  VSS_CHECK(std::ranges::equal(rectangular.value().observation_shape.view(),
+                               rectangularShape));
+  VSS_CHECK(rectangular.value().terms.view()[0].values.size() == 6U);
 }
 
 void dependentCorrectionMixedMoment() {
@@ -590,6 +610,9 @@ void weightedContractionAndKnownCenter() {
       contracted, ampleLimits());
   VSS_CHECK(aroundKnown);
   close(aroundKnown.value().terms.view()[0].values.at(0U), 9.0 / 2.0);
+  close(aroundKnown.value().terms.view()[1].values.at(0U), 27.0);
+  close(aroundKnown.value().terms.view()[2].values.at(0U), 162.0);
+  close(aroundKnown.value().terms.view()[3].values.at(0U), 972.0);
 
   const Matrix scalarValues = matrix({{-1.0}, {0.0}, {1.0}});
   const Vector ordinaryWeights = vector({1.0, 2.0, 1.0});

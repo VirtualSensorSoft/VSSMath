@@ -7,6 +7,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vss/math/Array.hpp>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
@@ -1212,26 +1213,35 @@ int main() {
   const SampleView transformSample{transformRows.view(), transformShape, {}};
   constexpr Limits transformLimits{65536U, 16U * 1024U * 1024U, 64U};
   const statistics::MomentRequest transformSourceRequest{
-      .orders = 0x0aU,
+      .orders = 0x0eU,
       .representation = statistics::MomentRepresentation::dense,
       .selected = {},
       .contraction = std::nullopt};
   const auto transformSource = statistics::estimateCentralMoments(
       transformSample, noSummaryWeights, statistics::CenterSpec{},
       transformSourceRequest, transformLimits);
+  static_assert(std::is_same_v<decltype(transformSource),
+                               const Result<statistics::MomentEstimate>>);
   if (!transformSource.hasValue()) {
     std::cerr << "math_consumer: source moment code="
               << static_cast<int>(transformSource.status().code()) << ", "
               << transformSource.status().message() << '\n';
   }
-  if (!require(transformSource.hasValue(),
+  if (!require(transformSource.hasValue() &&
+                   transformSource.value().observation_shape.view().size() ==
+                       1U &&
+                   transformSource.value().observation_shape.view()[0U] == 2U &&
+                   transformSource.value().terms.view().size() == 3U &&
+                   transformSource.value().diagnostics.global.positive == 3U,
                "installed source moment estimate API failed")) {
     return 1;
   }
   const std::array<Index, 1U> selectedCoordinate{0U};
+  auto marginalRequest = transformSourceRequest;
+  marginalRequest.orders = 0x0aU;
   const auto installedMarginal =
       statistics::marginalMoments(transformSource.value(), selectedCoordinate,
-                                  transformSourceRequest, transformLimits);
+                                  marginalRequest, transformLimits);
   const std::array<Index, 4U> selectedFourthTuple{0U, 0U, 0U, 0U};
   const std::array<std::span<const Index>, 1U> selectedFourthTuples{
       std::span<const Index>{selectedFourthTuple}};
@@ -1290,9 +1300,13 @@ int main() {
       .representation = statistics::MomentRepresentation::dense,
       .selected = {},
       .contraction = std::nullopt};
+  const std::array<Index, 1U> rawShape{1U};
+  const SampleView shapedWeightedSample{weightedRows.view(), rawShape, {}};
   const auto installedMoments =
-      statistics::estimateRawMoments(weightedSample, empiricalWeights,
+      statistics::estimateRawMoments(shapedWeightedSample, empiricalWeights,
                                      rawMomentRequest, Limits{128U, 4096U, 0U});
+  static_assert(std::is_same_v<decltype(installedMoments),
+                               const Result<statistics::MomentEstimate>>);
   Matrix cumulantRows(2U, 1U);
   cumulantRows.at(0U, 0U) = 3.0;
   cumulantRows.at(1U, 0U) = 5.0;
@@ -1418,6 +1432,9 @@ int main() {
       Limits{16U, 1024U, 0U});
   if (!require(
           installedMoments.hasValue() &&
+              installedMoments.value().observation_shape.view().size() == 1U &&
+              installedMoments.value().observation_shape.view()[0U] == 1U &&
+              installedMoments.value().diagnostics.global.positive == 2U &&
               installedMoments.value().terms.view().size() == 2U &&
               std::abs(installedMoments.value().terms.view()[0].values.at(0U) -
                        2.0) < 1.0e-12 &&
