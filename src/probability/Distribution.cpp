@@ -22,6 +22,7 @@
 #include <vss/math/ProbabilityPolicy.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/probability/Composite.hpp>
 #include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/LogTailPair.hpp>
 #include <vss/math/probability/Special.hpp>
@@ -102,6 +103,15 @@ public:
 
   static Result<Scalar> variance(const Distribution& law,
                                  ProbabilityPolicy policy, Limits limits);
+
+  static Result<Scalar> intervalLogProbability(const Distribution& law,
+                                               IntervalSupport interval,
+                                               ProbabilityPolicy policy);
+
+  static Result<Distribution> truncated(const Distribution& base,
+                                        IntervalSupport interval,
+                                        ProbabilityPolicy policy,
+                                        Limits limits);
 };
 
 } // namespace detail
@@ -487,6 +497,34 @@ detail::DistributionEngine::finiteAtoms(const Distribution& law,
     return Result<std::vector<std::pair<Scalar, Scalar>>>::success(
         std::move(result));
   }
+  if (state.family == Family::truncated &&
+      state.measure == Measure::atom_mass) {
+    const Distribution base(state.components.front());
+    auto support = finiteAtoms(base, limits);
+    if (!support) {
+      return Result<std::vector<std::pair<Scalar, Scalar>>>::failure(
+          support.status().code(), std::string(support.status().message()));
+    }
+    const Scalar lower = state.parameters[0];
+    const Scalar upper = state.parameters[1];
+    const bool includeLower = (state.integerParameter & 1U) != 0U;
+    const bool includeUpper = (state.integerParameter & 2U) != 0U;
+    std::vector<std::pair<Scalar, Scalar>> result;
+    for (const auto& [atom, mass] : support.value()) {
+      const bool aboveLower = atom > lower || (includeLower && atom == lower);
+      const bool belowUpper = atom < upper || (includeUpper && atom == upper);
+      if (aboveLower && belowUpper && mass > 0.0) {
+        result.emplace_back(atom, static_cast<Scalar>(std::exp(
+                                      std::log(mass) - state.parameters[2])));
+      }
+    }
+    if (result.empty()) {
+      return Result<std::vector<std::pair<Scalar, Scalar>>>::failure(
+          ErrorCode::InvalidDomain, "truncated atom law has empty support");
+    }
+    return Result<std::vector<std::pair<Scalar, Scalar>>>::success(
+        std::move(result));
+  }
   if (state.family == Family::mixture) {
     std::vector<std::pair<Scalar, Scalar>> result;
     for (Index index = 0U; index < state.components.size(); ++index) {
@@ -813,11 +851,13 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
   }
   const bool normalWithDiscrete =
       normalCount > 0U && normalCount < terms.size() &&
-      std::all_of(terms.begin(), terms.end(), [](const Distribution& term) {
-        return term.state_->family == Family::normal ||
-               term.state_->measure == Measure::integer_mass ||
-               term.state_->measure == Measure::atom_mass;
-      });
+      std::all_of(
+          terms.begin(), terms.end(),
+          [](const Distribution& term) {
+            return term.state_->family == Family::normal ||
+                   term.state_->measure == Measure::integer_mass ||
+                   term.state_->measure == Measure::atom_mass;
+          });
   const bool twoUniforms = terms.size() == 2U &&
                            terms[0].state_->family == Family::uniform &&
                            terms[1].state_->family == Family::uniform;
@@ -1849,6 +1889,52 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
       tails = {logLower, logUpper - logNormalizer};
     }
     onSupport = x >= p[2] && x <= p[3];
+    break;
+  }
+  case Family::truncated: {
+    const Scalar lower = p[0];
+    const Scalar upper = p[1];
+    const Scalar logNormalizer = p[2];
+    const bool includeLower = (state.integerParameter & 1U) != 0U;
+    const bool includeUpper = (state.integerParameter & 2U) != 0U;
+    if (x < lower || x > upper) {
+      return Result<TailValues>::success(
+          {0.0, negativeInfinity, x < lower ? 0.0 : 1.0, x < lower ? 1.0 : 0.0,
+           x < lower ? LogTailPair{negativeInfinity, 0.0}
+                     : LogTailPair{0.0, negativeInfinity},
+           false});
+    }
+    const Distribution base(state.components.front());
+    auto baseValue = evaluate(base, x, policy);
+    if (!baseValue) {
+      return Result<TailValues>::failure(
+          baseValue.status().code(), std::string(baseValue.status().message()));
+    }
+    const bool discrete = state.measure == Measure::integer_mass ||
+                          state.measure == Measure::atom_mass;
+    const bool excludedAtom = discrete && ((x == lower && !includeLower) ||
+                                           (x == upper && !includeUpper));
+    logDensity = excludedAtom
+                     ? negativeInfinity
+                     : baseValue.value().log_density_or_mass - logNormalizer;
+
+    const auto lowerMass = intervalLogProbability(
+        base, IntervalSupport{lower, x, includeLower, true}, policy);
+    const auto upperMass = intervalLogProbability(
+        base, IntervalSupport{x, upper, false, includeUpper}, policy);
+    if (!lowerMass || !upperMass) {
+      const Status& status =
+          !lowerMass ? lowerMass.status() : upperMass.status();
+      return Result<TailValues>::failure(status.code(),
+                                         std::string(status.message()));
+    }
+    const Scalar logCdf = lowerMass.value() - logNormalizer;
+    const Scalar logSurvival = upperMass.value() - logNormalizer;
+    const Scalar logTotal = logAddExp(logCdf, logSurvival);
+    tails = {std::min(0.0, logCdf - logTotal),
+             std::min(0.0, logSurvival - logTotal)};
+    onSupport = baseValue.value().on_support && x >= lower && x <= upper &&
+                !excludedAtom;
     break;
   }
   case Family::bernoulli: {
@@ -3084,6 +3170,120 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
   return finiteTailValues(logDensity, tails, onSupport);
 }
 
+Result<Scalar>
+DistributionEngine::intervalLogProbability(const Distribution& law,
+                                           IntervalSupport interval,
+                                           ProbabilityPolicy policy) {
+  const Scalar negativeInfinity = -std::numeric_limits<Scalar>::infinity();
+  if (std::isnan(interval.lower) || std::isnan(interval.upper)) {
+    return Result<Scalar>::failure(ErrorCode::NonFiniteInput,
+                                   "interval endpoints cannot be NaN");
+  }
+  if (interval.lower > interval.upper ||
+      interval.lower == std::numeric_limits<Scalar>::infinity() ||
+      interval.upper == -std::numeric_limits<Scalar>::infinity()) {
+    return Result<Scalar>::failure(ErrorCode::InvalidDomain,
+                                   "interval endpoints are reversed");
+  }
+  if (!std::isfinite(policy.iteration.abs) ||
+      !std::isfinite(policy.iteration.rel) ||
+      !std::isfinite(policy.abs_log_error) || policy.iteration.abs <= 0.0 ||
+      policy.iteration.rel <= 0.0 || policy.abs_log_error <= 0.0) {
+    return Result<Scalar>::failure(ErrorCode::InvalidTolerance,
+                                   "probability tolerances must be positive");
+  }
+  if (policy.iteration.max_iterations == 0U ||
+      policy.iteration.max_evaluations == 0U) {
+    return Result<Scalar>::failure(ErrorCode::InvalidDomain,
+                                   "probability work limits must be positive");
+  }
+  if (interval.lower == interval.upper &&
+      !(interval.include_lower && interval.include_upper)) {
+    return Result<Scalar>::success(negativeInfinity);
+  }
+  auto lower = evaluate(law, interval.lower, policy);
+  auto upper = evaluate(law, interval.upper, policy);
+  if (!lower || !upper) {
+    const Status& status = !lower ? lower.status() : upper.status();
+    return Result<Scalar>::failure(status.code(),
+                                   std::string(status.message()));
+  }
+  const bool discrete = law.measure() == Measure::integer_mass ||
+                        law.measure() == Measure::atom_mass;
+  const Scalar lowerMass =
+      discrete ? lower.value().log_density_or_mass : negativeInfinity;
+  const Scalar upperMass =
+      discrete ? upper.value().log_density_or_mass : negativeInfinity;
+  const Scalar leftBelow =
+      interval.include_lower && discrete
+          ? logDifference(lower.value().log_tails.log_cdf, lowerMass)
+          : lower.value().log_tails.log_cdf;
+  const Scalar leftAbove =
+      interval.include_upper || !discrete
+          ? upper.value().log_tails.log_cdf
+          : logDifference(upper.value().log_tails.log_cdf, upperMass);
+  const Scalar rightBelow =
+      interval.include_lower && discrete
+          ? logAddExp(lower.value().log_tails.log_survival, lowerMass)
+          : lower.value().log_tails.log_survival;
+  const Scalar rightAbove =
+      interval.include_upper || !discrete
+          ? upper.value().log_tails.log_survival
+          : logAddExp(upper.value().log_tails.log_survival, upperMass);
+  const Scalar fromLowerTail = logDifference(leftAbove, leftBelow);
+  const Scalar fromUpperTail = logDifference(rightBelow, rightAbove);
+  if (leftAbove <= rightBelow) {
+    return Result<Scalar>::success(
+        fromLowerTail != negativeInfinity ? fromLowerTail : fromUpperTail);
+  }
+  return Result<Scalar>::success(
+      fromUpperTail != negativeInfinity ? fromUpperTail : fromLowerTail);
+}
+
+Result<Distribution> DistributionEngine::truncated(const Distribution& base,
+                                                   IntervalSupport interval,
+                                                   ProbabilityPolicy policy,
+                                                   Limits limits) {
+  if (!base.state_) {
+    return Result<Distribution>::failure(ErrorCode::InvalidDomain,
+                                         "base distribution is moved from");
+  }
+  constexpr std::size_t byteCap = std::size_t{16U} * 1024U * 1024U;
+  const std::size_t stateBytes =
+      sizeof(Distribution::State) +
+      sizeof(std::shared_ptr<const Distribution::State>) + 3U * sizeof(Scalar);
+  if (limits.elements < 4U || std::min(limits.bytes, byteCap) < stateBytes ||
+      limits.evaluations == 0U) {
+    return Result<Distribution>::failure(
+        ErrorCode::ResourceLimit, "truncated law exceeds configured limits");
+  }
+  if (base.state_->depth >= 32U) {
+    return Result<Distribution>::failure(
+        ErrorCode::ResourceLimit, "truncated law nesting exceeds depth 32");
+  }
+  policy.iteration.max_evaluations = static_cast<Index>(std::min<std::uint64_t>(
+      policy.iteration.max_evaluations, limits.evaluations));
+  auto logMass = intervalLogProbability(base, interval, policy);
+  if (!logMass) {
+    return Result<Distribution>::failure(
+        logMass.status().code(), std::string(logMass.status().message()));
+  }
+  if (logMass.value() == -std::numeric_limits<Scalar>::infinity()) {
+    return Result<Distribution>::failure(
+        ErrorCode::InvalidDomain,
+        "truncation interval has zero probability under the base law");
+  }
+  auto state = std::make_shared<Distribution::State>();
+  state->family = Family::truncated;
+  state->measure = base.state_->measure;
+  state->components.push_back(base.state_);
+  state->parameters = {interval.lower, interval.upper, logMass.value()};
+  state->integerParameter =
+      (interval.include_lower ? 1U : 0U) | (interval.include_upper ? 2U : 0U);
+  state->depth = base.state_->depth + 1U;
+  return Result<Distribution>::success(Distribution(std::move(state)));
+}
+
 // Composite moments recurse only through the explicitly depth-capped law tree.
 // NOLINTNEXTLINE(misc-no-recursion)
 Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
@@ -3501,6 +3701,143 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
         std::tgamma(numerator / 2.0L + k) / std::tgamma(numerator / 2.0L) *
         std::tgamma(denominator / 2.0L - k) / std::tgamma(denominator / 2.0L));
   }
+  case Family::truncated: {
+    const Scalar lower = p[0];
+    const Scalar upper = p[1];
+    const Scalar logNormalizer = p[2];
+    const bool includeLower = (state.integerParameter & 1U) != 0U;
+    const bool includeUpper = (state.integerParameter & 2U) != 0U;
+    const Distribution base(state.components.front());
+    if (state.measure == Measure::integer_mass ||
+        state.measure == Measure::atom_mass) {
+      const Limits supportLimits{
+          std::min<std::size_t>(1024U, policy.iteration.max_evaluations),
+          std::size_t{16U} * 1024U * 1024U, policy.iteration.max_evaluations};
+      auto support = finiteAtoms(base, supportLimits);
+      if (!support) {
+        return Result<Scalar>::failure(support.status().code(),
+                                       std::string(support.status().message()));
+      }
+      long double total = 0.0L;
+      for (const auto& [atom, mass] : support.value()) {
+        const bool aboveLower = atom > lower || (includeLower && atom == lower);
+        const bool belowUpper = atom < upper || (includeUpper && atom == upper);
+        if (!aboveLower || !belowUpper || mass <= 0.0) {
+          continue;
+        }
+        total += std::exp(std::log(static_cast<long double>(mass)) -
+                          static_cast<long double>(logNormalizer)) *
+                 std::pow(static_cast<long double>(atom), k);
+      }
+      return finish(total);
+    }
+    if (!std::isfinite(lower) || !std::isfinite(upper)) {
+      return Result<Scalar>::failure(
+          ErrorCode::NoConvergence,
+          "unbounded truncated raw moment needs a qualified tail enclosure");
+    }
+    auto integrand = [&](Scalar coordinate) -> Result<long double> {
+      Scalar evaluationPoint = coordinate;
+      if (coordinate == lower) {
+        evaluationPoint = std::nextafter(lower, upper);
+      } else if (coordinate == upper) {
+        evaluationPoint = std::nextafter(upper, lower);
+      }
+      auto value = evaluate(base, evaluationPoint, policy);
+      if (!value) {
+        return Result<long double>::failure(
+            value.status().code(), std::string(value.status().message()));
+      }
+      if (value.value().log_density_or_mass ==
+          -std::numeric_limits<Scalar>::infinity()) {
+        return Result<long double>::success(0.0L);
+      }
+      const long double density =
+          std::exp(static_cast<long double>(value.value().log_density_or_mass) -
+                   static_cast<long double>(logNormalizer));
+      const long double moment =
+          std::pow(static_cast<long double>(coordinate), k);
+      const long double result = density * moment;
+      if (!std::isfinite(result)) {
+        return Result<long double>::failure(
+            ErrorCode::NonFiniteResult,
+            "truncated raw-moment integrand is outside range");
+      }
+      return Result<long double>::success(result);
+    };
+    auto leftValue = integrand(lower);
+    auto middleValue = integrand(0.5 * (lower + upper));
+    auto rightValue = integrand(upper);
+    if (!leftValue || !middleValue || !rightValue) {
+      const Status& status = !leftValue     ? leftValue.status()
+                             : !middleValue ? middleValue.status()
+                                            : rightValue.status();
+      return Result<Scalar>::failure(status.code(),
+                                     std::string(status.message()));
+    }
+    std::uint64_t evaluations = 3U;
+    const long double whole =
+        static_cast<long double>(upper - lower) *
+        (leftValue.value() + 4.0L * middleValue.value() + rightValue.value()) /
+        6.0L;
+    std::function<Result<long double>(Scalar, Scalar, long double, long double,
+                                      long double, long double, Scalar, Index)>
+        integrate;
+    integrate = [&](Scalar a, Scalar b, long double fa, long double fm,
+                    long double fb, long double estimate, Scalar tolerance,
+                    Index depth) -> Result<long double> {
+      if (depth >= policy.iteration.max_iterations ||
+          evaluations + 2U > policy.iteration.max_evaluations) {
+        return Result<long double>::failure(
+            depth >= policy.iteration.max_iterations ? ErrorCode::NoConvergence
+                                                     : ErrorCode::ResourceLimit,
+            "truncated raw-moment quadrature reached its work limit");
+      }
+      const Scalar middle = 0.5 * (a + b);
+      const Scalar leftMiddle = 0.5 * (a + middle);
+      const Scalar rightMiddle = 0.5 * (middle + b);
+      auto flm = integrand(leftMiddle);
+      auto frm = integrand(rightMiddle);
+      evaluations += 2U;
+      if (!flm || !frm) {
+        const Status& status = !flm ? flm.status() : frm.status();
+        return Result<long double>::failure(status.code(),
+                                            std::string(status.message()));
+      }
+      const long double leftEstimate = static_cast<long double>(middle - a) *
+                                       (fa + 4.0L * flm.value() + fm) / 6.0L;
+      const long double rightEstimate = static_cast<long double>(b - middle) *
+                                        (fm + 4.0L * frm.value() + fb) / 6.0L;
+      const long double refined = leftEstimate + rightEstimate;
+      const long double error = std::abs(refined - estimate) / 15.0L;
+      const long double allowed =
+          static_cast<long double>(tolerance) +
+          static_cast<long double>(policy.iteration.rel) * std::abs(refined);
+      if (error <= allowed) {
+        return Result<long double>::success(refined +
+                                            (refined - estimate) / 15.0L);
+      }
+      auto left = integrate(a, middle, fa, flm.value(), fm, leftEstimate,
+                            tolerance * 0.5, depth + 1U);
+      if (!left) {
+        return left;
+      }
+      auto right = integrate(middle, b, fm, frm.value(), fb, rightEstimate,
+                             tolerance * 0.5, depth + 1U);
+      if (!right) {
+        return right;
+      }
+      return Result<long double>::success(left.value() + right.value());
+    };
+    auto integral =
+        integrate(lower, upper, leftValue.value(), middleValue.value(),
+                  rightValue.value(), whole, policy.iteration.abs, 0U);
+    if (!integral) {
+      return Result<Scalar>::failure(integral.status().code(),
+                                     std::string(integral.status().message()));
+    }
+    return finish(integral.value());
+  }
   case Family::mixture: {
     long double total = 0.0L;
     for (Index index = 0U; index < state.components.size(); ++index) {
@@ -3615,6 +3952,8 @@ Result<Scalar> DistributionEngine::quantile(const Distribution& law,
       return Result<Scalar>::success(p[0]);
     case Family::truncated_normal:
       return Result<Scalar>::success(p[2]);
+    case Family::truncated:
+      return Result<Scalar>::success(p[0]);
     case Family::empirical:
       return Result<Scalar>::success(state.atoms.front());
     case Family::finite_convolution:
@@ -3653,6 +3992,8 @@ Result<Scalar> DistributionEngine::quantile(const Distribution& law,
                                                                      : p[2]);
     case Family::truncated_normal:
       return Result<Scalar>::success(p[3]);
+    case Family::truncated:
+      return Result<Scalar>::success(p[1]);
     case Family::empirical:
       return Result<Scalar>::success(state.atoms.back());
     case Family::finite_convolution:
@@ -3811,6 +4152,16 @@ Result<Scalar> DistributionEngine::quantile(const Distribution& law,
         upper = 0.0;
         center = p[0];
         scale = p[1];
+      }
+      break;
+    case Family::truncated:
+      lower = p[0];
+      upper = p[1];
+      if (!std::isfinite(lower) || !std::isfinite(upper)) {
+        lower = 0.0;
+        upper = 0.0;
+        center = 0.0;
+        scale = 1.0;
       }
       break;
     default:
@@ -4241,6 +4592,60 @@ Result<Scalar> variance(const Distribution& law, ProbabilityPolicy policy,
     policy.iteration.max_evaluations = static_cast<Index>(limits.evaluations);
   }
   return detail::DistributionEngine::variance(law, policy, limits);
+}
+
+Result<Scalar> mixtureLogPdf(const Distribution& law, Scalar x,
+                             ProbabilityPolicy policy) {
+  if (law.family() != Family::mixture) {
+    return Result<Scalar>::failure(ErrorCode::InvalidDomain,
+                                   "mixtureLogPdf requires a mixture law");
+  }
+  auto value = evaluate(law, x, policy);
+  if (!value) {
+    return Result<Scalar>::failure(value.status().code(),
+                                   std::string(value.status().message()));
+  }
+  return Result<Scalar>::success(value.value().log_density_or_mass);
+}
+
+Result<Distribution> truncatedDistribution(const Distribution& base,
+                                           IntervalSupport interval,
+                                           ProbabilityPolicy policy) {
+  return detail::DistributionEngine::truncated(
+      base, interval, policy,
+      Limits{1024U, std::size_t{16U} * 1024U * 1024U,
+             policy.iteration.max_evaluations});
+}
+
+Result<Distribution> truncatedDistribution(const Distribution& base,
+                                           IntervalSupport interval,
+                                           ProbabilityPolicy policy,
+                                           Limits limits) {
+  return detail::DistributionEngine::truncated(base, interval, policy, limits);
+}
+
+Result<Scalar> empiricalCDF(const Distribution& empirical, Scalar x) {
+  if (empirical.family() != Family::empirical) {
+    return Result<Scalar>::failure(ErrorCode::InvalidDomain,
+                                   "empiricalCDF requires an empirical law");
+  }
+  auto value = evaluate(empirical, x, defaultPolicy());
+  if (!value) {
+    return Result<Scalar>::failure(value.status().code(),
+                                   std::string(value.status().message()));
+  }
+  return Result<Scalar>::success(value.value().cdf);
+}
+
+Result<Scalar> censoredLogProbability(const Distribution& law,
+                                      IntervalSupport event,
+                                      ProbabilityPolicy policy) {
+  return detail::DistributionEngine::intervalLogProbability(law, event, policy);
+}
+
+Result<Scalar> quantizedLikelihood(const Distribution& law, IntervalSupport bin,
+                                   ProbabilityPolicy policy) {
+  return detail::DistributionEngine::intervalLogProbability(law, bin, policy);
 }
 
 } // namespace vss::math::probability
