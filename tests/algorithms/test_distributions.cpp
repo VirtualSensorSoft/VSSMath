@@ -502,6 +502,239 @@ void convolutionRegimes() {
     }
   }
 
+  const auto betaGammaDensityReference = [](Scalar a, Scalar b, Scalar x) {
+    if (x == 0.0) {
+      const Scalar exponent = a + b - 1.0;
+      if (exponent < 0.0) {
+        return std::numeric_limits<Scalar>::infinity();
+      }
+      return exponent == 0.0 ? std::tgamma(a + 1.0) : 0.0;
+    }
+    if (x == 1.0 && a + b <= 1.0) {
+      return std::numeric_limits<Scalar>::infinity();
+    }
+    constexpr Index midpointCount = 131072U;
+    const long double normalizer =
+        static_cast<long double>(a) / std::tgamma(static_cast<long double>(b));
+    const auto integrate = [&](Scalar lower, Scalar upper, Index power,
+                               bool zeroLower, bool collision) {
+      if (!(upper > lower)) {
+        return 0.0L;
+      }
+      long double total = 0.0L;
+      const long double width = upper - lower;
+      for (Index index = 0U; index <= midpointCount; ++index) {
+        if (index == 0U && zeroLower) {
+          continue;
+        }
+        const long double z = static_cast<long double>(index) / midpointCount;
+        const long double q = lower + width * std::pow(z, power);
+        const long double jacobian =
+            width * power * std::pow(z, static_cast<long double>(power - 1U));
+        const long double betaGap = x < 1.0 ? (1.0L - x) + q : q;
+        const long double gammaCoordinate = x < 1.0 ? q : (x - 1.0L) + q;
+        const long double exponent =
+            collision ? a + b - 2.0L : (x < 1.0 ? b - 1.0L : a - 1.0L);
+        const long double integrand =
+            normalizer * (collision ? 1.0L : std::pow(betaGap, a - 1.0L)) *
+            (collision ? std::pow(q, exponent)
+                       : std::pow(gammaCoordinate, b - 1.0L)) *
+            std::exp(-gammaCoordinate) * jacobian;
+        const long double weight = index == 0U || index == midpointCount ? 1.0L
+                                   : index % 2U == 0U                    ? 2.0L
+                                                                         : 4.0L;
+        total += weight * integrand;
+      }
+      return total / (3.0L * midpointCount);
+    };
+    long double density = 0.0L;
+    if (x < 1.0) {
+      const Scalar split = std::min(x, 1.0 - x);
+      const Index power = static_cast<Index>(std::ceil(2.0 / b));
+      density += integrate(0.0, split, power, true, false);
+      for (Scalar lower = split; lower < x;) {
+        const Scalar upper = std::min(x, 2.0 * lower);
+        density += integrate(lower, upper, 1U, false, false);
+        lower = upper;
+      }
+    } else if (x > 1.0) {
+      const Scalar split = std::min(1.0, x - 1.0);
+      const Index power = static_cast<Index>(std::ceil(2.0 / a));
+      density += integrate(0.0, split, power, true, false);
+      for (Scalar lower = split; lower < 1.0;) {
+        const Scalar upper = std::min(1.0, 2.0 * lower);
+        density += integrate(lower, upper, 1U, false, false);
+        lower = upper;
+      }
+    } else {
+      const Scalar alpha = a + b - 1.0;
+      const Index power = static_cast<Index>(std::ceil(2.0 / alpha));
+      density += integrate(0.0, 1.0, power, true, true);
+    }
+    return static_cast<Scalar>(density);
+  };
+  const auto betaGammaCollisionTailReference = [](Scalar a, Scalar b) {
+    constexpr Index intervalCount = 16384U;
+    const Index power =
+        std::max<Index>(2U, static_cast<Index>(std::ceil(2.0 / a)));
+    const Distribution gammaLaw = gamma(b, 1.0).value();
+    std::array<long double, 2> total{};
+    for (Index index = 0U; index <= intervalCount; ++index) {
+      if (index == 0U) {
+        continue;
+      }
+      const long double z = static_cast<long double>(index) / intervalCount;
+      const long double coordinate = std::pow(z, power);
+      const long double jacobian = power * std::pow(z, power - 1U);
+      const long double density = a * std::pow(coordinate, a - 1.0L) * jacobian;
+      const auto gammaTails =
+          evaluate(gammaLaw, static_cast<Scalar>(coordinate), policy());
+      const long double weight = index == intervalCount ? 1.0L
+                                 : index % 2U == 0U     ? 2.0L
+                                                        : 4.0L;
+      total[0] += weight * density * gammaTails.value().cdf;
+      total[1] += weight * density * gammaTails.value().survival;
+    }
+    return std::array<Scalar, 2>{
+        static_cast<Scalar>(total[0] / (3.0L * intervalCount)),
+        static_cast<Scalar>(total[1] / (3.0L * intervalCount))};
+  };
+  for (const auto [betaShape, gammaShape] :
+       {std::pair{0.25, 0.25}, std::pair{0.5, 0.5}, std::pair{0.75, 0.75},
+        std::pair{0.25, 0.4}, std::pair{0.72, 0.81}}) {
+    const std::array<Distribution, 2> terms{beta(1.0, betaShape).value(),
+                                            gamma(gammaShape, 1.0).value()};
+    const auto sum = finiteConvolution(terms, policy());
+    VSS_CHECK(sum.hasValue());
+    if (!sum) {
+      continue;
+    }
+    auto compositePolicy = policy();
+    compositePolicy.iteration.rel = 2.0e-11;
+    compositePolicy.iteration.max_evaluations = 100000U;
+    for (const Scalar x :
+         {0.0, 0.5, 1.0 - 0x1p-8, 1.0 - 0x1p-16, 1.0 - 0x1p-24, 1.0,
+          1.0 + 0x1p-24, 1.0 + 0x1p-16, 1.0 + 0x1p-8, 2.0, 10.0}) {
+      const auto value = evaluate(sum.value(), x, compositePolicy);
+      VSS_CHECK(value.hasValue());
+      if (value) {
+        const Scalar expected =
+            betaGammaDensityReference(betaShape, gammaShape, x);
+        if (std::isinf(expected)) {
+          VSS_CHECK(value.value().density_or_mass == expected);
+        } else {
+          VSS_CHECK(std::abs(value.value().density_or_mass - expected) <=
+                    5.0e-11 * std::max(1.0, expected));
+        }
+        VSS_CHECK(std::abs(value.value().cdf + value.value().survival - 1.0) <
+                  2.0e-12);
+        if (x == 1.0 && betaShape <= 0.5) {
+          const auto expectedTails =
+              betaGammaCollisionTailReference(betaShape, gammaShape);
+          VSS_CHECK(std::abs(value.value().cdf - expectedTails[0]) < 5.0e-11);
+          VSS_CHECK(std::abs(value.value().survival - expectedTails[1]) <
+                    5.0e-11);
+        }
+      }
+    }
+  }
+  const std::array<Distribution, 2> reversedBetaGammaTerms{
+      gamma(0.72, 1.0).value(), beta(1.0, 0.81).value()};
+  const auto reversedBetaGamma =
+      finiteConvolution(reversedBetaGammaTerms, policy());
+  const std::array<Distribution, 2> orderedBetaGammaTerms{
+      beta(1.0, 0.81).value(), gamma(0.72, 1.0).value()};
+  const auto orderedBetaGamma =
+      finiteConvolution(orderedBetaGammaTerms, policy());
+  VSS_CHECK(reversedBetaGamma.hasValue() && orderedBetaGamma.hasValue());
+  if (reversedBetaGamma && orderedBetaGamma) {
+    for (const Scalar x : {0.5, 1.0, 2.0}) {
+      const auto reversed = evaluate(reversedBetaGamma.value(), x, policy());
+      const auto ordered = evaluate(orderedBetaGamma.value(), x, policy());
+      VSS_CHECK(reversed.hasValue() && ordered.hasValue());
+      if (reversed && ordered) {
+        VSS_CHECK(std::abs(reversed.value().density_or_mass -
+                           ordered.value().density_or_mass) < 2.0e-12);
+        VSS_CHECK(std::abs(reversed.value().cdf - ordered.value().cdf) <
+                  2.0e-12);
+        VSS_CHECK(std::abs(reversed.value().survival -
+                           ordered.value().survival) < 2.0e-12);
+      }
+    }
+  }
+
+  const auto checkBetaGammaOriginDensity = [&](Scalar betaShape,
+                                               Scalar gammaShape,
+                                               Scalar expectedDensity) {
+    const std::array<Distribution, 2> terms{beta(1.0, betaShape).value(),
+                                            gamma(gammaShape, 1.0).value()};
+    const auto sum = finiteConvolution(terms, policy());
+    VSS_CHECK(sum.hasValue());
+    if (sum) {
+      const auto value = evaluate(sum.value(), 0.0, policy());
+      VSS_CHECK(value.hasValue());
+      if (value) {
+        if (std::isinf(expectedDensity)) {
+          VSS_CHECK(value.value().density_or_mass == expectedDensity);
+        } else {
+          VSS_CHECK(std::abs(value.value().density_or_mass - expectedDensity) <
+                    5.0e-14 * std::max(1.0, expectedDensity));
+        }
+        VSS_CHECK(value.value().cdf == 0.0);
+        VSS_CHECK(value.value().survival == 1.0);
+      }
+    }
+  };
+  checkBetaGammaOriginDensity(0.25, 0.25,
+                              std::numeric_limits<Scalar>::infinity());
+  checkBetaGammaOriginDensity(0.25, 0.75, std::tgamma(1.25));
+  checkBetaGammaOriginDensity(0.75, 0.75, 0.0);
+
+  const std::array<Distribution, 2> extremeBetaGammaTerms{
+      beta(1.0, 0.72).value(), gamma(0.81, 1.0).value()};
+  const auto extremeBetaGamma =
+      finiteConvolution(extremeBetaGammaTerms, policy());
+  VSS_CHECK(extremeBetaGamma.hasValue());
+  if (extremeBetaGamma) {
+    const auto extremeLowerTails =
+        evaluate(extremeBetaGamma.value(), 1.0e-300, policy());
+    VSS_CHECK(extremeLowerTails.hasValue());
+    if (extremeLowerTails) {
+      VSS_CHECK(extremeLowerTails.value().cdf == 0.0);
+      VSS_CHECK(std::isfinite(extremeLowerTails.value().log_tails.log_cdf));
+      VSS_CHECK(extremeLowerTails.value().log_tails.log_cdf < -700.0);
+      VSS_CHECK(std::abs(extremeLowerTails.value().log_tails.log_survival) <
+                1.0e-12);
+    }
+    const auto extremeTails =
+        evaluate(extremeBetaGamma.value(), 1000.0, policy());
+    VSS_CHECK(extremeTails.hasValue());
+    if (extremeTails) {
+      VSS_CHECK(extremeTails.value().survival == 0.0);
+      VSS_CHECK(std::isfinite(extremeTails.value().log_density_or_mass));
+      VSS_CHECK(extremeTails.value().log_density_or_mass < -700.0);
+      VSS_CHECK(std::isfinite(extremeTails.value().log_tails.log_survival));
+      VSS_CHECK(extremeTails.value().log_tails.log_survival < -700.0);
+      VSS_CHECK(std::abs(extremeTails.value().log_tails.log_cdf) < 1.0e-12);
+    }
+    const auto farTails = evaluate(extremeBetaGamma.value(), 1.0e6, policy());
+    VSS_CHECK(farTails.hasValue());
+    if (farTails) {
+      VSS_CHECK(farTails.value().survival == 0.0);
+      VSS_CHECK(std::isfinite(farTails.value().log_tails.log_survival));
+      VSS_CHECK(farTails.value().log_tails.log_survival < -1.0e6);
+    }
+    const auto representableLogTail =
+        evaluate(extremeBetaGamma.value(), 1.0e300, policy());
+    VSS_CHECK(representableLogTail.hasValue());
+    if (representableLogTail) {
+      VSS_CHECK(representableLogTail.value().survival == 0.0);
+      VSS_CHECK(
+          std::isfinite(representableLogTail.value().log_tails.log_survival));
+      VSS_CHECK(representableLogTail.value().log_tails.log_survival < -1.0e299);
+    }
+  }
+
   const std::array<Distribution, 2> poissonTerms{poisson(1.25).value(),
                                                  poisson(2.75).value()};
   const auto poissonSum = finiteConvolution(poissonTerms, policy());

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <functional>
@@ -680,6 +681,26 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
                term.state_->family == Family::poisson;
       });
   if (poissonWithGamma) {
+    return DistributionFactory::convolution(std::move(components),
+                                            Measure::real_density, limits);
+  }
+  const bool betaOneWithGamma =
+      terms.size() == 2U &&
+      std::all_of(terms.begin(), terms.end(),
+                  [](const Distribution& term) {
+                    return term.state_->family == Family::beta ||
+                           term.state_->family == Family::gamma;
+                  }) &&
+      std::any_of(terms.begin(), terms.end(),
+                  [](const Distribution& term) {
+                    return term.state_->family == Family::beta &&
+                           term.state_->parameters[0] == 1.0;
+                  }) &&
+      std::any_of(terms.begin(), terms.end(), [](const Distribution& term) {
+        return term.state_->family == Family::gamma &&
+               term.state_->parameters[1] == 1.0;
+      });
+  if (betaOneWithGamma) {
     return DistributionFactory::convolution(std::move(components),
                                             Measure::real_density, limits);
   }
@@ -2056,6 +2077,612 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
   }
   case Family::finite_convolution: {
     if (!state.components.empty()) {
+      if (state.components.size() == 2U) {
+        std::shared_ptr<const Distribution::State> betaState;
+        std::shared_ptr<const Distribution::State> gammaState;
+        for (const auto& component : state.components) {
+          if (component->family == Family::beta &&
+              component->parameters[0] == 1.0) {
+            betaState = component;
+          } else if (component->family == Family::gamma &&
+                     component->parameters[1] == 1.0) {
+            gammaState = component;
+          }
+        }
+        if (betaState && gammaState) {
+          if (x < 0.0) {
+            return Result<TailValues>::success({0.0,
+                                                negativeInfinity,
+                                                0.0,
+                                                1.0,
+                                                {negativeInfinity, 0.0},
+                                                false});
+          }
+          const Scalar betaShape = betaState->parameters[1];
+          const Scalar gammaShape = gammaState->parameters[0];
+          const Scalar probabilitySlack =
+              8.0 * (policy.iteration.abs + policy.iteration.rel);
+          const Scalar collisionExponent = betaShape + gammaShape - 1.0;
+          const bool densityPole = x == 1.0 && collisionExponent <= 0.0;
+          auto gammaLogNormalizer = logGamma(gammaShape, policy);
+          if (!gammaLogNormalizer) {
+            return Result<TailValues>::failure(
+                gammaLogNormalizer.status().code(),
+                std::string(gammaLogNormalizer.status().message()));
+          }
+          if (x == 0.0) {
+            if (collisionExponent < 0.0) {
+              return Result<TailValues>::success({positiveInfinity,
+                                                  positiveInfinity,
+                                                  0.0,
+                                                  1.0,
+                                                  {negativeInfinity, 0.0},
+                                                  true});
+            }
+            if (collisionExponent == 0.0) {
+              auto numerator = logGamma(betaShape + 1.0, policy);
+              auto denominator = logGamma(betaShape + gammaShape, policy);
+              if (!numerator || !denominator) {
+                const Status& status =
+                    numerator ? denominator.status() : numerator.status();
+                return Result<TailValues>::failure(
+                    status.code(), std::string(status.message()));
+              }
+              return finiteTailValues(numerator.value() - denominator.value(),
+                                      {negativeInfinity, 0.0}, true);
+            }
+            return finiteTailValues(negativeInfinity, {negativeInfinity, 0.0},
+                                    true);
+          }
+          // Accumulate scaled probability integrals in extended precision;
+          // ordinary tails may underflow after their logarithmic offsets
+          // return.
+          using IntegralValues = std::array<long double, 3>;
+          // NOLINTBEGIN(misc-non-private-member-variables-in-classes): this
+          // private quadrature work record has no public API or invariants.
+          struct QuadratureCell final {
+            Scalar left;
+            Scalar right;
+            IntegralValues estimate;
+            IntegralValues error;
+            Index depth;
+
+            QuadratureCell(Scalar leftBound, Scalar rightBound,
+                           IntegralValues estimateValue,
+                           IntegralValues errorValue, Index level)
+                : left(leftBound), right(rightBound), estimate(estimateValue),
+                  error(errorValue), depth(level) {}
+          };
+          // NOLINTEND(misc-non-private-member-variables-in-classes)
+          std::uint64_t evaluations = 0U;
+          const auto integrate =
+              [&](Scalar lower, Scalar upper, Index power,
+                  const std::function<Result<IntegralValues>(Scalar, Scalar)>&
+                      kernel) -> Result<IntegralValues> {
+            if (!(upper > lower)) {
+              return Result<IntegralValues>::success({0.0, 0.0, 0.0});
+            }
+            const Scalar width = upper - lower;
+            const auto sample =
+                [&](Scalar coordinate) -> Result<IntegralValues> {
+              if (evaluations >= policy.iteration.max_evaluations) {
+                return Result<IntegralValues>::failure(
+                    ErrorCode::NoConvergence,
+                    "beta-gamma convolution reached its evaluation limit");
+              }
+              ++evaluations;
+              const Scalar powered = std::pow(coordinate, power);
+              const Scalar value = lower + (width * powered);
+              const Scalar jacobian = width * static_cast<Scalar>(power) *
+                                      std::pow(coordinate, power - 1U);
+              return kernel(value, jacobian);
+            };
+            constexpr std::array<Scalar, 16> kronrodNodes{
+                0.998002298693397060285172840152271209,
+                0.987992518020485428489565718586612581,
+                0.967739075679139134257347978784337225,
+                0.937273392400705904307758947710209471,
+                0.897264532344081900882509656454495883,
+                0.848206583410427216200648320774216851,
+                0.790418501442465932967649294817947347,
+                0.724417731360170047416186054613938010,
+                0.650996741297416970533735895313274693,
+                0.570972172608538847537226737253910641,
+                0.485081863640239680693655740232350613,
+                0.394151347077563369897207370981045468,
+                0.299180007153168812166780024266388963,
+                0.201194093997434522300628303394596208,
+                0.101142066918717499027074231447392339,
+                0.0};
+            // Embedded 15-point Gauss / 31-point Kronrod rule (QUADPACK DQK31).
+            constexpr std::array<Scalar, 16> kronrodWeights{
+                0.005377479872923348987792051430127650,
+                0.015007947329316122538374763075807268,
+                0.025460847326715320186874001019653359,
+                0.035346360791375846222037948478360048,
+                0.044589751324764876608227299373279690,
+                0.053481524690928087265343147239430297,
+                0.062009567800670640285139230960802932,
+                0.069854121318728258709520077099147476,
+                0.076849680757720378894432777482659007,
+                0.083080502823133021038289247286103790,
+                0.088564443056211770647275443693774303,
+                0.093126598170825321225486872747345719,
+                0.096642726983623678505179907627589335,
+                0.099173598721791959332393173484603131,
+                0.100769845523875595044946662617569722,
+                0.101330007014791549017374792767492547};
+            constexpr std::array<Scalar, 8> gaussWeights{
+                0.030753241996117268354628393577204418,
+                0.070366047488108124709267416450667338,
+                0.107159220467171935011869546685869303,
+                0.139570677926154314447804794511028323,
+                0.166269205816993933553200860481208811,
+                0.186161000015562211026800561866422825,
+                0.198431485327111576456118326443839325,
+                0.202578241925561272880620199967519315};
+            const auto evaluateCell =
+                [&](Scalar left, Scalar right,
+                    Index depth) -> Result<QuadratureCell> {
+              const Scalar center = 0.5 * (left + right);
+              const Scalar halfWidth = 0.5 * (right - left);
+              std::array<IntegralValues, 31> values{};
+              IntegralValues kronrod{};
+              IntegralValues gauss{};
+              IntegralValues absolute{};
+              const auto accumulate = [&](const IntegralValues& value,
+                                          long double weight,
+                                          IntegralValues& total) {
+                for (Index channel = 0U; channel < total.size(); ++channel) {
+                  total.at(channel) += weight * value.at(channel);
+                }
+              };
+              auto centerValue = sample(center);
+              if (!centerValue) {
+                return Result<QuadratureCell>::failure(
+                    centerValue.status().code(),
+                    std::string(centerValue.status().message()));
+              }
+              values[30] = centerValue.value();
+              accumulate(values[30], kronrodWeights[15], kronrod);
+              accumulate(values[30], std::abs(kronrodWeights[15]), absolute);
+              accumulate(values[30], gaussWeights[7], gauss);
+              for (Index node = 0U; node < 15U; ++node) {
+                const Scalar offset = halfWidth * kronrodNodes.at(node);
+                auto lowerValue = sample(center - offset);
+                auto upperValue = sample(center + offset);
+                if (!lowerValue || !upperValue) {
+                  const Status& status =
+                      lowerValue ? upperValue.status() : lowerValue.status();
+                  return Result<QuadratureCell>::failure(
+                      status.code(), std::string(status.message()));
+                }
+                values.at(2U * node) = lowerValue.value();
+                values.at((2U * node) + 1U) = upperValue.value();
+                IntegralValues pair{};
+                for (Index channel = 0U; channel < pair.size(); ++channel) {
+                  pair.at(channel) = lowerValue.value().at(channel) +
+                                     upperValue.value().at(channel);
+                }
+                accumulate(pair, kronrodWeights.at(node), kronrod);
+                accumulate({std::abs(lowerValue.value()[0]),
+                            std::abs(lowerValue.value()[1]),
+                            std::abs(lowerValue.value()[2])},
+                           kronrodWeights.at(node), absolute);
+                accumulate({std::abs(upperValue.value()[0]),
+                            std::abs(upperValue.value()[1]),
+                            std::abs(upperValue.value()[2])},
+                           kronrodWeights.at(node), absolute);
+                if (node % 2U == 1U) {
+                  accumulate(pair, gaussWeights.at(node / 2U), gauss);
+                }
+              }
+              IntegralValues estimate{};
+              IntegralValues error{};
+              IntegralValues mean{};
+              IntegralValues asc{};
+              for (Index channel = 0U; channel < estimate.size(); ++channel) {
+                estimate.at(channel) = kronrod.at(channel) * halfWidth;
+                mean.at(channel) = 0.5 * kronrod.at(channel);
+                asc.at(channel) =
+                    kronrodWeights[15] *
+                    std::abs(values[30].at(channel) - mean.at(channel));
+                for (Index node = 0U; node < 15U; ++node) {
+                  asc.at(channel) +=
+                      kronrodWeights.at(node) *
+                      (std::abs(values.at(2U * node).at(channel) -
+                                mean.at(channel)) +
+                       std::abs(values.at((2U * node) + 1U).at(channel) -
+                                mean.at(channel)));
+                }
+                const long double resabs = absolute.at(channel) * halfWidth;
+                asc.at(channel) *= halfWidth;
+                error.at(channel) = std::abs(
+                    (kronrod.at(channel) - gauss.at(channel)) * halfWidth);
+                if (asc.at(channel) != 0.0 && error.at(channel) != 0.0) {
+                  error.at(channel) =
+                      asc.at(channel) *
+                      std::min(1.0L, std::pow(200.0L * error.at(channel) /
+                                                  asc.at(channel),
+                                              1.5L));
+                }
+                const long double roundoffFloor =
+                    50.0L * std::numeric_limits<Scalar>::epsilon() * resabs;
+                error.at(channel) = std::max(error.at(channel), roundoffFloor);
+              }
+              return Result<QuadratureCell>::success(
+                  {left, right, estimate, error, depth});
+            };
+            auto initial = evaluateCell(0.0, 1.0, 0U);
+            if (!initial) {
+              return Result<IntegralValues>::failure(
+                  initial.status().code(),
+                  std::string(initial.status().message()));
+            }
+            std::vector<QuadratureCell> cells{initial.value()};
+            const auto aggregateCells = [&]() {
+              std::array<IntegralValues, 2> sums{};
+              std::array<IntegralValues, 2> corrections{};
+              for (const QuadratureCell& cell : cells) {
+                for (Index channel = 0U; channel < cell.estimate.size();
+                     ++channel) {
+                  const std::array<long double, 2> values{
+                      cell.estimate.at(channel), cell.error.at(channel)};
+                  for (Index kind = 0U; kind < values.size(); ++kind) {
+                    const long double adjusted =
+                        values.at(kind) - corrections.at(kind).at(channel);
+                    const long double next =
+                        sums.at(kind).at(channel) + adjusted;
+                    corrections.at(kind).at(channel) =
+                        (next - sums.at(kind).at(channel)) - adjusted;
+                    sums.at(kind).at(channel) = next;
+                  }
+                }
+              }
+              return sums;
+            };
+            auto totals = aggregateCells();
+            IntegralValues total = totals[0];
+            IntegralValues localError = totals[1];
+            IntegralValues previous = total;
+            Index subdivisions = 0U;
+            constexpr long double segmentToleranceFraction = 0.125L;
+            while (true) {
+              bool converged = subdivisions > 0U;
+              for (Index channel = 0U; channel < total.size(); ++channel) {
+                long double tolerance =
+                    static_cast<long double>(policy.iteration.abs) +
+                    (static_cast<long double>(policy.iteration.rel) *
+                     std::abs(total.at(channel)));
+                if (channel != 0U && total.at(channel) > 0.0) {
+                  tolerance =
+                      std::min(tolerance,
+                               static_cast<long double>(policy.abs_log_error) *
+                                   total.at(channel));
+                }
+                converged =
+                    converged &&
+                    localError.at(channel) <=
+                        segmentToleranceFraction * tolerance &&
+                    std::abs(total.at(channel) - previous.at(channel)) <=
+                        segmentToleranceFraction * tolerance;
+              }
+              if (converged) {
+                return Result<IntegralValues>::success(total);
+              }
+              if (subdivisions >= policy.iteration.max_iterations) {
+                return Result<IntegralValues>::failure(
+                    ErrorCode::NoConvergence,
+                    "beta-gamma convolution reached its subdivision limit");
+              }
+              Index selected = 0U;
+              long double largestScore = -1.0L;
+              for (Index cellIndex = 0U; cellIndex < cells.size();
+                   ++cellIndex) {
+                long double score = 0.0L;
+                for (Index channel = 0U; channel < total.size(); ++channel) {
+                  long double tolerance =
+                      static_cast<long double>(policy.iteration.abs) +
+                      (static_cast<long double>(policy.iteration.rel) *
+                       std::abs(total.at(channel)));
+                  if (channel != 0U && total.at(channel) > 0.0) {
+                    tolerance = std::min(tolerance, static_cast<long double>(
+                                                        policy.abs_log_error) *
+                                                        total.at(channel));
+                  }
+                  score = std::max(
+                      score,
+                      cells.at(cellIndex).error.at(channel) /
+                          std::max(tolerance,
+                                   std::numeric_limits<long double>::min()));
+                }
+                if (score > largestScore) {
+                  largestScore = score;
+                  selected = cellIndex;
+                }
+              }
+              const QuadratureCell parent = cells.at(selected);
+              if (parent.depth >= policy.iteration.max_iterations ||
+                  parent.depth >= 64U) {
+                return Result<IntegralValues>::failure(
+                    ErrorCode::NoConvergence, "beta-gamma convolution reached "
+                                              "its subdivision depth limit");
+              }
+              const Scalar middle = 0.5 * (parent.left + parent.right);
+              if (!(middle > parent.left) || !(middle < parent.right)) {
+                return Result<IntegralValues>::failure(
+                    ErrorCode::NoConvergence, "beta-gamma convolution interval "
+                                              "cannot be refined further");
+              }
+              previous = total;
+              const QuadratureCell oldCell = cells.at(selected);
+              cells.erase(
+                  cells.begin() +
+                  static_cast<std::vector<QuadratureCell>::difference_type>(
+                      selected));
+              auto leftCell =
+                  evaluateCell(oldCell.left, middle, oldCell.depth + 1U);
+              auto rightCell =
+                  evaluateCell(middle, oldCell.right, oldCell.depth + 1U);
+              if (!leftCell || !rightCell) {
+                const Status& status =
+                    leftCell ? rightCell.status() : leftCell.status();
+                return Result<IntegralValues>::failure(
+                    status.code(), std::string(status.message()));
+              }
+              cells.push_back(leftCell.value());
+              cells.push_back(rightCell.value());
+              totals = aggregateCells();
+              total = totals[0];
+              localError = totals[1];
+              ++subdivisions;
+            }
+          };
+          const auto powerFor = [&](Scalar exponent) -> Result<Index> {
+            if (!(exponent > 0.0)) {
+              return Result<Index>::failure(
+                  ErrorCode::InvalidDomain,
+                  "convolution singularity is not integrable");
+            }
+            const Scalar required = std::ceil(2.0 / exponent);
+            if (!std::isfinite(required) || required > 64.0 ||
+                required >
+                    static_cast<Scalar>(policy.iteration.max_iterations)) {
+              return Result<Index>::failure(
+                  ErrorCode::NoConvergence,
+                  "convolution endpoint regularization exceeds its work cap");
+            }
+            return Result<Index>::success(
+                std::max<Index>(2U, static_cast<Index>(required)));
+          };
+          Scalar densityLogScale = 0.0;
+          Scalar cdfLogScale = 0.0;
+          Scalar survivalLogScale = 0.0;
+          Scalar gammaBaseline = 0.0;
+          bool useStableLargeGammaRatio = false;
+          if (x < 0.5) {
+            auto betaNumerator = logGamma(betaShape + 1.0, policy);
+            auto densityDenominator = logGamma(betaShape + gammaShape, policy);
+            auto cdfDenominator =
+                logGamma(betaShape + gammaShape + 1.0, policy);
+            if (!betaNumerator || !densityDenominator || !cdfDenominator) {
+              const Status& status = !betaNumerator ? betaNumerator.status()
+                                     : !densityDenominator
+                                         ? densityDenominator.status()
+                                         : cdfDenominator.status();
+              return Result<TailValues>::failure(status.code(),
+                                                 std::string(status.message()));
+            }
+            const Scalar logX = std::log(x);
+            densityLogScale = betaNumerator.value() -
+                              densityDenominator.value() +
+                              (collisionExponent * logX);
+            cdfLogScale = betaNumerator.value() - cdfDenominator.value() +
+                          ((betaShape + gammaShape) * logX);
+          } else if (x >= 2.0) {
+            gammaBaseline = x - 1.0;
+            auto baselineTails =
+                incompleteGamma(gammaShape, gammaBaseline, policy);
+            if (!baselineTails) {
+              return Result<TailValues>::failure(
+                  baselineTails.status().code(),
+                  std::string(baselineTails.status().message()));
+            }
+            densityLogScale = (gammaShape - 1.0) * std::log(gammaBaseline) -
+                              gammaBaseline - gammaLogNormalizer.value();
+            survivalLogScale = baselineTails.value().log_survival;
+            // Keep the upper-gamma ratio in a range where its asymptotic
+            // correction can be evaluated without subtracting O(x) logs.
+            const Scalar asymptoticThreshold =
+                std::max(64.0, 64.0 + 4.0 * gammaShape * gammaShape);
+            useStableLargeGammaRatio = gammaBaseline >= asymptoticThreshold;
+          }
+          if (!std::isfinite(densityLogScale) || !std::isfinite(cdfLogScale) ||
+              !std::isfinite(survivalLogScale)) {
+            return Result<TailValues>::failure(
+                ErrorCode::NoConvergence,
+                "beta-gamma log-integral scaling is not representable");
+          }
+          // Relative to x^(a-1)e^-x, the upper incomplete gamma has the
+          // asymptotic series 1 + (a-1)/x + (a-1)(a-2)/x^2 + ... .
+          const auto upperGammaCorrection = [&](Scalar value) {
+            long double sum = 1.0L;
+            long double term = 1.0L;
+            long double previousMagnitude = 1.0L;
+            for (Index order = 1U; order <= 32U; ++order) {
+              term *= (static_cast<long double>(gammaShape) - order) /
+                      static_cast<long double>(value);
+              const long double magnitude = std::abs(term);
+              if (magnitude >= previousMagnitude) {
+                break;
+              }
+              sum += term;
+              if (magnitude <=
+                  std::numeric_limits<Scalar>::epsilon() * std::abs(sum)) {
+                break;
+              }
+              previousMagnitude = magnitude;
+            }
+            return static_cast<Scalar>(std::log(sum));
+          };
+          const auto kernel = [&](Scalar coordinate, Scalar jacobian,
+                                  bool belowOne) -> Result<IntegralValues> {
+            const Scalar betaGap =
+                belowOne ? (1.0 - x) + coordinate : coordinate;
+            const Scalar gammaCoordinate =
+                belowOne ? coordinate : (x - 1.0) + coordinate;
+            auto gammaTails =
+                incompleteGamma(gammaShape, gammaCoordinate, policy);
+            if (!gammaTails) {
+              return Result<IntegralValues>::failure(
+                  gammaTails.status().code(),
+                  std::string(gammaTails.status().message()));
+            }
+            const Scalar logScale = std::log(betaShape) +
+                                    ((betaShape - 1.0) * std::log(betaGap)) +
+                                    std::log(jacobian);
+            const Scalar logDensityValue =
+                ((gammaShape - 1.0) * std::log(gammaCoordinate)) -
+                gammaCoordinate - gammaLogNormalizer.value() + logScale;
+            Scalar densityLogRatio = logDensityValue - densityLogScale;
+            Scalar survivalLogRatio =
+                logScale + gammaTails.value().log_survival - survivalLogScale;
+            if (useStableLargeGammaRatio && !belowOne) {
+              const Scalar delta = coordinate;
+              const Scalar gammaRatio =
+                  (gammaShape - 1.0) * std::log1p(delta / gammaBaseline) -
+                  delta;
+              densityLogRatio = logScale + gammaRatio;
+              survivalLogRatio = logScale + gammaRatio +
+                                 upperGammaCorrection(gammaBaseline + delta) -
+                                 upperGammaCorrection(gammaBaseline);
+            }
+            const long double densityValue =
+                densityPole
+                    ? 0.0L
+                    : std::exp(static_cast<long double>(densityLogRatio));
+            const long double cdfValue = std::exp(static_cast<long double>(
+                logScale + gammaTails.value().log_cdf - cdfLogScale));
+            const long double survivalValue =
+                std::exp(static_cast<long double>(survivalLogRatio));
+            if ((!densityPole && !std::isfinite(densityValue)) ||
+                !std::isfinite(cdfValue) || !std::isfinite(survivalValue)) {
+              return Result<IntegralValues>::failure(
+                  ErrorCode::NonFiniteResult,
+                  "regularized convolution integrand is not finite");
+            }
+            return Result<IntegralValues>::success(
+                {densityValue, cdfValue, survivalValue});
+          };
+          IntegralValues integrated{};
+          const auto addSegment = [&](Scalar lower, Scalar upper, Index power,
+                                      bool belowOne) -> Status {
+            auto segment = integrate(
+                lower, upper, power, [&](Scalar coordinate, Scalar jacobian) {
+                  return kernel(coordinate, jacobian, belowOne);
+                });
+            if (!segment) {
+              return segment.status();
+            }
+            for (Index index = 0U; index < integrated.size(); ++index) {
+              integrated.at(index) += segment.value().at(index);
+            }
+            return Status::success();
+          };
+          if (x < 1.0 && x > 0.0) {
+            const Scalar split = std::min(x, 1.0 - x);
+            auto power = powerFor(gammaShape);
+            if (!power) {
+              return Result<TailValues>::failure(
+                  power.status().code(), std::string(power.status().message()));
+            }
+            Status status = addSegment(0.0, split, power.value(), true);
+            if (!status.ok()) {
+              return Result<TailValues>::failure(status.code(),
+                                                 std::string(status.message()));
+            }
+            status = addSegment(split, x, 1U, true);
+            if (!status.ok()) {
+              return Result<TailValues>::failure(status.code(),
+                                                 std::string(status.message()));
+            }
+          } else if (x >= 1.0) {
+            const Scalar offset = x - 1.0;
+            const Scalar split = std::min(1.0, offset);
+            const Scalar regularizingExponent =
+                x == 1.0 && !densityPole
+                    ? std::min(betaShape, collisionExponent)
+                    : betaShape;
+            auto power = powerFor(regularizingExponent);
+            if (!power) {
+              return Result<TailValues>::failure(
+                  power.status().code(), std::string(power.status().message()));
+            }
+            Status status = addSegment(0.0, split == 0.0 ? 1.0 : split,
+                                       power.value(), false);
+            if (!status.ok()) {
+              return Result<TailValues>::failure(status.code(),
+                                                 std::string(status.message()));
+            }
+            if (split > 0.0 && split < 1.0) {
+              status = addSegment(split, 1.0, 1U, false);
+              if (!status.ok()) {
+                return Result<TailValues>::failure(
+                    status.code(), std::string(status.message()));
+              }
+            }
+          }
+          const long double densityValue =
+              densityPole ? std::numeric_limits<long double>::infinity()
+                          : integrated[0];
+          Scalar logDensityValue =
+              densityPole ? positiveInfinity
+              : integrated[0] == 0.0L
+                  ? negativeInfinity
+                  : static_cast<Scalar>(std::log(densityValue)) +
+                        densityLogScale;
+          Scalar logCdf =
+              integrated[1] == 0.0L
+                  ? negativeInfinity
+                  : static_cast<Scalar>(std::log(integrated[1])) + cdfLogScale;
+          Scalar logSurvival =
+              integrated[2] == 0.0L
+                  ? negativeInfinity
+                  : static_cast<Scalar>(std::log(integrated[2])) +
+                        survivalLogScale;
+          if (x < 1.0) {
+            logSurvival = logAddExp(logSurvival, betaShape * std::log1p(-x));
+          }
+          if ((!densityPole && !std::isfinite(densityValue)) ||
+              (x > 0.0 && (logDensityValue == negativeInfinity ||
+                           logCdf == negativeInfinity ||
+                           logSurvival == negativeInfinity))) {
+            return Result<TailValues>::failure(
+                ErrorCode::NoConvergence,
+                "beta-gamma log integral is outside the scaled range");
+          }
+          const Scalar cdf = std::exp(logCdf);
+          const Scalar survival = std::exp(logSurvival);
+          if (std::isnan(cdf) || std::isnan(survival) || cdf < 0.0 ||
+              survival < 0.0 || cdf > 1.0 + probabilitySlack ||
+              survival > 1.0 + probabilitySlack) {
+            return Result<TailValues>::failure(
+                ErrorCode::NonFiniteResult, "beta-gamma convolution result is "
+                                            "outside its probability range");
+          }
+          const LogTailPair logTails{logCdf, logSurvival};
+          if (densityPole) {
+            return Result<TailValues>::success(
+                {.density_or_mass = positiveInfinity,
+                 .log_density_or_mass = positiveInfinity,
+                 .cdf = static_cast<Scalar>(cdf),
+                 .survival = static_cast<Scalar>(survival),
+                 .log_tails = logTails,
+                 .on_support = true});
+          }
+          return finiteTailValues(logDensityValue, logTails, true);
+        }
+      }
       std::shared_ptr<const Distribution::State> continuousState;
       std::shared_ptr<const Distribution::State> discreteState;
       for (const auto& component : state.components) {
