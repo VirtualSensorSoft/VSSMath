@@ -318,6 +318,24 @@ void equalWeightsAndRankOneMixedTuple() {
   close(at(result.value(), Tuple{0U, 0U, 0U, 0U}), exact.value());
   close(at(result.value(), Tuple{0U, 0U, 0U, 0U}), 19251.0L / 5.0L);
   close(at(result.value(), Tuple{0U, 0U, 1U, 1U}), 4.0L * exact.value());
+
+  const std::array<Fraction, 5U> unequalWeights{
+      Fraction{2}, Fraction{3}, Fraction{4}, Fraction{5}, Fraction{6}};
+  const Tuple mixed{0U, 0U, 1U, 1U};
+  const auto unequalReference =
+      exactFourthReference(rows, unequalWeights, mixed);
+  close(static_cast<Scalar>(unequalReference.value()),
+        4.0L * 1588.9184927697431L);
+  for (const Scalar factor : {1.0, 0x1p500}) {
+    const Vector unequal(std::array<Scalar, 5U>{
+        2.0 * factor, 3.0 * factor, 4.0 * factor, 5.0 * factor, 6.0 * factor});
+    const auto mixedResult = unbiasedFixedWeightedFourthMoment(
+        sample(observations), fixed(unequal), denseFourth(), ample());
+    VSS_CHECK(mixedResult);
+    close(at(mixedResult.value(), mixed), unequalReference.value());
+    close(at(mixedResult.value(), Tuple{1U, 0U, 1U, 0U}),
+          unequalReference.value());
+  }
 }
 
 void validationAndWeightScale() {

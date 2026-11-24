@@ -163,6 +163,7 @@ void fullRankMixedFiniteLawEnumeration() {
   const std::array<std::array<Scalar, 2U>, 3U> atoms{
       std::array<Scalar, 2U>{0.0, 0.0}, {1.0, 0.0}, {0.0, 2.0}};
   std::int64_t weightedNumerator = 0;
+  std::int64_t swappedWeightedNumerator = 0;
   constexpr std::int64_t denominator = std::int64_t{60} * 50;
   for (Index a = 0U; a < 3U; ++a) {
     for (Index b = 0U; b < 3U; ++b) {
@@ -198,12 +199,43 @@ void fullRankMixedFiniteLawEnumeration() {
           VSS_CHECK(std::abs(static_cast<long double>(actual) - exact) <=
                     1.0e-12L + 1.0e-10L * std::abs(exact));
           weightedNumerator += probabilityNumerator * reference.numerator;
+          const auto swapped = referenceMixedThird(y, x, {1.0, 2.0, 3.0, 4.0});
+          close(result.value().terms.view()[0U].values.at(3U),
+                static_cast<Scalar>(swapped.numerator) /
+                    static_cast<Scalar>(swapped.denominator));
+          swappedWeightedNumerator += probabilityNumerator * swapped.numerator;
         }
       }
     }
   }
   VSS_CHECK(weightedNumerator * std::int64_t{27} ==
             std::int64_t{-1296} * denominator);
+  VSS_CHECK(swappedWeightedNumerator * std::int64_t{27} ==
+            std::int64_t{-5184} * denominator);
+}
+
+void equalAndUnequalRankOneWeights() {
+  const Matrix observations = matrix({{1.0}, {2.0}, {4.0}, {8.0}, {16.0}});
+  const Vector equal(std::array<Scalar, 5U>{1.0, 1.0, 1.0, 1.0, 1.0});
+  const auto scalar = unbiasedFixedWeightedThirdMoment(
+      sample(observations), fixed(equal), denseThird(), ample());
+  VSS_CHECK(scalar);
+  close(scalar.value().terms.view()[0U].values.at(0U), 3007.0 / 10.0);
+
+  const Matrix rankOne = matrix({{1.0, 2.0, -3.0},
+                                 {2.0, 4.0, -6.0},
+                                 {4.0, 8.0, -12.0},
+                                 {8.0, 16.0, -24.0},
+                                 {16.0, 32.0, -48.0}});
+  const std::array<Index, 1U> shape{3U};
+  for (const Scalar factor : {1.0, 0x1p500}) {
+    const Vector unequal(std::array<Scalar, 5U>{
+        2.0 * factor, 3.0 * factor, 4.0 * factor, 5.0 * factor, 6.0 * factor});
+    const auto mixed = unbiasedFixedWeightedThirdMoment(
+        sample(rankOne, shape), fixed(unequal), denseThird(), ample());
+    VSS_CHECK(mixed);
+    close(mixed.value().terms.view()[0U].values.at(5U), -6.0 * 4940.0 / 29.0);
+  }
 }
 
 void layoutsAndContraction() {
@@ -345,6 +377,7 @@ void validationAndLimits() {
 int main() try {
   exactFiniteLawEnumeration();
   fullRankMixedFiniteLawEnumeration();
+  equalAndUnequalRankOneWeights();
   layoutsAndContraction();
   scaleAndExtremeRange();
   validationAndLimits();
