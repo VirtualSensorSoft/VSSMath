@@ -59,7 +59,7 @@ struct Support final {
   std::optional<std::uint64_t> frequency_mass;
   /// @brief Sum of admitted scalar weights when defined.
   std::optional<Scalar> weight_mass;
-  /// @brief First three normalized raw weight-power sums when defined.
+  /// @brief Sums of normalized weights to powers 2, 3, and 4, when defined.
   std::array<std::optional<Scalar>, 3> normalized_weight_powers;
   /// @brief Effective support count when its estimator premise is defined.
   std::optional<Scalar> effective_count;
@@ -95,9 +95,11 @@ struct EstimatorDiagnostics final {
   Array<TupleSupport> tuple_support;
   /// @brief Retained-spectrum reciprocal condition when available.
   std::optional<Scalar> reciprocal_condition = std::nullopt;
-  /// @brief Bound or estimate for numerical error when available.
+  /// @brief Absolute numerical-error bound in the result norm and units;
+  ///        its interpretation is documented in the algorithm premise.
   std::optional<Scalar> numerical_error;
-  /// @brief Bound or estimate for sampling error when available.
+  /// @brief Sampling-error estimate only under a named calibrated model;
+  ///        its model is identified in @ref premises.
   std::optional<Scalar> sampling_error;
   /// @brief Effective numerical rank when the algorithm reports one.
   std::optional<Index> rank;

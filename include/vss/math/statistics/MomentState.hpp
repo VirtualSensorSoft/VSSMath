@@ -59,7 +59,7 @@ struct OnlineMoments final {
   Vector scratch_observation;
   /// @brief Sum of positive admitted weights.
   Scalar mass{};
-  /// @brief Normalized raw weight-power sums of orders one through three.
+  /// @brief Sums of normalized weight powers two, three, and four.
   std::array<Scalar, 3U> raw_weight_powers{};
   /// @brief Number of admitted observations, including zero weights.
   Index count{};
@@ -112,7 +112,8 @@ struct RollingMoments final {
   Vector front_positive_counts;
   /// @brief Encoded all-unit-weight flags for front-stack prefixes.
   Vector front_unit_flags;
-  /// @brief Normalized raw weight-power sums for front-stack prefixes.
+  /// @brief Sums of normalized weight powers two through four for front
+  /// prefixes.
   Vector front_weight_powers;
   /// @brief Back-stack prefix means, anchors, offsets and centered sums.
   Vector back_means;
@@ -128,7 +129,8 @@ struct RollingMoments final {
   Vector back_positive_counts;
   /// @brief Encoded all-unit-weight flags for back-stack prefixes.
   Vector back_unit_flags;
-  /// @brief Normalized raw weight-power sums for back-stack prefixes.
+  /// @brief Sums of normalized weight powers two through four for back
+  /// prefixes.
   Vector back_weight_powers;
   /// @brief Preallocated state workspaces used for transactional stack ops.
   mutable OnlineMoments work;

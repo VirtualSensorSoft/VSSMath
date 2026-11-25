@@ -46,13 +46,16 @@ struct TestResult final {
 
 /// @brief One selected covariance entry, in (row, column) order.
 struct CovarianceEntry final {
+  /// @brief Zero-based covariance-matrix row index.
   Index row{};
+  /// @brief Zero-based covariance-matrix column index.
   Index column{};
 };
 
 /// @brief Declares Gaussian assumptions and selected covariance entries.
 /// @details An empty selection requests every entry in row-major order.
 struct CovarianceUncertaintySpec final {
+  /// @brief Caller acknowledgement of the normal-IID premise.
   NormalIID premise;
   /// @brief True when the supplied covariance is an estimate used plug-in.
   bool plug_in{};

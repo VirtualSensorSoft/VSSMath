@@ -463,15 +463,18 @@ Result<Estimate<Matrix>> makeEstimate(const SampleView& left,
       .positive = count,
       .frequency_mass = std::nullopt,
       .weight_mass = static_cast<Scalar>(count),
-      .normalized_weight_powers = {1.0, 1.0 / static_cast<Scalar>(count),
+      .normalized_weight_powers = {1.0 / static_cast<Scalar>(count),
                                    1.0 / (static_cast<Scalar>(count) *
+                                          static_cast<Scalar>(count)),
+                                   1.0 / (static_cast<Scalar>(count) *
+                                          static_cast<Scalar>(count) *
                                           static_cast<Scalar>(count))},
       .effective_count = static_cast<Scalar>(count),
       .degrees_of_freedom =
           policy.normalization == VarianceMode::iid_sample
               ? std::optional<Scalar>(static_cast<Scalar>(count - 1U))
               : std::nullopt,
-      .squared_weight_mass = std::nullopt};
+      .squared_weight_mass = static_cast<Scalar>(count)};
   EstimatorDiagnostics diagnostics{
       .estimand = policy.estimand,
       .weight = WeightRule::unweighted,

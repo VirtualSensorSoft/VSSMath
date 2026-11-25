@@ -504,24 +504,32 @@ Scalar weightAt(const WeightSpec& weights, Index row, Index coordinate) {
 
 Support
 supportFrom(const ComponentSupport& source, bool includeMass,
-            std::optional<std::array<Scalar, 2U>> powers = std::nullopt) {
+            std::optional<std::array<Scalar, 3U>> powers = std::nullopt) {
   std::optional<Scalar> mass;
   std::optional<Scalar> power2;
   std::optional<Scalar> power3;
+  std::optional<Scalar> power4;
   std::optional<Scalar> effective;
-  std::optional<Scalar> power1;
   if (includeMass) {
     Scalar converted = 0.0;
     if (toScalar(source.mass.value(), converted)) {
       mass = converted;
     }
     if (source.mass.value().fraction != 0.0 && powers.has_value()) {
-      power1 = 1.0;
       power2 = powers->at(0U);
       power3 = powers->at(1U);
+      power4 = powers->at(2U);
       effective = power2.value() > 0.0
                       ? std::optional<Scalar>{1.0 / power2.value()}
                       : std::nullopt;
+    }
+  }
+  std::optional<Scalar> squaredMass;
+  if (mass.has_value() && power2.has_value()) {
+    const long double value = static_cast<long double>(*mass) * *mass * *power2;
+    if (std::isfinite(value) && value >= 0.0L &&
+        value <= std::numeric_limits<Scalar>::max()) {
+      squaredMass = static_cast<Scalar>(value);
     }
   }
   return Support{.input = source.input,
@@ -529,18 +537,19 @@ supportFrom(const ComponentSupport& source, bool includeMass,
                  .positive = source.positive,
                  .frequency_mass = std::nullopt,
                  .weight_mass = mass,
-                 .normalized_weight_powers = {power1, power2, power3},
+                 .normalized_weight_powers = {power2, power3, power4},
                  .effective_count = effective,
                  .degrees_of_freedom = std::nullopt,
-                 .squared_weight_mass = std::nullopt};
+                 .squared_weight_mass = squaredMass};
 }
 
-Result<std::array<Scalar, 2U>> normalizedPowers(const SampleView& sample,
+Result<std::array<Scalar, 3U>> normalizedPowers(const SampleView& sample,
                                                 const WeightSpec& weights,
                                                 Scaled denominator,
                                                 Index coordinate = 0U) {
   vss::math::detail::CompensatedSum square;
   vss::math::detail::CompensatedSum cube;
+  vss::math::detail::CompensatedSum fourth;
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
     const Scalar w = weightAt(weights, row, coordinate);
     if (w == 0.0) {
@@ -549,14 +558,15 @@ Result<std::array<Scalar, 2U>> normalizedPowers(const SampleView& sample,
     const Scaled ratio = divide(scaled(w), denominator);
     Scalar normalized = 0.0;
     if (!toScalar(ratio, normalized)) {
-      return fail<std::array<Scalar, 2U>>(ErrorCode::NonFiniteResult,
+      return fail<std::array<Scalar, 3U>>(ErrorCode::NonFiniteResult,
                                           "normalized weight is not finite");
     }
     square.add(normalized * normalized);
     cube.add(normalized * normalized * normalized);
+    fourth.add(normalized * normalized * normalized * normalized);
   }
-  return Result<std::array<Scalar, 2U>>::success(
-      {square.total(), cube.total()});
+  return Result<std::array<Scalar, 3U>>::success(
+      {square.total(), cube.total(), fourth.total()});
 }
 
 Result<Scaled> dotRow(const SampleView& sample, Index row,
@@ -843,7 +853,7 @@ Result<MomentEstimate> estimate(const SampleView& sample,
     }
   }
 
-  std::array<Scalar, 2U> commonPowers{0.0, 0.0};
+  std::array<Scalar, 3U> commonPowers{0.0, 0.0, 0.0};
   if (!componentWeights) {
     auto powers = normalizedPowers(sample, weights, globalSupport.mass.value());
     if (!powers) {
@@ -856,7 +866,7 @@ Result<MomentEstimate> estimate(const SampleView& sample,
   if (componentWeights) {
     coordinateSupportValues.reserve(d);
     for (Index coordinate = 0U; coordinate < d; ++coordinate) {
-      std::optional<std::array<Scalar, 2U>> powers;
+      std::optional<std::array<Scalar, 3U>> powers;
       if (coordinateSupports[coordinate].positive > 0U) {
         auto normalized = normalizedPowers(
             sample, weights, coordinateSupports[coordinate].mass.value(),
@@ -1064,6 +1074,7 @@ Result<MomentEstimate> estimate(const SampleView& sample,
       if (componentWeights) {
         const Index coordinate = tuple.front();
         std::vector<Index> coordinates(tuple.begin(), tuple.end());
+        std::sort(coordinates.begin(), coordinates.end());
         auto storedCoordinates = Array<Index>::copy(coordinates, limits);
         if (!storedCoordinates) {
           return fail<MomentEstimate>(storedCoordinates.status().code(),
@@ -1103,6 +1114,23 @@ Result<MomentEstimate> estimate(const SampleView& sample,
     return fail<MomentEstimate>(ownedTerms.status().code(),
                                 ownedTerms.status().message());
   }
+  std::sort(
+      tupleSupports.begin(), tupleSupports.end(),
+      [](const TupleSupport& left, const TupleSupport& right) {
+        return std::lexicographical_compare(
+            left.coordinates.view().begin(), left.coordinates.view().end(),
+            right.coordinates.view().begin(), right.coordinates.view().end());
+      });
+  tupleSupports.erase(
+      std::unique(tupleSupports.begin(), tupleSupports.end(),
+                  [](const TupleSupport& left, const TupleSupport& right) {
+                    return left.coordinates.view().size() ==
+                               right.coordinates.view().size() &&
+                           std::equal(left.coordinates.view().begin(),
+                                      left.coordinates.view().end(),
+                                      right.coordinates.view().begin());
+                  }),
+      tupleSupports.end());
   auto ownedTupleSupports = Array<TupleSupport>::copy(tupleSupports, limits);
   if (!ownedTupleSupports) {
     return fail<MomentEstimate>(ownedTupleSupports.status().code(),
@@ -1505,7 +1533,7 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedThird(
                                 shape.status().message());
   }
 
-  std::array<MomentInterval, 2U> powerSums{};
+  std::array<MomentInterval, 3U> powerSums{};
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
     const Scalar weight = fixedWeights.rowWeights->at(row);
     if (weight == 0.0) {
@@ -1515,18 +1543,24 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedThird(
         MomentInterval::point(weight).divideByPositive(mass);
     powerSums[0U] = powerSums[0U] + normalized * normalized;
     powerSums[1U] = powerSums[1U] + normalized * normalized * normalized;
+    powerSums[2U] =
+        powerSums[2U] + normalized * normalized * normalized * normalized;
   }
-  std::array<std::optional<Scalar>, 3U> powers{1.0, std::nullopt, std::nullopt};
+  std::array<std::optional<Scalar>, 3U> powers{};
   Scalar squaredPower = 0.0;
-  Scalar cubedPower = 0.0;
   if (intervalCandidate(powerSums[0U], squaredPower)) {
-    powers[1U] = squaredPower;
+    powers[0U] = squaredPower;
   }
+  Scalar cubedPower = 0.0;
   if (intervalCandidate(powerSums[1U], cubedPower)) {
-    powers[2U] = cubedPower;
+    powers[1U] = cubedPower;
+  }
+  Scalar fourthPower = 0.0;
+  if (intervalCandidate(powerSums[2U], fourthPower)) {
+    powers[2U] = fourthPower;
   }
   std::optional<Scalar> effectiveCount;
-  if (squaredPower > 0.0 && powers[1U].has_value()) {
+  if (squaredPower > 0.0 && powers[0U].has_value()) {
     const Scalar reciprocal = 1.0 / squaredPower;
     if (std::isfinite(reciprocal)) {
       effectiveCount = reciprocal;
@@ -1537,15 +1571,22 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedThird(
   if (intervalCandidate(mass, weightMass)) {
     reportedMass = weightMass;
   }
-  const Support support{.input = sample.rows.rows(),
-                        .valid = sample.rows.rows(),
-                        .positive = positive,
-                        .frequency_mass = std::nullopt,
-                        .weight_mass = reportedMass,
-                        .normalized_weight_powers = powers,
-                        .effective_count = effectiveCount,
-                        .degrees_of_freedom = std::nullopt,
-                        .squared_weight_mass = std::nullopt};
+  Support support{.input = sample.rows.rows(),
+                  .valid = sample.rows.rows(),
+                  .positive = positive,
+                  .frequency_mass = std::nullopt,
+                  .weight_mass = reportedMass,
+                  .normalized_weight_powers = powers,
+                  .effective_count = effectiveCount,
+                  .degrees_of_freedom = std::nullopt,
+                  .squared_weight_mass = std::nullopt};
+  const long double rawSquaredWeightMass =
+      static_cast<long double>(reportedMass.value_or(0.0)) *
+      reportedMass.value_or(0.0) * squaredPower;
+  if (reportedMass.has_value() && std::isfinite(rawSquaredWeightMass) &&
+      rawSquaredWeightMass <= std::numeric_limits<Scalar>::max()) {
+    support.squared_weight_mass = static_cast<Scalar>(rawSquaredWeightMass);
+  }
   auto coordinateSupport = Array<Support>::copy({}, limits);
   if (!coordinateSupport) {
     return fail<MomentEstimate>(coordinateSupport.status().code(),
@@ -2087,14 +2128,18 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedFourth(
     return fail<MomentEstimate>(shape.status().code(),
                                 shape.status().message());
   }
-  std::array<std::optional<Scalar>, 3U> powers{1.0, std::nullopt, std::nullopt};
+  std::array<std::optional<Scalar>, 3U> powers{};
   Scalar squaredPower = 0.0;
   Scalar cubedPower = 0.0;
+  Scalar fourthPower = 0.0;
   if (intervalCandidate(s2, squaredPower)) {
-    powers[1U] = squaredPower;
+    powers[0U] = squaredPower;
   }
   if (intervalCandidate(s3, cubedPower)) {
-    powers[2U] = cubedPower;
+    powers[1U] = cubedPower;
+  }
+  if (intervalCandidate(s4, fourthPower)) {
+    powers[2U] = fourthPower;
   }
   std::optional<Scalar> effectiveCount;
   if (squaredPower > 0.0) {
@@ -2108,15 +2153,22 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedFourth(
   if (intervalCandidate(mass, reportedMassValue)) {
     reportedMass = reportedMassValue;
   }
-  const Support support{.input = sample.rows.rows(),
-                        .valid = sample.rows.rows(),
-                        .positive = positive,
-                        .frequency_mass = std::nullopt,
-                        .weight_mass = reportedMass,
-                        .normalized_weight_powers = powers,
-                        .effective_count = effectiveCount,
-                        .degrees_of_freedom = std::nullopt,
-                        .squared_weight_mass = std::nullopt};
+  Support support{.input = sample.rows.rows(),
+                  .valid = sample.rows.rows(),
+                  .positive = positive,
+                  .frequency_mass = std::nullopt,
+                  .weight_mass = reportedMass,
+                  .normalized_weight_powers = powers,
+                  .effective_count = effectiveCount,
+                  .degrees_of_freedom = std::nullopt,
+                  .squared_weight_mass = std::nullopt};
+  const long double rawSquaredWeightMass =
+      static_cast<long double>(reportedMass.value_or(0.0)) *
+      reportedMass.value_or(0.0) * squaredPower;
+  if (reportedMass.has_value() && std::isfinite(rawSquaredWeightMass) &&
+      rawSquaredWeightMass <= std::numeric_limits<Scalar>::max()) {
+    support.squared_weight_mass = static_cast<Scalar>(rawSquaredWeightMass);
+  }
   auto coordinateSupport = Array<Support>::copy({}, limits);
   if (!coordinateSupport) {
     return fail<MomentEstimate>(coordinateSupport.status().code(),
@@ -2138,7 +2190,7 @@ Result<MomentEstimate> estimateUnbiasedFixedWeightedFourth(
       .reciprocal_condition = reciprocalCondition,
       .numerical_error = maximumError,
       .sampling_error = std::nullopt,
-      .rank = std::nullopt,
+      .rank = 2U,
       .algorithm =
           "fixed_iid_weighted_fourth_central_moment_scaled_pivoted_2x2",
       .premises =

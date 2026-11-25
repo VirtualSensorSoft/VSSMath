@@ -77,6 +77,7 @@ add_library(vss_math STATIC
   src/statistics/Inference.cpp
   src/statistics/Diagnostics.cpp
   src/statistics/RatioEstimate.cpp
+  src/statistics/EstimatorDiagnostics.cpp
   src/statistics/Bootstrap.cpp
   src/statistics/Summary.cpp
   src/statistics/Population.cpp

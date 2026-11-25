@@ -468,9 +468,13 @@ void descriptiveSummaryCases() {
     const auto& diagnostics = replicated.value().diagnostics.global;
     VSS_CHECK(diagnostics.effective_count.has_value());
     checkNear(diagnostics.effective_count.value_or(0.0), 3.0);
-    VSS_CHECK(diagnostics.normalized_weight_powers[1U].has_value());
-    checkNear(diagnostics.normalized_weight_powers[1U].value_or(0.0),
+    VSS_CHECK(diagnostics.normalized_weight_powers[0U].has_value());
+    checkNear(diagnostics.normalized_weight_powers[0U].value_or(0.0),
               1.0 / 3.0);
+    checkNear(diagnostics.normalized_weight_powers[1U].value_or(0.0),
+              1.0 / 9.0);
+    checkNear(diagnostics.normalized_weight_powers[2U].value_or(0.0),
+              1.0 / 27.0);
   }
   const auto frequencyIid = vss::math::statistics::descriptiveSummary(
       pairSample, frequency,

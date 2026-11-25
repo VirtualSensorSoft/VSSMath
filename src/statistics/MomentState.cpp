@@ -941,6 +941,12 @@ Result<MomentEstimate> makeEstimate(const OnlineMoments& state, WeightRule rule,
                   .effective_count = std::nullopt,
                   .degrees_of_freedom = std::nullopt,
                   .squared_weight_mass = std::nullopt};
+  const long double squaredMass = static_cast<long double>(state.mass) *
+                                  state.mass * state.raw_weight_powers.at(0U);
+  if (std::isfinite(squaredMass) &&
+      squaredMass <= std::numeric_limits<Scalar>::max()) {
+    support.squared_weight_mass = static_cast<Scalar>(squaredMass);
+  }
   support.normalized_weight_powers[0] = state.raw_weight_powers.at(0);
   support.normalized_weight_powers[1] = state.raw_weight_powers.at(1);
   support.normalized_weight_powers[2] = state.raw_weight_powers.at(2);
@@ -1198,12 +1204,12 @@ Status add(OnlineMoments& state, ConstVectorView observation, Scalar weight) {
   ++state.count;
   ++state.positive_count;
   state.all_unit_weights = state.all_unit_weights && weight == 1.0;
-  for (Index power = 1U; power <= 3U; ++power) {
+  for (Index power = 2U; power <= 4U; ++power) {
     const Scalar oldRatio = oldMass / total;
-    Scalar nextPower = state.raw_weight_powers.at(power - 1U) *
+    Scalar nextPower = state.raw_weight_powers.at(power - 2U) *
                        std::pow(oldRatio, static_cast<Scalar>(power));
     nextPower += std::pow(weight / total, static_cast<Scalar>(power));
-    state.raw_weight_powers.at(power - 1U) = nextPower;
+    state.raw_weight_powers.at(power - 2U) = nextPower;
   }
   return Status::success();
 }
@@ -1399,13 +1405,13 @@ Status merge(OnlineMoments& destination, const OnlineMoments& source) {
   destination.positive_count += source.positive_count;
   destination.all_unit_weights =
       destination.all_unit_weights && source.all_unit_weights;
-  for (Index power = 1U; power <= 3U; ++power) {
+  for (Index power = 2U; power <= 4U; ++power) {
     const auto exponent = static_cast<Scalar>(power);
-    destination.raw_weight_powers.at(power - 1U) =
+    destination.raw_weight_powers.at(power - 2U) =
         std::pow(leftRatio, exponent) *
-            destination.raw_weight_powers.at(power - 1U) +
+            destination.raw_weight_powers.at(power - 2U) +
         std::pow(rightRatio, exponent) *
-            source.raw_weight_powers.at(power - 1U);
+            source.raw_weight_powers.at(power - 2U);
   }
   return Status::success();
 }

@@ -193,11 +193,21 @@ Result<Array<Support>> makeSupports(const std::vector<Support>& supports,
 }
 
 Support supportFor(Index input, Index valid, Index positive, Scalar maximum,
-                   Scalar scaledMass, Scalar power2, Scalar power3) {
+                   Scalar scaledMass, Scalar power2, Scalar power3,
+                   Scalar power4) {
   std::optional<Scalar> mass;
-  const Scalar actualMass = maximum * scaledMass;
-  if (std::isfinite(actualMass)) {
-    mass = actualMass;
+  std::optional<Scalar> squaredMass;
+  const long double actualMass = static_cast<long double>(maximum) * scaledMass;
+  if (std::isfinite(actualMass) &&
+      actualMass <= std::numeric_limits<Scalar>::max()) {
+    mass = static_cast<Scalar>(actualMass);
+  }
+  const long double actualSquaredMass = static_cast<long double>(maximum) *
+                                        maximum * scaledMass * scaledMass *
+                                        power2;
+  if (std::isfinite(actualSquaredMass) && actualSquaredMass >= 0.0L &&
+      actualSquaredMass <= std::numeric_limits<Scalar>::max()) {
+    squaredMass = static_cast<Scalar>(actualSquaredMass);
   }
   const Scalar effective = power2 > 0.0 ? 1.0 / power2 : 0.0;
   return Support{.input = input,
@@ -205,10 +215,10 @@ Support supportFor(Index input, Index valid, Index positive, Scalar maximum,
                  .positive = positive,
                  .frequency_mass = std::nullopt,
                  .weight_mass = mass,
-                 .normalized_weight_powers = {1.0, power2, power3},
+                 .normalized_weight_powers = {power2, power3, power4},
                  .effective_count = effective,
                  .degrees_of_freedom = std::nullopt,
-                 .squared_weight_mass = std::nullopt};
+                 .squared_weight_mass = squaredMass};
 }
 
 EstimatorDiagnostics diagnosticsFor(WeightRule weightRule, Support support,
@@ -330,6 +340,7 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
     detail::CompensatedSum mass;
     detail::CompensatedSum power2;
     detail::CompensatedSum power3;
+    detail::CompensatedSum power4;
     detail::CompensatedSum weightedValue;
     for (Index row = 0U; row < sample.rows.rows(); ++row) {
       if (!validCell(sample, row, column)) {
@@ -343,6 +354,7 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
       mass.add(scaledWeight);
       power2.add(scaledWeight * scaledWeight);
       power3.add(scaledWeight * scaledWeight * scaledWeight);
+      power4.add(scaledWeight * scaledWeight * scaledWeight * scaledWeight);
       const Scalar scaledValue =
           valueScale == 0.0 ? 0.0 : sample.rows.at(row, column) / valueScale;
       weightedValue.add(scaledWeight * scaledValue);
@@ -359,10 +371,11 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
                                     "weighted mean is non-finite");
     }
     mean.at(column) = estimate;
-    coordinateSupports.push_back(
-        supportFor(sample.rows.rows(), validCount, positiveCount, maximumWeight,
-                   scaledMass, power2.total() / (scaledMass * scaledMass),
-                   power3.total() / (scaledMass * scaledMass * scaledMass)));
+    coordinateSupports.push_back(supportFor(
+        sample.rows.rows(), validCount, positiveCount, maximumWeight,
+        scaledMass, power2.total() / (scaledMass * scaledMass),
+        power3.total() / (scaledMass * scaledMass * scaledMass),
+        power4.total() / (scaledMass * scaledMass * scaledMass * scaledMass)));
   }
 
   auto supports = makeSupports(coordinateSupports, limits);
@@ -421,18 +434,21 @@ Result<Estimate<Vector>> weightedMean(const SampleView& sample,
     detail::CompensatedSum mass;
     detail::CompensatedSum power2;
     detail::CompensatedSum power3;
+    detail::CompensatedSum power4;
     for (Index row = 0U; row < sample.rows.rows(); ++row) {
       if (completeRow(sample, row)) {
         const Scalar scaled = rowWeightAt(weights, row) / globalMaximum;
         mass.add(scaled);
         power2.add(scaled * scaled);
         power3.add(scaled * scaled * scaled);
+        power4.add(scaled * scaled * scaled * scaled);
       }
     }
     const Scalar total = mass.total();
     global = supportFor(sample.rows.rows(), completeValid, completePositive,
                         globalMaximum, total, power2.total() / (total * total),
-                        power3.total() / (total * total * total));
+                        power3.total() / (total * total * total),
+                        power4.total() / (total * total * total * total));
   }
   auto diagnostics = diagnosticsFor(
       weights.rule, global, std::move(supports).value(),
@@ -718,6 +734,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
   detail::CompensatedSum mass;
   detail::CompensatedSum power2;
   detail::CompensatedSum power3;
+  detail::CompensatedSum power4;
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
     if (!completeRow(sample, row)) {
       continue;
@@ -730,6 +747,7 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
     mass.add(scaled);
     power2.add(scaled * scaled);
     power3.add(scaled * scaled * scaled);
+    power4.add(scaled * scaled * scaled * scaled);
   }
   const Scalar scaledMass = mass.total();
   if (!(scaledMass > 0.0) || !std::isfinite(scaledMass)) {
@@ -808,10 +826,11 @@ Result<Estimate<Matrix>> weightedEmpiricalCovariance(const SampleView& sample,
     }
   }
 
-  const Support global =
-      supportFor(sample.rows.rows(), validCount, positiveCount, maximumWeight,
-                 scaledMass, power2.total() / (scaledMass * scaledMass),
-                 power3.total() / (scaledMass * scaledMass * scaledMass));
+  const Support global = supportFor(
+      sample.rows.rows(), validCount, positiveCount, maximumWeight, scaledMass,
+      power2.total() / (scaledMass * scaledMass),
+      power3.total() / (scaledMass * scaledMass * scaledMass),
+      power4.total() / (scaledMass * scaledMass * scaledMass * scaledMass));
   auto supports = makeSupports(std::vector<Support>{}, limits);
   if (!supports) {
     return fail<Estimate<Matrix>>(supports.status().code(),
@@ -965,7 +984,7 @@ Result<Estimate<Matrix>> weightedMeanCovariance(const SampleView& sample,
                                   std::string(covariance.status().message()));
   }
   const auto squaredWeightMass =
-      covariance.value().diagnostics.global.normalized_weight_powers[1];
+      covariance.value().diagnostics.global.normalized_weight_powers[0];
   if (!squaredWeightMass.has_value() ||
       !std::isfinite(squaredWeightMass.value()) ||
       !(squaredWeightMass.value() > 0.0)) {
@@ -1056,8 +1075,17 @@ frequencyWeightedCovariance(const SampleView& sample,
   Index positiveRows = 0U;
   std::uint64_t frequencyMass = 0U;
   std::uint64_t maximumCount = 0U;
+  long double squaredFrequencyMass = 0.0L;
   for (Index row = 0U; row < sample.rows.rows(); ++row) {
-    if (counts[row] == 0U || !completeRow(sample, row)) {
+    if (!completeRow(sample, row)) {
+      continue;
+    }
+    if (counts[row] == 0U) {
+      bool finiteRow = true;
+      for (Index column = 0U; column < columns; ++column) {
+        finiteRow = finiteRow && std::isfinite(sample.rows.at(row, column));
+      }
+      validRows += finiteRow ? 1U : 0U;
       continue;
     }
     for (Index column = 0U; column < columns; ++column) {
@@ -1067,6 +1095,7 @@ frequencyWeightedCovariance(const SampleView& sample,
                                       "contains a non-finite coordinate");
       }
     }
+    ++validRows;
     if (counts[row] >
         std::numeric_limits<std::uint64_t>::max() - frequencyMass) {
       return fail<Estimate<Matrix>>(
@@ -1075,7 +1104,8 @@ frequencyWeightedCovariance(const SampleView& sample,
     }
     frequencyMass += counts[row];
     maximumCount = std::max(maximumCount, counts[row]);
-    ++validRows;
+    const long double countValue = static_cast<long double>(counts[row]);
+    squaredFrequencyMass += countValue * countValue;
     ++positiveRows;
   }
   const std::uint64_t minimumMass = mode == VarianceMode::iid_sample ? 2U : 1U;
@@ -1195,14 +1225,19 @@ frequencyWeightedCovariance(const SampleView& sample,
       .valid = validRows,
       .positive = positiveRows,
       .frequency_mass = frequencyMass,
-      .weight_mass = std::nullopt,
-      .normalized_weight_powers = {1.0, inverse, inverseSquared},
+      .weight_mass = static_cast<Scalar>(frequencyMass),
+      .normalized_weight_powers = {inverse, inverseSquared,
+                                   inverseSquared * inverse},
       .effective_count = static_cast<Scalar>(frequencyMass),
       .degrees_of_freedom =
           mode == VarianceMode::iid_sample
               ? std::optional<Scalar>{static_cast<Scalar>(frequencyMass - 1U)}
               : std::nullopt,
-      .squared_weight_mass = std::nullopt};
+      .squared_weight_mass =
+          std::isfinite(squaredFrequencyMass) &&
+                  squaredFrequencyMass <= std::numeric_limits<Scalar>::max()
+              ? std::optional<Scalar>{static_cast<Scalar>(squaredFrequencyMass)}
+              : std::nullopt};
   auto supports = makeSupports(std::vector<Support>{}, limits);
   if (!supports) {
     return fail<Estimate<Matrix>>(supports.status().code(),

@@ -106,6 +106,9 @@ vss_math_add_algorithm_test(test_inference_statistics
 vss_math_add_algorithm_test(test_ratio_estimate
                              algorithms/test_ratio_estimate.cpp
                              math.ratio_estimate)
+vss_math_add_algorithm_test(test_estimator_diagnostics
+                             algorithms/test_estimator_diagnostics.cpp
+                             math.estimator_diagnostics)
 vss_math_add_algorithm_test(test_bootstrap_statistics
                              algorithms/test_bootstrap_statistics.cpp
                              math.bootstrap_statistics)

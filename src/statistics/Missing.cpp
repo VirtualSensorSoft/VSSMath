@@ -110,8 +110,8 @@ diagnostics(Extent input, Extent validCount, WeightRule weight,
       .normalized_weight_powers =
           validCount == 0U
               ? std::array<std::optional<Scalar>, 3>{}
-              : std::array<std::optional<Scalar>, 3>{1.0, 1.0 / n,
-                                                     1.0 / (n * n)},
+              : std::array<std::optional<Scalar>, 3>{1.0 / n, 1.0 / (n * n),
+                                                     1.0 / (n * n * n)},
       .effective_count =
           validCount == 0U ? std::nullopt : std::optional<Scalar>(n),
       .degrees_of_freedom = std::nullopt,
@@ -1093,17 +1093,17 @@ Result<Estimate<Matrix>> covarianceWithMissing(const SampleView& x,
       const auto count = static_cast<Scalar>(rows.size());
       tupleSupport.push_back(TupleSupport{
           .coordinates = std::move(coordinateArray).value(),
-          .support =
-              Support{.input = n,
-                      .valid = rows.size(),
-                      .positive = rows.size(),
-                      .frequency_mass = std::nullopt,
-                      .weight_mass = count,
-                      .normalized_weight_powers = {1.0, 1.0 / count,
-                                                   1.0 / (count * count)},
-                      .effective_count = count,
-                      .degrees_of_freedom = std::nullopt,
-                      .squared_weight_mass = std::nullopt}});
+          .support = Support{
+              .input = n,
+              .valid = rows.size(),
+              .positive = rows.size(),
+              .frequency_mass = std::nullopt,
+              .weight_mass = count,
+              .normalized_weight_powers = {1.0 / count, 1.0 / (count * count),
+                                           1.0 / (count * count * count)},
+              .effective_count = count,
+              .degrees_of_freedom = std::nullopt,
+              .squared_weight_mass = count}});
     }
   }
   std::vector<ErrorCode> warnings;
