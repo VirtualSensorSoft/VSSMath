@@ -1,13 +1,27 @@
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <numeric>
+#include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/EstimatorDiagnostics.hpp>
+#include <vss/math/statistics/Moments.hpp>
+#include <vss/math/statistics/Population.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 namespace vss::math::statistics {
 namespace {
@@ -204,7 +218,7 @@ Result<Extent> packedCount(Extent dimension, Index order) {
 
 Result<Extent> expectedPerGroupValues(const MomentRequest& request,
                                       Extent dimension,
-                                      Extent outputDimension) {
+                                      Extent resultDimension) {
   if (request.orders == 0U || (request.orders & 0xf0U) != 0U) {
     return failure<Extent>(ErrorCode::InvalidDomain,
                            "moment order mask is invalid");
@@ -247,16 +261,18 @@ Result<Extent> expectedPerGroupValues(const MomentRequest& request,
     } else if (request.representation == MomentRepresentation::contraction) {
       if (!request.contraction.has_value() ||
           request.contraction->columns() != dimension ||
-          request.contraction->rows() != outputDimension) {
+          request.contraction->rows() != resultDimension) {
         return failure<Extent>(ErrorCode::DimensionMismatch,
                                "contraction map does not match observations");
       }
       count = 1U;
       for (Index axis = 0U; axis < order; ++axis) {
-        if (!checkedMultiply(count, outputDimension, count)) {
+        Index product = 0U;
+        if (!checkedMultiply(count, resultDimension, product)) {
           return failure<Extent>(ErrorCode::SizeOverflow,
                                  "contracted moment extent overflows");
         }
+        count = product;
       }
     } else {
       return failure<Extent>(ErrorCode::InvalidDomain,
@@ -454,12 +470,12 @@ Result<Estimate<Vector>> groupedStatistics(const SampleView& sample,
       currentGroupRows = 1U;
     }
   }
-  const Extent outputDimension =
+  const Extent resultDimension =
       request.representation == MomentRepresentation::contraction &&
               request.contraction.has_value()
           ? request.contraction->rows()
           : dimension;
-  auto perGroup = expectedPerGroupValues(request, dimension, outputDimension);
+  auto perGroup = expectedPerGroupValues(request, dimension, resultDimension);
   if (!perGroup) {
     return failure<Estimate<Vector>>(perGroup.status().code(),
                                      std::string(perGroup.status().message()));
@@ -629,7 +645,7 @@ Result<Estimate<Vector>> groupedStatistics(const SampleView& sample,
           } else {
             const Extent tupleDimension =
                 request.representation == MomentRepresentation::contraction
-                    ? outputDimension
+                    ? resultDimension
                     : dimension;
             Index linear = i;
             for (Index axis = term.order; axis > 0U; --axis) {
