@@ -88,7 +88,7 @@ public:
     checkColumn(column);
     return data_ // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
                  // checked offsets
-        [row * rowStride_ + column * columnStride_];
+        [(row * rowStride_) + (column * columnStride_)];
   }
 
   /// @brief Creates a checked borrowing subview retaining the parent strides.
@@ -114,10 +114,10 @@ public:
     return Result<MatrixView>::success(MatrixView(
         data_ + // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
                 // checked offset
-            originRow *
-                rowStride_ + // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
-                             // checked offset
-            originColumn * columnStride_,
+            (originRow *
+             rowStride_) + // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
+                           // checked offset
+            (originColumn * columnStride_),
         rows, columns, rowStride_, columnStride_));
   }
 
@@ -242,7 +242,7 @@ public:
     checkColumn(column);
     return data_ // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
                  // checked offsets
-        [row * rowStride_ + column * columnStride_];
+        [(row * rowStride_) + (column * columnStride_)];
   }
 
   /// @brief Creates a checked immutable borrowing subview retaining strides.
@@ -269,10 +269,10 @@ public:
     return Result<ConstMatrixView>::success(ConstMatrixView(
         data_ + // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
                 // checked offset
-            originRow *
-                rowStride_ + // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
-                             // checked offset
-            originColumn * columnStride_,
+            (originRow *
+             rowStride_) + // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
+                           // checked offset
+            (originColumn * columnStride_),
         rows, columns, rowStride_, columnStride_));
   }
 

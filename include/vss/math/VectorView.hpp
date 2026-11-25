@@ -95,7 +95,7 @@ public:
     return Result<VectorView>::success(VectorView(
         data_ + // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
                 // checked offset
-            origin * stride_,
+            (origin * stride_),
         size, stride_));
   }
 
@@ -204,7 +204,7 @@ public:
     return Result<ConstVectorView>::success(ConstVectorView(
         data_ + // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic):
                 // checked offset
-            origin * stride_,
+            (origin * stride_),
         size, stride_));
   }
 

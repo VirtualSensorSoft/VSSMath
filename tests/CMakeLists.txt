@@ -100,6 +100,18 @@ vss_math_add_algorithm_test(test_empirical_statistics
 vss_math_add_algorithm_test(test_dependence_statistics
                              algorithms/test_dependence_statistics.cpp
                              math.dependence_statistics)
+vss_math_add_algorithm_test(test_inference_statistics
+                             algorithms/test_inference_statistics.cpp
+                             math.inference_statistics)
+vss_math_add_algorithm_test(test_ratio_estimate
+                             algorithms/test_ratio_estimate.cpp
+                             math.ratio_estimate)
+vss_math_add_algorithm_test(test_estimator_diagnostics
+                             algorithms/test_estimator_diagnostics.cpp
+                             math.estimator_diagnostics)
+vss_math_add_algorithm_test(test_bootstrap_statistics
+                             algorithms/test_bootstrap_statistics.cpp
+                             math.bootstrap_statistics)
 vss_math_add_algorithm_test(test_quantile_state
                              algorithms/test_quantile_state.cpp
                              math.quantile_state)

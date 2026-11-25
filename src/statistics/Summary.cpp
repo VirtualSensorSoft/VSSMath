@@ -351,6 +351,8 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
 
     detail::CompensatedSum normalizedMass;
     detail::CompensatedSum normalizedSquares;
+    detail::CompensatedSum normalizedCubes;
+    detail::CompensatedSum normalizedFourth;
     for (Index row = 0U; row < rows; ++row) {
       Scalar weight = 1.0;
       if (weights.rule == WeightRule::frequency) {
@@ -366,6 +368,8 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
         const Scalar normalized = weight / maximumWeight;
         normalizedMass.add(normalized);
         normalizedSquares.add(normalized * normalized);
+        normalizedCubes.add(normalized * normalized * normalized);
+        normalizedFourth.add(normalized * normalized * normalized * normalized);
       }
     }
     const Scalar mass = normalizedMass.total();
@@ -385,29 +389,48 @@ Result<Summary> descriptiveSummary(const SampleView& sample,
     Scalar effectiveCount =
         (mass / std::sqrt(squareMass)) * (mass / std::sqrt(squareMass));
     Scalar normalizedSquarePower = squareMass / (mass * mass);
-    std::optional<Scalar> normalizedCubePower = std::nullopt;
-    std::optional<Scalar> squaredWeightMass = std::nullopt;
+    std::optional<Scalar> normalizedCubePower =
+        normalizedCubes.total() / (mass * mass * mass);
+    std::optional<Scalar> normalizedFourthPower =
+        normalizedFourth.total() / (mass * mass * mass * mass);
+    std::optional<Scalar> squaredWeightMass;
+    const long double rawSquareMass =
+        static_cast<long double>(maximumWeight) * maximumWeight * squareMass;
+    if (std::isfinite(rawSquareMass) && rawSquareMass >= 0.0L &&
+        rawSquareMass <= std::numeric_limits<Scalar>::max()) {
+      squaredWeightMass = static_cast<Scalar>(rawSquareMass);
+    }
     if (weights.rule == WeightRule::frequency) {
       effectiveCount = static_cast<Scalar>(frequencyMass);
       normalizedSquarePower = 1.0 / effectiveCount;
       normalizedCubePower = 1.0 / (effectiveCount * effectiveCount);
-      squaredWeightMass = effectiveCount;
+      normalizedFourthPower =
+          1.0 / (effectiveCount * effectiveCount * effectiveCount);
+      long double rawFrequencySquares = 0.0L;
+      for (Index row = 0U; row < rows; ++row) {
+        const long double count = weights.frequencyCounts[row];
+        rawFrequencySquares += count * count;
+      }
+      if (std::isfinite(rawFrequencySquares) && rawFrequencySquares >= 0.0L &&
+          rawFrequencySquares <= std::numeric_limits<Scalar>::max()) {
+        squaredWeightMass = static_cast<Scalar>(rawFrequencySquares);
+      }
     }
     const Scalar normalizedSquarePowerForCorrection =
         squareMass / (mass * mass);
-    Support global{.input = rows,
-                   .valid = rows,
-                   .positive = positiveRows,
-                   .frequency_mass =
-                       weights.rule == WeightRule::frequency
-                           ? std::optional<std::uint64_t>{frequencyMass}
-                           : std::nullopt,
-                   .weight_mass = recordedMass,
-                   .normalized_weight_powers = {1.0, normalizedSquarePower,
-                                                normalizedCubePower},
-                   .effective_count = effectiveCount,
-                   .degrees_of_freedom = std::nullopt,
-                   .squared_weight_mass = squaredWeightMass};
+    Support global{
+        .input = rows,
+        .valid = rows,
+        .positive = positiveRows,
+        .frequency_mass = weights.rule == WeightRule::frequency
+                              ? std::optional<std::uint64_t>{frequencyMass}
+                              : std::nullopt,
+        .weight_mass = recordedMass,
+        .normalized_weight_powers = {normalizedSquarePower, normalizedCubePower,
+                                     normalizedFourthPower},
+        .effective_count = effectiveCount,
+        .degrees_of_freedom = std::nullopt,
+        .squared_weight_mass = squaredWeightMass};
     if (spec.variance_mode == VarianceMode::iid_sample) {
       if (weights.rule == WeightRule::frequency && frequencyMass >= 2U) {
         global.degrees_of_freedom = static_cast<Scalar>(frequencyMass - 1U);

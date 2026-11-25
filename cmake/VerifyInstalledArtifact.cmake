@@ -158,9 +158,13 @@ set(vss_expected_files
   include/vss/math/probability/Special.hpp
   include/vss/math/ProbabilityPolicy.hpp
   include/vss/math/statistics/Descriptive.hpp
+  include/vss/math/statistics/Bootstrap.hpp
   include/vss/math/statistics/Cumulants.hpp
   include/vss/math/statistics/Dependence.hpp
+  include/vss/math/statistics/Diagnostics.hpp
   include/vss/math/statistics/Empirical.hpp
+  include/vss/math/statistics/EstimatorDiagnostics.hpp
+  include/vss/math/statistics/Inference.hpp
   include/vss/math/statistics/Missing.hpp
   include/vss/math/statistics/Moments.hpp
   include/vss/math/statistics/MomentState.hpp
@@ -168,6 +172,7 @@ set(vss_expected_files
   include/vss/math/statistics/Order.hpp
   include/vss/math/statistics/Population.hpp
   include/vss/math/statistics/QuantileState.hpp
+  include/vss/math/statistics/RatioEstimate.hpp
   include/vss/math/statistics/Robust.hpp
   include/vss/math/statistics/Weighted.hpp
   include/vss/math/linear/Cholesky.hpp

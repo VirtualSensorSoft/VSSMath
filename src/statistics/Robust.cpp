@@ -202,10 +202,11 @@ Result<EstimatorDiagnostics> diagnostics(Extent n, WeightRule weight,
       .positive = n,
       .frequency_mass = std::nullopt,
       .weight_mass = count,
-      .normalized_weight_powers = {1.0, 1.0 / count, 1.0 / (count * count)},
+      .normalized_weight_powers = {1.0 / count, 1.0 / (count * count),
+                                   1.0 / (count * count * count)},
       .effective_count = count,
       .degrees_of_freedom = std::nullopt,
-      .squared_weight_mass = std::nullopt};
+      .squared_weight_mass = static_cast<Scalar>(count)};
   return Result<EstimatorDiagnostics>::success(
       EstimatorDiagnostics{.estimand = Estimand::observed,
                            .weight = weight,
