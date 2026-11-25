@@ -79,6 +79,8 @@ vss_math_add_algorithm_test(test_uncertainty_summary
 vss_math_add_algorithm_test(test_finite_difference
                              algorithms/test_finite_difference.cpp
                              math.finite_difference)
+vss_math_add_algorithm_test(test_polynomial algorithms/test_polynomial.cpp
+                             math.polynomial)
 vss_math_add_algorithm_test(test_differentiation_extensions
                              algorithms/test_differentiation_extensions.cpp
                              math.differentiation_extensions)

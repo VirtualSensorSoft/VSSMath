@@ -33,6 +33,7 @@ vss_math_add_format_check()
 add_library(vss_math STATIC
   src/Error.cpp
   src/Matrix.cpp
+  src/Polynomial.cpp
   src/FirstMoment.cpp
   src/FourthMoment.cpp
   src/MultivariateMoments.cpp
