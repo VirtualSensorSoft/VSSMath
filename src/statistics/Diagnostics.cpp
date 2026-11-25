@@ -1,11 +1,23 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <functional>
 #include <limits>
-#include <numbers>
+#include <optional>
+#include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/probability/Distribution.hpp>
 #include <vss/math/statistics/Diagnostics.hpp>
+#include <vss/math/statistics/Inference.hpp>
 
 namespace vss::math::statistics {
 namespace {
@@ -70,7 +82,7 @@ Result<Scalar> ksStatistic(ConstVectorView values, const Distribution& law,
   for (Index i = 0U; i < values.size(); ++i) {
     sorted[i] = values.at(i);
   }
-  std::stable_sort(sorted.begin(), sorted.end());
+  std::ranges::stable_sort(sorted);
   if (!discrete(law)) {
     Scalar statistic = 0.0;
     Index first = 0U;
@@ -87,9 +99,9 @@ Result<Scalar> ksStatistic(ConstVectorView values, const Distribution& law,
       if (!tails.value().on_support) {
         return Result<Scalar>::success(std::numeric_limits<Scalar>::infinity());
       }
-      const Scalar sampleCount = static_cast<Scalar>(sorted.size());
-      const Scalar left = static_cast<Scalar>(first) / sampleCount;
-      const Scalar right = static_cast<Scalar>(last) / sampleCount;
+      const auto sampleCount = static_cast<Scalar>(sorted.size());
+      const auto left = static_cast<Scalar>(first) / sampleCount;
+      const auto right = static_cast<Scalar>(last) / sampleCount;
       statistic = std::max(
           {statistic, tails.value().cdf - left, right - tails.value().cdf});
       first = last;
@@ -98,7 +110,7 @@ Result<Scalar> ksStatistic(ConstVectorView values, const Distribution& law,
   }
 
   Scalar statistic = 0.0;
-  const Scalar sampleCount = static_cast<Scalar>(sorted.size());
+  const auto sampleCount = static_cast<Scalar>(sorted.size());
   Index first = 0U;
   while (first < sorted.size()) {
     Index last = first + 1U;
@@ -130,7 +142,7 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
   for (Index i = 0U; i < values.size(); ++i) {
     sorted[i] = values.at(i);
   }
-  std::stable_sort(sorted.begin(), sorted.end());
+  std::ranges::stable_sort(sorted);
   const Index n = sorted.size();
   if (!discrete(law)) {
     long double sum = 0.0L;
@@ -152,8 +164,8 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
               -std::numeric_limits<Scalar>::infinity()) {
         return Result<Scalar>::success(std::numeric_limits<Scalar>::infinity());
       }
-      const long double weight =
-          static_cast<long double>(2U * i + 1U) / static_cast<long double>(n);
+      const long double weight = ((2.0L * static_cast<long double>(i)) + 1.0L) /
+                                 static_cast<long double>(n);
       sum += weight * (lower.value().log_tails.log_cdf +
                        upper.value().log_tails.log_survival);
     }
@@ -185,7 +197,7 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
           "finite atom locations and masses have inconsistent extents");
     }
     long double statistic = 0.0L;
-    const long double sampleCount = static_cast<long double>(n);
+    const auto sampleCount = static_cast<long double>(n);
     for (Index i = 0U; i < atoms.locations.size(); ++i) {
       const auto tails =
           probability::evaluate(law, atoms.locations[i], goodnessPolicy(1U));
@@ -196,9 +208,8 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
       if (f <= 0.0 || f >= 1.0 || atoms.masses[i] == 0.0) {
         continue;
       }
-      const auto count =
-          std::upper_bound(sorted.begin(), sorted.end(), atoms.locations[i]);
-      const long double empirical =
+      const auto count = std::ranges::upper_bound(sorted, atoms.locations[i]);
+      const auto empirical =
           static_cast<long double>(count - sorted.begin()) / sampleCount;
       const long double difference = empirical - static_cast<long double>(f);
       statistic += sampleCount * atoms.masses[i] * difference * difference /
@@ -218,7 +229,7 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
         "discrete AD requires enumerable finite atoms or integer support");
   }
 
-  Scalar maximum = sorted.back();
+  const Scalar maximum = sorted.back();
   if (maximum < 0.0 || std::floor(maximum) != maximum) {
     return Result<Scalar>::success(std::numeric_limits<Scalar>::infinity());
   }
@@ -226,7 +237,7 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
     return Result<Scalar>::failure(
         ErrorCode::ResourceLimit, "discrete AD support exceeds evaluation cap");
   }
-  const Index observedMaximum = static_cast<Index>(maximum);
+  const auto observedMaximum = static_cast<Index>(maximum);
   Index end = observedMaximum;
   const auto parameters = law.parameters();
   if (law.family() == probability::Family::bernoulli) {
@@ -256,8 +267,8 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
     }
     const Scalar f = tails.value().cdf;
     if (tails.value().density_or_mass > 0.0 && f > 0.0 && f < 1.0) {
-      const auto count = std::upper_bound(sorted.begin(), sorted.end(),
-                                          static_cast<Scalar>(k));
+      const auto count =
+          std::ranges::upper_bound(sorted, static_cast<Scalar>(k));
       const long double empirical =
           static_cast<long double>(count - sorted.begin()) / n;
       const long double difference = empirical - f;
@@ -271,7 +282,7 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
       const long double bound =
           tailCdf > 0.0 ? static_cast<long double>(n) * sf * sf / tailCdf
                         : std::numeric_limits<long double>::infinity();
-      if (bound <= 1.0e-12L + 1.0e-10L * statistic) {
+      if (bound <= 1.0e-12L + (1.0e-10L * statistic)) {
         converged = true;
         break;
       }
@@ -381,8 +392,7 @@ Result<Distribution> lawFromParameters(const Distribution& original,
           ErrorCode::DimensionMismatch,
           "negative-binomial refit requires success probability");
     }
-    return probability::negativeBinomial(
-        static_cast<std::uint64_t>(original.parameters()[0]), p.at(0U));
+    return probability::negativeBinomial(original.parameters()[0], p.at(0U));
   case probability::Family::chi_square:
     return exact(1U) ? probability::chiSquare(p.at(0U))
                      : Result<Distribution>::failure(
@@ -518,7 +528,7 @@ Result<Scalar> aic(Scalar logLikelihood, Index parameters) {
                                    "AIC log likelihood must be finite");
   }
   const long double value =
-      -2.0L * logLikelihood + 2.0L * static_cast<long double>(parameters);
+      (-2.0L * logLikelihood) + (2.0L * static_cast<long double>(parameters));
   if (!std::isfinite(value) ||
       std::abs(value) > std::numeric_limits<Scalar>::max()) {
     return Result<Scalar>::failure(ErrorCode::NonFiniteResult,
@@ -538,9 +548,9 @@ Result<Scalar> bic(Scalar logLikelihood, Index parameters,
                                    "BIC independent count must be positive");
   }
   const long double value =
-      -2.0L * logLikelihood +
-      static_cast<long double>(parameters) *
-          std::log(static_cast<long double>(independentCount));
+      (-2.0L * logLikelihood) +
+      (static_cast<long double>(parameters) *
+       std::log(static_cast<long double>(independentCount)));
   if (!std::isfinite(value) ||
       std::abs(value) > std::numeric_limits<Scalar>::max()) {
     return Result<Scalar>::failure(ErrorCode::NonFiniteResult,
