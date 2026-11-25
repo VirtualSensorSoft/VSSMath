@@ -4,7 +4,6 @@
 #include <functional>
 #include <limits>
 #include <optional>
-#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -209,6 +208,7 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
       if (f <= 0.0 || f >= 1.0 || atoms.masses[i] == 0.0) {
         continue;
       }
+      // NOLINTNEXTLINE(misc-include-cleaner): Clang 18 header mapping bug.
       const auto count = std::ranges::upper_bound(sorted, atoms.locations[i]);
       const auto empirical =
           static_cast<long double>(count - sorted.begin()) / sampleCount;
@@ -268,6 +268,7 @@ Result<Scalar> andersonDarlingStatistic(ConstVectorView values,
     }
     const Scalar f = tails.value().cdf;
     if (tails.value().density_or_mass > 0.0 && f > 0.0 && f < 1.0) {
+      // NOLINTNEXTLINE(misc-include-cleaner): Clang 18 header mapping bug.
       const auto count =
           std::ranges::upper_bound(sorted, static_cast<Scalar>(k));
       const long double empirical =
