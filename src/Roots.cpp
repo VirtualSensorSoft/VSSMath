@@ -451,4 +451,276 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
       evaluations, derivativeEvaluations, iterations, Termination::cap));
 }
 
+namespace {
+
+Wide norm2(ConstVectorView value) noexcept {
+  Wide norm = 0.0L;
+  for (Index i = 0U; i < value.size(); ++i) {
+    norm = std::hypot(norm, static_cast<Wide>(value.at(i)));
+  }
+  return norm;
+}
+
+Result<Vector> vectorSample(const VectorFunction& function,
+                            ConstVectorView point, Index& evaluations,
+                            Index& functionEvaluations, Index maximum,
+                            Index expected) {
+  if (evaluations >= maximum) {
+    return Result<Vector>::failure(ErrorCode::ResourceLimit,
+                                   "vector root callback budget exhausted");
+  }
+  ++evaluations;
+  ++functionEvaluations;
+  try {
+    auto result = function(point);
+    if (!result) {
+      return Result<Vector>::failure(result.status().code(),
+                                     std::string(result.status().message()));
+    }
+    if (result.value().size() != expected) {
+      return Result<Vector>::failure(ErrorCode::DimensionMismatch,
+                                     "vector residual has the wrong extent");
+    }
+    for (Index i = 0U; i < expected; ++i) {
+      if (!std::isfinite(result.value().at(i))) {
+        return Result<Vector>::failure(ErrorCode::NonFiniteInput,
+                                       "vector residual is non-finite");
+      }
+    }
+    return result;
+  } catch (...) {
+    return Result<Vector>::failure(ErrorCode::CallbackFailure,
+                                   "vector residual callback threw");
+  }
+}
+
+Result<Matrix> jacobianSample(const JacobianFunction& function,
+                              ConstVectorView point, Index& evaluations,
+                              Index& jacobianEvaluations, Index maximum,
+                              Index extent) {
+  if (evaluations >= maximum) {
+    return Result<Matrix>::failure(ErrorCode::ResourceLimit,
+                                   "vector root callback budget exhausted");
+  }
+  ++evaluations;
+  ++jacobianEvaluations;
+  try {
+    auto result = function(point);
+    if (!result) {
+      return Result<Matrix>::failure(result.status().code(),
+                                    std::string(result.status().message()));
+    }
+    if (result.value().rows() != extent ||
+        result.value().columns() != extent) {
+      return Result<Matrix>::failure(ErrorCode::DimensionMismatch,
+                                     "vector Jacobian has the wrong shape");
+    }
+    for (Index i = 0U; i < extent; ++i) {
+      for (Index j = 0U; j < extent; ++j) {
+        if (!std::isfinite(result.value().at(i, j))) {
+          return Result<Matrix>::failure(ErrorCode::NonFiniteInput,
+                                         "vector Jacobian is non-finite");
+        }
+      }
+    }
+    return result;
+  } catch (...) {
+    return Result<Matrix>::failure(ErrorCode::CallbackFailure,
+                                   "vector Jacobian callback threw");
+  }
+}
+
+Result<VectorRoot> vectorFailure(const Status& status) {
+  return Result<VectorRoot>::failure(status.code(),
+                                     std::string(status.message()));
+}
+
+} // namespace
+
+Result<VectorRoot> findVectorRoot(const VectorFunction& function,
+                                  const JacobianFunction& jacobian,
+                                  Vector initial, const IterPolicy& policy,
+                                  Limits limits) {
+  if (!std::isfinite(policy.abs) || !std::isfinite(policy.rel) ||
+      policy.abs < 0.0 || policy.rel < 0.0) {
+    return Result<VectorRoot>::failure(ErrorCode::InvalidTolerance,
+                                       "vector-root tolerances are invalid");
+  }
+  if (policy.bracket.has_value()) {
+    return Result<VectorRoot>::failure(ErrorCode::InvalidDomain,
+                                       "vector root has no scalar bracket");
+  }
+  const Index n = initial.size();
+  for (Index i = 0U; i < n; ++i) {
+    if (!std::isfinite(initial.at(i))) {
+      return Result<VectorRoot>::failure(ErrorCode::NonFiniteInput,
+                                         "initial vector is non-finite");
+    }
+  }
+  if (n == 0U) {
+    return Result<VectorRoot>::success(
+        {Vector{}, 0.0, 0U, 0U, 0U, Termination::converged});
+  }
+  if (!function || !jacobian) {
+    return Result<VectorRoot>::failure(ErrorCode::CallbackFailure,
+                                       "vector root callback is empty");
+  }
+  if (n > limits.elements ||
+      n > limits.bytes / (sizeof(Scalar) * 4U)) {
+    return Result<VectorRoot>::failure(ErrorCode::ResourceLimit,
+                                       "vector root input/work exceeds limits");
+  }
+  if (n > std::numeric_limits<Index>::max() / n) {
+    return Result<VectorRoot>::failure(ErrorCode::SizeOverflow,
+                                       "vector root matrix extent overflows");
+  }
+  if (n > std::numeric_limits<Index>::max() / 4U) {
+    return Result<VectorRoot>::failure(ErrorCode::SizeOverflow,
+                                       "vector root workspace extent overflows");
+  }
+  const Index square = n * n;
+  if (square > (std::numeric_limits<Index>::max() - 8U * n) / 8U) {
+    return Result<VectorRoot>::failure(ErrorCode::SizeOverflow,
+                                       "vector root workspace extent overflows");
+  }
+  const Index elements = 8U * square + 8U * n;
+  if (elements > limits.elements ||
+      elements > limits.bytes / sizeof(Scalar)) {
+    return Result<VectorRoot>::failure(ErrorCode::ResourceLimit,
+                                       "vector root workspace exceeds limits");
+  }
+  const Index maximumEvaluations =
+      std::min(policy.max_evaluations, limits.evaluations);
+  Index evaluations = 0U;
+  Index functionEvaluations = 0U;
+  Index jacobianEvaluations = 0U;
+  Index iterations = 0U;
+  Vector point = std::move(initial);
+  auto residual = vectorSample(function, point.view(), evaluations,
+                               functionEvaluations, maximumEvaluations, n);
+  if (!residual) {
+    return vectorFailure(residual.status());
+  }
+  Wide initialNorm = norm2(residual.value().view());
+  if (!std::isfinite(initialNorm) ||
+      initialNorm > std::numeric_limits<Scalar>::max()) {
+    return Result<VectorRoot>::failure(ErrorCode::NonFiniteResult,
+                                       "initial residual norm is not representable");
+  }
+  Wide currentNorm = initialNorm;
+  const auto converged = [&](Wide value) {
+    return value <= static_cast<Wide>(policy.abs) +
+                          static_cast<Wide>(policy.rel) * initialNorm;
+  };
+  if (converged(currentNorm)) {
+    return Result<VectorRoot>::success(
+        {std::move(point), static_cast<Scalar>(currentNorm),
+         functionEvaluations,
+         jacobianEvaluations, iterations, Termination::converged});
+  }
+  while (iterations < policy.max_iterations) {
+    auto jac = jacobianSample(jacobian, point.view(), evaluations,
+                              jacobianEvaluations, maximumEvaluations, n);
+    if (!jac) {
+      return vectorFailure(jac.status());
+    }
+    Matrix scaled(n, n, 0.0);
+    std::vector<Scalar> scaledColumnNorms(n);
+    Vector rhs(n);
+    for (Index j = 0U; j < n; ++j) {
+      Scalar scale = 0.0;
+      for (Index i = 0U; i < n; ++i) {
+        scale = std::max(scale, std::abs(jac.value().at(i, j)));
+      }
+      if (scale == 0.0) {
+        return Result<VectorRoot>::failure(ErrorCode::RankDeficient,
+                                           "vector root Jacobian is singular");
+      }
+      scaledColumnNorms[j] = scale;
+      for (Index i = 0U; i < n; ++i) {
+        scaled.at(i, j) = jac.value().at(i, j) / scale;
+      }
+    }
+    for (Index i = 0U; i < n; ++i) {
+      rhs.at(i) = -residual.value().at(i);
+    }
+    linear::FactorizationOptions options{};
+    options.rankTolerance = {
+        0.0, 64.0 * std::numeric_limits<Scalar>::epsilon() *
+                 static_cast<Scalar>(std::max<Index>(1U, n))};
+    options.conditionLimit = std::numeric_limits<Scalar>::max();
+    auto factor = linear::factorizeQR(scaled.view(), options);
+    if (!factor || factor.value().rank() != n) {
+      return Result<VectorRoot>::failure(ErrorCode::RankDeficient,
+                                         "vector root Jacobian is rank deficient");
+    }
+    auto direction = factor.value().leastSquares(
+        rhs.view(), {.illConditionedPolicy =
+                         linear::IllConditionedSolvePolicy::AllowWithDiagnostic});
+    if (!direction) {
+      return vectorFailure(direction.status());
+    }
+    bool accepted = false;
+    Vector acceptedPoint;
+    Vector acceptedResidual;
+    Wide acceptedNorm = currentNorm;
+    for (Index backtrack = 0U; backtrack <= 32U; ++backtrack) {
+      const Wide fraction = std::ldexp(1.0L, -static_cast<int>(backtrack));
+      Vector trial(n);
+      bool distinct = false;
+      bool finite = true;
+      for (Index i = 0U; i < n; ++i) {
+        const Wide candidate = static_cast<Wide>(point.at(i)) + fraction *
+            static_cast<Wide>(direction.value().solution().at(i)) /
+                scaledColumnNorms[i];
+        if (!std::isfinite(candidate) ||
+            std::abs(candidate) > std::numeric_limits<Scalar>::max()) {
+          finite = false;
+          break;
+        }
+        trial.at(i) = static_cast<Scalar>(candidate);
+        distinct = distinct || trial.at(i) != point.at(i);
+      }
+      if (!finite || !distinct) {
+        continue;
+      }
+      auto trialResidual = vectorSample(function, trial.view(), evaluations,
+                                        functionEvaluations, maximumEvaluations,
+                                        n);
+      if (!trialResidual) {
+        return vectorFailure(trialResidual.status());
+      }
+      const Wide trialNorm = norm2(trialResidual.value().view());
+      const Wide reduction = 1.0L - 1.0e-4L * fraction;
+      if (trialNorm <= currentNorm &&
+          (currentNorm == 0.0L ||
+           (trialNorm / currentNorm) * (trialNorm / currentNorm) <= reduction)) {
+        accepted = true;
+        acceptedPoint = std::move(trial);
+        acceptedResidual = std::move(trialResidual).value();
+        acceptedNorm = trialNorm;
+        break;
+      }
+    }
+    if (!accepted) {
+      return Result<VectorRoot>::failure(ErrorCode::NoConvergence,
+                                         "vector root line search failed");
+    }
+    point = std::move(acceptedPoint);
+    residual = Result<Vector>::success(std::move(acceptedResidual));
+    currentNorm = acceptedNorm;
+    ++iterations;
+    if (converged(currentNorm)) {
+      return Result<VectorRoot>::success(
+          {std::move(point), static_cast<Scalar>(currentNorm),
+           functionEvaluations,
+           jacobianEvaluations, iterations, Termination::converged});
+    }
+  }
+  return Result<VectorRoot>::success(
+      {std::move(point), static_cast<Scalar>(currentNorm),
+       functionEvaluations,
+       jacobianEvaluations, iterations, Termination::cap});
+}
+
 } // namespace vss::math
