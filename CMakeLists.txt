@@ -60,6 +60,8 @@ add_library(vss_math STATIC
   src/covariance/Determinant.cpp
   src/covariance/UncertaintySummary.cpp
   src/differentiation/FiniteDifference.cpp
+  src/differentiation/Hessian.cpp
+  src/differentiation/ForwardAD.cpp
   src/probability/ChiSquare.cpp
   src/probability/Distribution.cpp
   src/probability/SamplingDesign.cpp

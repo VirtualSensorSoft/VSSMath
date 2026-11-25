@@ -146,6 +146,8 @@ set(vss_expected_files
   include/vss/math/covariance/UncertaintySummary.hpp
   include/vss/math/covariance/Covariance.hpp
   include/vss/math/differentiation/FiniteDifference.hpp
+  include/vss/math/differentiation/ForwardAD.hpp
+  include/vss/math/differentiation/Hessian.hpp
   include/vss/math/probability/ChiSquare.hpp
   include/vss/math/probability/Composite.hpp
   include/vss/math/probability/Distribution.hpp
