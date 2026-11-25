@@ -1,13 +1,33 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
-#include <numeric>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/Tensor.hpp>
 #include <vss/math/TensorLimits.hpp>
+#include <vss/math/TensorShape.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/covariance/Covariance.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/differentiation/FiniteDifference.hpp>
+#include <vss/math/probability/Distribution.hpp>
+#include <vss/math/statistics/Bootstrap.hpp>
+#include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/RatioEstimate.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 namespace vss::math::statistics {
 namespace {
@@ -200,7 +220,7 @@ Result<Support> ratioSupport(Index rows, Index positive,
     maximum = std::max(maximum, weight);
   }
   if (maximum == 0.0) {
-    return Result<Support>::success(std::move(support));
+    return Result<Support>::success(support);
   }
   long double sum = 0.0L;
   long double squares = 0.0L;
@@ -231,7 +251,7 @@ Result<Support> ratioSupport(Index rows, Index positive,
     support.normalized_weight_powers[1] = static_cast<Scalar>(cubes / sum3);
     support.normalized_weight_powers[2] = static_cast<Scalar>(fourths / sum4);
   }
-  return Result<Support>::success(std::move(support));
+  return Result<Support>::success(support);
 }
 
 } // namespace
@@ -373,7 +393,7 @@ Result<VectorDifferential> weightedRatioDifferential(const SampleView& values,
         shape.status().code(), std::string(shape.status().message()));
   }
   const Extent tensorElements = shape.value().elementCount();
-  const auto tensor =
+  auto tensor =
       Tensor::create(shape.value(), 0.0,
                      TensorLimits(std::min<Extent>(
                          limits.elements, limits.bytes / sizeof(Scalar))));
@@ -529,7 +549,7 @@ propagateWeightedRatio(const RatioModel& model,
     covarianceOptions.eigen.maximumSweeps =
         policy.solve.iteration.max_iterations;
   }
-  const auto outputCovariance = covariance::propagateCovariance(
+  auto outputCovariance = covariance::propagateCovariance(
       derivative.value().values().view(), uncertainty.covariance,
       covarianceOptions);
   if (!outputCovariance.hasValue()) {
@@ -557,16 +577,15 @@ propagateWeightedRatio(const RatioModel& model,
       .coordinate_support = {},
       .tuple_support = {},
       .reciprocal_condition = std::nullopt,
-      .numerical_error = derivative.value().effectiveSteps().size() == 0U
-                             ? std::optional<Scalar>{}
-                             : std::optional<Scalar>{},
+      .numerical_error = std::nullopt,
       .sampling_error = std::nullopt,
       .rank = std::nullopt,
       .algorithm = "weighted_ratio_first_order",
       .premises = "joint latent covariance and first-order delta approximation",
       .warnings = {}};
+  Vector nominalValue = nominal.value_or(Vector{});
   return Result<PropagationResult>::success(PropagationResult{
-      std::move(*nominal), std::move(outputCovariance).value(),
+      std::move(nominalValue), std::move(outputCovariance).value(),
       Approximation::first_order, std::move(diagnostics),
       PropagationCovarianceCheck::positive_semidefinite});
 }
@@ -643,7 +662,7 @@ Result<SimulationResult> simulateWeightedRatio(const RatioModel& model,
       } else if (request.representation == MomentRepresentation::packed) {
         count = 1U;
         for (Index i = 1U; i <= order; ++i) {
-          Index factor = dims.components + i - 1U;
+          const Index factor = dims.components + i - 1U;
           if (!multiply(count, factor, count)) {
             return failure<SimulationResult>(
                 ErrorCode::SizeOverflow,
@@ -744,7 +763,7 @@ Result<SimulationResult> simulateWeightedRatio(const RatioModel& model,
                               .rowWeights = std::nullopt,
                               .componentWeights = std::nullopt,
                               .frequencyCounts = {}};
-  const auto mean = weightedMean(outputSample, unweighted, limits);
+  auto mean = weightedMean(outputSample, unweighted, limits);
   if (!mean.hasValue()) {
     return Result<SimulationResult>::failure(
         mean.status().code(), std::string(mean.status().message()));
@@ -754,8 +773,7 @@ Result<SimulationResult> simulateWeightedRatio(const RatioModel& model,
   const PopulationPolicy population{.normalization = VarianceMode::empirical,
                                     .missingness = MissingMode::reject,
                                     .estimand = Estimand::estimate};
-  const auto covariance =
-      covarianceMatrix(outputSample, center, population, limits);
+  auto covariance = covarianceMatrix(outputSample, center, population, limits);
   if (!covariance.hasValue()) {
     return Result<SimulationResult>::failure(
         covariance.status().code(), std::string(covariance.status().message()));
@@ -771,8 +789,8 @@ Result<SimulationResult> simulateWeightedRatio(const RatioModel& model,
     for (Index column = 0U; column < policy.quantiles.size(); ++column) {
       const long double position =
           static_cast<long double>(valid - 1U) * policy.quantiles[column];
-      const Index lower = static_cast<Index>(std::floor(position));
-      const Index upper = static_cast<Index>(std::ceil(position));
+      const auto lower = static_cast<Index>(std::floor(position));
+      const auto upper = static_cast<Index>(std::ceil(position));
       const long double fraction = position - lower;
       const long double value =
           (1.0L - fraction) * coordinate[lower] + fraction * coordinate[upper];
@@ -811,7 +829,7 @@ Result<SimulationResult> simulateWeightedRatio(const RatioModel& model,
   }
   std::optional<MomentEstimate> centralMoments;
   if (policy.output_central_moments.has_value()) {
-    const auto estimate =
+    auto estimate =
         estimateCentralMoments(outputSample, unweighted, center,
                                *policy.output_central_moments, limits);
     if (!estimate.hasValue()) {
@@ -820,21 +838,21 @@ Result<SimulationResult> simulateWeightedRatio(const RatioModel& model,
     }
     centralMoments = std::move(estimate).value();
   }
-  Support simulationSupport{.input = policy.draws,
-                            .valid = valid,
-                            .positive = valid,
-                            .frequency_mass = std::nullopt,
-                            .weight_mass = std::nullopt,
-                            .normalized_weight_powers = {},
-                            .effective_count = std::nullopt,
-                            .degrees_of_freedom = std::nullopt,
-                            .squared_weight_mass = std::nullopt};
+  const Support simulationSupport{.input = policy.draws,
+                                  .valid = valid,
+                                  .positive = valid,
+                                  .frequency_mass = std::nullopt,
+                                  .weight_mass = std::nullopt,
+                                  .normalized_weight_powers = {},
+                                  .effective_count = std::nullopt,
+                                  .degrees_of_freedom = std::nullopt,
+                                  .squared_weight_mass = std::nullopt};
   EstimatorDiagnostics diagnostics = mean.value().diagnostics;
   diagnostics.estimand = Estimand::estimate;
   diagnostics.weight = WeightRule::dependent;
   diagnostics.center = CenterRule::estimated;
   diagnostics.approximation = Approximation::monte_carlo;
-  diagnostics.global = std::move(simulationSupport);
+  diagnostics.global = simulationSupport;
   diagnostics.sampling_error = std::nullopt;
   diagnostics.algorithm = "joint_weighted_ratio_monte_carlo";
   diagnostics.premises =

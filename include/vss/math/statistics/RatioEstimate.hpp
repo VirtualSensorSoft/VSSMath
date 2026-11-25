@@ -4,6 +4,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/differentiation/FiniteDifference.hpp>
@@ -45,12 +46,22 @@ struct RatioModel final {
 
 /// @brief Supplies the joint nominal value, covariance and optional moments.
 struct JointUncertaintyInput final {
+  /// @brief Binds borrowed center and covariance views for one propagation.
+  JointUncertaintyInput(ConstVectorView centerValue,
+                        ConstMatrixView covarianceValue,
+                        std::optional<MomentEstimate> higherValue = {})
+      : center(centerValue), covariance(covarianceValue),
+        higher(std::move(higherValue)) {}
+
+  // NOLINTBEGIN(misc-non-private-member-variables-in-classes): this public
+  // input aggregate exposes its borrowed views as part of the API.
   /// @brief Borrowed latent center in the documented flattened order.
   ConstVectorView center;
   /// @brief Borrowed covariance over all joint coordinates.
   ConstMatrixView covariance;
   /// @brief Optional higher central moments for a separately supported method.
   std::optional<MomentEstimate> higher;
+  // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
 /// @brief Selects weighted-ratio propagation and denominator admissibility.
