@@ -1,8 +1,13 @@
 #include "Test.hpp"
 
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <random>
 #include <vss/math/Error.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/statistics/Inference.hpp>
 
 using namespace vss::math;
@@ -50,9 +55,109 @@ void varianceIntervalRejectsInvalidPremisesAndUnrepresentableEndpoints() {
   VSS_CHECK(overflow.status().code() == ErrorCode::NonFiniteResult);
 }
 
+void hotellingT2MatchesExactBivariateReference() {
+  Matrix rows(4U, 2U);
+  rows.at(0U, 0U) = 1.0;
+  rows.at(1U, 0U) = -1.0;
+  rows.at(2U, 1U) = 1.0;
+  rows.at(3U, 1U) = -1.0;
+  const std::array<Index, 1U> shape{2U};
+  const SampleView sample{rows.view(), shape, {}};
+  Vector target(2U);
+  target.at(0U) = 1.0;
+  const SolvePolicy solvePolicy{.iteration = {},
+                                .rank_abs = 0.0,
+                                .rank_rel = 1.0e-12,
+                                .reciprocal_condition_floor = 1.0e-12,
+                                .rank = RankPolicy::reject,
+                                .restart = 0U};
+  const auto result = hotellingT2(sample, target.view(), NormalIID{true},
+                                  solvePolicy, Limits{64U, 4096U, 64U});
+  VSS_CHECK(result.hasValue());
+  VSS_CHECK(std::abs(result.value().statistic - 6.0) < 1.0e-12);
+  VSS_CHECK(result.value().p_value.has_value());
+  VSS_CHECK(std::abs(*result.value().p_value - 1.0 / 3.0) < 1.0e-12);
+  VSS_CHECK(!result.value().effective_df.has_value());
+  VSS_CHECK(!hotellingT2(sample, target.view(), NormalIID{false}, solvePolicy,
+                         Limits{64U, 4096U, 64U})
+                 .hasValue());
+}
+
+void hotellingT2HasDeclaredGaussianNullRejectionRate() {
+  std::mt19937_64 generator(0x5a17c9e3ULL);
+  const auto standardNormal = [&]() {
+    const Scalar u1 =
+        (static_cast<Scalar>(generator() >> 11U) + 0.5) / 9007199254740992.0;
+    const Scalar u2 =
+        (static_cast<Scalar>(generator() >> 11U) + 0.5) / 9007199254740992.0;
+    return std::sqrt(-2.0 * std::log(u1)) *
+           std::cos(2.0 * std::acos(-1.0) * u2);
+  };
+  const SolvePolicy solvePolicy{.iteration = {},
+                                .rank_abs = 0.0,
+                                .rank_rel = 1.0e-12,
+                                .reciprocal_condition_floor = 1.0e-12,
+                                .rank = RankPolicy::reject,
+                                .restart = 0U};
+  Index rejected = 0U;
+  for (Index trial = 0U; trial < 512U; ++trial) {
+    Matrix rows(4U, 2U);
+    for (Index i = 0U; i < 4U; ++i) {
+      rows.at(i, 0U) = standardNormal();
+      rows.at(i, 1U) = standardNormal();
+    }
+    const std::array<Index, 1U> shape{2U};
+    const SampleView sample{rows.view(), shape, {}};
+    Vector target(2U);
+    const auto result = hotellingT2(sample, target.view(), NormalIID{true},
+                                    solvePolicy, Limits{64U, 4096U, 64U});
+    VSS_CHECK(result.hasValue());
+    rejected += *result.value().p_value <= (1.0 / 3.0) ? 1U : 0U;
+  }
+  const Scalar rate = static_cast<Scalar>(rejected) / 512.0;
+  VSS_CHECK(std::abs(rate - 1.0 / 3.0) <= 0.13);
+}
+
+void ljungBoxReportsUncalibratedStatisticAndDeclaredTails() {
+  const std::array<Scalar, 3U> zeroCorrelation{1.0, 0.0, -1.0};
+  const auto zero =
+      ljungBox(ConstVectorView::create(zeroCorrelation, 3U).value(), 1U, 0U,
+               Limits{8U, 128U, 8U});
+  VSS_CHECK(zero.hasValue());
+  VSS_CHECK(zero.value().statistic == 0.0);
+  VSS_CHECK(zero.value().effective_df == 1.0);
+  VSS_CHECK(!zero.value().p_value.has_value());
+
+  const std::array<Scalar, 3U> correlated{0.0, 1.0, 2.0};
+  const auto uncalibrated =
+      ljungBox(ConstVectorView::create(correlated, 3U).value(), 2U, 0U,
+               Limits{8U, 128U, 8U});
+  VSS_CHECK(uncalibrated.hasValue());
+  VSS_CHECK(std::abs(uncalibrated.value().statistic - 3.75) < 1.0e-12);
+  VSS_CHECK(!uncalibrated.value().p_value.has_value());
+  const auto whiteNoise =
+      ljungBox(ConstVectorView::create(correlated, 3U).value(), 2U, 0U,
+               LjungBoxReference::white_noise, Limits{8U, 128U, 8U});
+  VSS_CHECK(whiteNoise.hasValue());
+  VSS_CHECK(std::abs(*whiteNoise.value().p_value - std::exp(-1.875)) < 1.0e-12);
+  const auto fitted =
+      ljungBox(ConstVectorView::create(correlated, 3U).value(), 2U, 1U,
+               LjungBoxReference::fitted_arma, Limits{8U, 128U, 8U});
+  VSS_CHECK(fitted.hasValue());
+  VSS_CHECK(std::abs(*fitted.value().p_value - std::erfc(std::sqrt(1.875))) <
+            1.0e-12);
+  const auto invalidReference =
+      ljungBox(ConstVectorView::create(correlated, 3U).value(), 2U, 1U,
+               LjungBoxReference::white_noise, Limits{8U, 128U, 8U});
+  VSS_CHECK(!invalidReference.hasValue());
+}
+
 } // namespace
 
 int main() {
   varianceIntervalUsesExactNormalIidChiSquareQuantiles();
   varianceIntervalRejectsInvalidPremisesAndUnrepresentableEndpoints();
+  hotellingT2MatchesExactBivariateReference();
+  hotellingT2HasDeclaredGaussianNullRejectionRate();
+  ljungBoxReportsUncalibratedStatisticAndDeclaredTails();
 }
