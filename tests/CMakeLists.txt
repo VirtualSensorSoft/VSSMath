@@ -100,6 +100,9 @@ vss_math_add_algorithm_test(test_empirical_statistics
 vss_math_add_algorithm_test(test_dependence_statistics
                              algorithms/test_dependence_statistics.cpp
                              math.dependence_statistics)
+vss_math_add_algorithm_test(test_inference_statistics
+                             algorithms/test_inference_statistics.cpp
+                             math.inference_statistics)
 vss_math_add_algorithm_test(test_quantile_state
                              algorithms/test_quantile_state.cpp
                              math.quantile_state)
