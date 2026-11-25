@@ -2,11 +2,22 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <span>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
-#include <vss/math/Tensor.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/probability/Distribution.hpp>
+#include <vss/math/statistics/Bootstrap.hpp>
+#include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/RatioEstimate.hpp>
 
 using namespace vss::math;
@@ -39,8 +50,9 @@ RatioModel scalarModel(Index rows) {
 JointSampler scriptedSampler(std::span<const std::array<Scalar, 2U>> script) {
   return [script, next = Index{0U}](probability::Rng&) mutable {
     Vector joint(2U);
-    joint.at(0U) = script[next][0U];
-    joint.at(1U) = script[next][1U];
+    const auto draw = script.subspan(next, 1U).front();
+    joint.at(0U) = draw[0U];
+    joint.at(1U) = draw[1U];
     ++next;
     return Result<Vector>::success(std::move(joint));
   };
@@ -70,9 +82,11 @@ JointSampler
 scriptedJointSampler(std::span<const std::array<Scalar, 4U>> script) {
   return [script, next = Index{0U}](probability::Rng&) mutable {
     Vector joint(4U);
-    for (Index i = 0U; i < 4U; ++i) {
-      joint.at(i) = script[next][i];
-    }
+    const auto draw = script.subspan(next, 1U).front();
+    joint.at(0U) = draw[0U];
+    joint.at(1U) = draw[1U];
+    joint.at(2U) = draw[2U];
+    joint.at(3U) = draw[3U];
     ++next;
     return Result<Vector>::success(std::move(joint));
   };
@@ -83,46 +97,51 @@ void directDifferentialReturnsTheExactQuotientJacobianAndHessian() {
   values.at(0U, 0U) = 1.0;
   values.at(1U, 0U) = 3.0;
   const std::array<Scalar, 2U> weights{1.0, 1.0};
-  const SampleView sample{values.view(), {}, {}};
+  const SampleView sample{
+      .rows = values.view(), .observation_shape = {}, .valid = {}};
   const auto result = weightedRatioDifferential(
       sample, ConstVectorView::create(weights, 2U).value(),
-      Limits{128U, 8192U, 32U});
+      Limits{.elements = 128U, .bytes = 8192U, .evaluations = 32U});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().value.at(0U) == 2.0);
   const std::array<Scalar, 4U> jacobian{0.5, 0.5, -0.5, 0.5};
   for (Index i = 0U; i < jacobian.size(); ++i) {
-    VSS_CHECK(result.value().jacobian.at(0U, i) == jacobian[i]);
+    VSS_CHECK(result.value().jacobian.at(0U, i) == jacobian.at(i));
   }
-  VSS_CHECK(result.value().hessian.has_value());
-  const std::array<Index, 3U> x1w1{0U, 0U, 2U};
-  const std::array<Index, 3U> x1w2{0U, 0U, 3U};
-  const std::array<Index, 3U> w1w1{0U, 2U, 2U};
-  const std::array<Index, 3U> w2w2{0U, 3U, 3U};
-  VSS_CHECK(result.value().hessian->at(x1w1) == 0.25);
-  VSS_CHECK(result.value().hessian->at(x1w2) == -0.25);
-  VSS_CHECK(result.value().hessian->at(w1w1) == 0.5);
-  VSS_CHECK(result.value().hessian->at(w2w2) == -0.5);
+  const auto& hessian = result.value().hessian;
+  VSS_CHECK(hessian.has_value());
+  if (hessian.has_value()) {
+    const std::array<Index, 3U> x1w1{0U, 0U, 2U};
+    const std::array<Index, 3U> x1w2{0U, 0U, 3U};
+    const std::array<Index, 3U> w1w1{0U, 2U, 2U};
+    const std::array<Index, 3U> w2w2{0U, 3U, 3U};
+    VSS_CHECK(hessian.value().at(x1w1) == 0.25);
+    VSS_CHECK(hessian.value().at(x1w2) == -0.25);
+    VSS_CHECK(hessian.value().at(w1w1) == 0.5);
+    VSS_CHECK(hessian.value().at(w2w2) == -0.5);
+  }
 }
 
 void directDifferentialRejectsExtentWeightsAndZeroDenominators() {
   Matrix values(2U, 1U, 1.0);
-  const SampleView sample{values.view(), {}, {}};
+  const SampleView sample{
+      .rows = values.view(), .observation_shape = {}, .valid = {}};
   const std::array<Scalar, 1U> oneWeight{1.0};
   const std::array<Scalar, 2U> negative{1.0, -1.0};
   const std::array<Scalar, 2U> zero{0.0, 0.0};
   const auto extent = weightedRatioDifferential(
       sample, ConstVectorView::create(oneWeight, 1U).value(),
-      Limits{128U, 8192U, 32U});
+      Limits{.elements = 128U, .bytes = 8192U, .evaluations = 32U});
   VSS_CHECK(!extent.hasValue());
   VSS_CHECK(extent.status().code() == ErrorCode::DimensionMismatch);
   const auto invalid = weightedRatioDifferential(
       sample, ConstVectorView::create(negative, 2U).value(),
-      Limits{128U, 8192U, 32U});
+      Limits{.elements = 128U, .bytes = 8192U, .evaluations = 32U});
   VSS_CHECK(!invalid.hasValue());
   VSS_CHECK(invalid.status().code() == ErrorCode::InvalidDomain);
   const auto empty = weightedRatioDifferential(
       sample, ConstVectorView::create(zero, 2U).value(),
-      Limits{128U, 8192U, 32U});
+      Limits{.elements = 128U, .bytes = 8192U, .evaluations = 32U});
   VSS_CHECK(!empty.hasValue());
   VSS_CHECK(empty.status().code() == ErrorCode::InvalidDomain);
 }
@@ -133,10 +152,11 @@ void directDifferentialAcceptsAnExplicitAllValidMask() {
   values.at(1U, 0U) = 3.0;
   const std::array<std::uint8_t, 2U> valid{1U, 1U};
   const std::array<Scalar, 2U> weights{1.0, 1.0};
-  const SampleView sample{values.view(), {}, valid};
+  const SampleView sample{
+      .rows = values.view(), .observation_shape = {}, .valid = valid};
   const auto result = weightedRatioDifferential(
       sample, ConstVectorView::create(weights, 2U).value(),
-      Limits{128U, 8192U, 32U});
+      Limits{.elements = 128U, .bytes = 8192U, .evaluations = 32U});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().value.at(0U) == 2.0);
 }
@@ -152,15 +172,16 @@ void propagationRetainsJointCrossCovarianceAndStrictFloor() {
   Matrix covariance(4U, 4U);
   for (Index row = 0U; row < 4U; ++row) {
     for (Index column = 0U; column < 4U; ++column) {
-      covariance.at(row, column) = direction[row] * direction[column];
+      covariance.at(row, column) = direction.at(row) * direction.at(column);
     }
   }
   const JointUncertaintyInput input{center.view(), covariance.view(), {}};
   const PropagationPolicy policy{.method = Approximation::first_order,
                                  .denominator_floor = 1.0,
                                  .solve = {}};
-  const auto result =
-      propagateWeightedRatio(model, input, policy, Limits{256U, 32768U, 512U});
+  const auto result = propagateWeightedRatio(
+      model, input, policy,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 512U});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().mean.at(0U) == 1.0);
   VSS_CHECK(std::abs(result.value().covariance.at(0U, 0U)) < 1.0e-12);
@@ -175,8 +196,9 @@ void propagationRetainsJointCrossCovarianceAndStrictFloor() {
   const PropagationPolicy equality{.method = Approximation::first_order,
                                    .denominator_floor = 2.0,
                                    .solve = {}};
-  const auto rejected = propagateWeightedRatio(model, input, equality,
-                                               Limits{256U, 32768U, 512U});
+  const auto rejected = propagateWeightedRatio(
+      model, input, equality,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 512U});
   VSS_CHECK(!rejected.hasValue());
   VSS_CHECK(rejected.status().code() == ErrorCode::InvalidDomain);
 }
@@ -197,8 +219,9 @@ void propagationIncludesADeclaredValueWeightCrossTerm() {
   const PropagationPolicy policy{.method = Approximation::first_order,
                                  .denominator_floor = 0.0,
                                  .solve = {}};
-  const auto result =
-      propagateWeightedRatio(model, input, policy, Limits{256U, 32768U, 512U});
+  const auto result = propagateWeightedRatio(
+      model, input, policy,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 512U});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(std::abs(result.value().covariance.at(0U, 0U) - 0.75) < 1.0e-6);
 }
@@ -223,8 +246,9 @@ void propagationRejectsShapeMismatchAndInadmissibleDifferenceStencil() {
   const PropagationPolicy policy{.method = Approximation::first_order,
                                  .denominator_floor = 0.0,
                                  .solve = {}};
-  const auto shape = propagateWeightedRatio(mismatched, input, policy,
-                                            Limits{256U, 32768U, 512U});
+  const auto shape = propagateWeightedRatio(
+      mismatched, input, policy,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 512U});
   VSS_CHECK(!shape.hasValue());
   VSS_CHECK(shape.status().code() == ErrorCode::DimensionMismatch);
 
@@ -241,8 +265,9 @@ void propagationRejectsShapeMismatchAndInadmissibleDifferenceStencil() {
   const PropagationPolicy strict{.method = Approximation::first_order,
                                  .denominator_floor = 1.0,
                                  .solve = {}};
-  const auto stencil = propagateWeightedRatio(validModel, nearInput, strict,
-                                              Limits{256U, 32768U, 512U});
+  const auto stencil = propagateWeightedRatio(
+      validModel, nearInput, strict,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 512U});
   VSS_CHECK(!stencil.hasValue());
   VSS_CHECK(stencil.status().code() == ErrorCode::InvalidDomain);
 }
@@ -259,14 +284,15 @@ void simulationPreservesJointDrawsAndReportsConditionalSupport() {
                          .output_central_moments = {},
                          .denominator_floor = 0.0};
   const auto result = simulateWeightedRatio(
-      model, scriptedSampler(script), policy, rng, Limits{256U, 32768U, 64U});
+      model, scriptedSampler(script), policy, rng,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 64U});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().valid == 2U);
   VSS_CHECK(result.value().rejected == 1U);
-  VSS_CHECK(std::abs(result.value().estimate.mean.at(0U) - 7.0 / 6.0) <
+  VSS_CHECK(std::abs(result.value().estimate.mean.at(0U) - (7.0 / 6.0)) <
             1.0e-12);
   VSS_CHECK(std::abs(result.value().estimate.covariance.at(0U, 0U) -
-                     1.0 / 36.0) < 1.0e-12);
+                     (1.0 / 36.0)) < 1.0e-12);
   VSS_CHECK(!result.value().central_moments.has_value());
 
   const std::array<std::array<Scalar, 2U>, 2U> emptyScript{
@@ -277,9 +303,9 @@ void simulationPreservesJointDrawsAndReportsConditionalSupport() {
                               .failure = InvalidDraw::report_conditional,
                               .output_central_moments = {},
                               .denominator_floor = 0.0};
-  const auto empty =
-      simulateWeightedRatio(model, scriptedSampler(emptyScript), conditional,
-                            rng, Limits{256U, 32768U, 64U});
+  const auto empty = simulateWeightedRatio(
+      model, scriptedSampler(emptyScript), conditional, rng,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 64U});
   VSS_CHECK(!empty.hasValue());
   VSS_CHECK(empty.status().code() == ErrorCode::InsufficientSamples);
 }
@@ -302,7 +328,8 @@ void simulationUsesOneJointSamplerAndExactEmpiricalSummaries() {
                          .denominator_floor = 0.0};
   probability::Rng rng(5U);
   const auto result = simulateWeightedRatio(
-      model, scriptedSampler(script), policy, rng, Limits{512U, 65536U, 64U});
+      model, scriptedSampler(script), policy, rng,
+      Limits{.elements = 512U, .bytes = 65536U, .evaluations = 64U});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().valid == 4U);
   VSS_CHECK(result.value().rejected == 0U);
@@ -331,11 +358,14 @@ void simulationEnforcesAdjacentRepresentableDenominatorCutoff() {
                          .denominator_floor = 1.0};
   probability::Rng rng(8U);
   const auto lower = simulateWeightedRatio(
-      model, scriptedSampler(below), policy, rng, Limits{128U, 8192U, 16U});
-  const auto same = simulateWeightedRatio(model, scriptedSampler(equal), policy,
-                                          rng, Limits{128U, 8192U, 16U});
+      model, scriptedSampler(below), policy, rng,
+      Limits{.elements = 128U, .bytes = 8192U, .evaluations = 16U});
+  const auto same = simulateWeightedRatio(
+      model, scriptedSampler(equal), policy, rng,
+      Limits{.elements = 128U, .bytes = 8192U, .evaluations = 16U});
   const auto higher = simulateWeightedRatio(
-      model, scriptedSampler(above), policy, rng, Limits{128U, 8192U, 16U});
+      model, scriptedSampler(above), policy, rng,
+      Limits{.elements = 128U, .bytes = 8192U, .evaluations = 16U});
   VSS_CHECK(!lower.hasValue() &&
             lower.status().code() == ErrorCode::InvalidDomain);
   VSS_CHECK(!same.hasValue() &&
@@ -352,8 +382,8 @@ void simulationPreservesTheJointPairingAcrossCoordinates() {
   Index row = 0U;
   for (const Scalar left : latent) {
     for (const Scalar right : latent) {
-      paired[row] = {1.0 + left, 1.0 + right, 2.0 + left, 2.0 + right};
-      swapped[row] = {1.0 + left, 1.0 + right, 2.0 + right, 2.0 + left};
+      paired.at(row) = {1.0 + left, 1.0 + right, 2.0 + left, 2.0 + right};
+      swapped.at(row) = {1.0 + left, 1.0 + right, 2.0 + right, 2.0 + left};
       ++row;
     }
   }
@@ -364,21 +394,21 @@ void simulationPreservesTheJointPairingAcrossCoordinates() {
                          .output_central_moments = {},
                          .denominator_floor = 0.0};
   probability::Rng rng(10U);
-  const auto result =
-      simulateWeightedRatio(model, scriptedJointSampler(paired), policy, rng,
-                            Limits{512U, 65536U, 64U});
-  const auto repaired =
-      simulateWeightedRatio(model, scriptedJointSampler(swapped), policy, rng,
-                            Limits{512U, 65536U, 64U});
+  const auto result = simulateWeightedRatio(
+      model, scriptedJointSampler(paired), policy, rng,
+      Limits{.elements = 512U, .bytes = 65536U, .evaluations = 64U});
+  const auto repaired = simulateWeightedRatio(
+      model, scriptedJointSampler(swapped), policy, rng,
+      Limits{.elements = 512U, .bytes = 65536U, .evaluations = 64U});
   VSS_CHECK(result.hasValue() && repaired.hasValue());
-  VSS_CHECK(std::abs(result.value().estimate.mean.at(0U) - 119.0 / 80.0) <
+  VSS_CHECK(std::abs(result.value().estimate.mean.at(0U) - (119.0 / 80.0)) <
             1.0e-12);
   VSS_CHECK(std::abs(result.value().estimate.covariance.at(0U, 0U) -
-                     45623.0 / 57600.0) < 1.0e-12);
-  VSS_CHECK(std::abs(repaired.value().estimate.mean.at(0U) - 81.0 / 80.0) <
+                     (45623.0 / 57600.0)) < 1.0e-12);
+  VSS_CHECK(std::abs(repaired.value().estimate.mean.at(0U) - (81.0 / 80.0)) <
             1.0e-12);
   VSS_CHECK(std::abs(repaired.value().estimate.covariance.at(0U, 0U) -
-                     31943.0 / 57600.0) < 1.0e-12);
+                     (31943.0 / 57600.0)) < 1.0e-12);
 }
 
 void simulationDistinguishesMeanOfRatiosFromRatioOfExpectations() {
@@ -394,21 +424,21 @@ void simulationDistinguishesMeanOfRatiosFromRatioOfExpectations() {
                          .output_central_moments = {},
                          .denominator_floor = 0.0};
   probability::Rng rng(11U);
-  const auto result =
-      simulateWeightedRatio(model, scriptedJointSampler(script), policy, rng,
-                            Limits{256U, 32768U, 64U});
+  const auto result = simulateWeightedRatio(
+      model, scriptedJointSampler(script), policy, rng,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 64U});
   VSS_CHECK(result.hasValue());
-  VSS_CHECK(std::abs(result.value().estimate.mean.at(0U) - 7.0 / 6.0) <
+  VSS_CHECK(std::abs(result.value().estimate.mean.at(0U) - (7.0 / 6.0)) <
             1.0e-12);
   VSS_CHECK(std::abs(result.value().estimate.covariance.at(0U, 0U) -
-                     1.0 / 36.0) < 1.0e-12);
+                     (1.0 / 36.0)) < 1.0e-12);
   const Scalar expectedNumerator =
       (1.0 * 1.0 + 1.0 * 1.0 + 1.5 * (4.0 / 3.0) + 1.5 * (4.0 / 3.0)) / 2.0;
   const Scalar expectedDenominator = (2.0 + 3.0) / 2.0;
-  VSS_CHECK(std::abs(expectedNumerator / expectedDenominator - 6.0 / 5.0) <
+  VSS_CHECK(std::abs((expectedNumerator / expectedDenominator) - (6.0 / 5.0)) <
             1.0e-12);
   VSS_CHECK(std::abs(result.value().estimate.mean.at(0U) -
-                     expectedNumerator / expectedDenominator) > 1.0e-2);
+                     (expectedNumerator / expectedDenominator)) > 1.0e-2);
 }
 
 void conditionalSimulationUsesOnlyDrawsStrictlyAboveTheFloor() {
@@ -426,7 +456,8 @@ void conditionalSimulationUsesOnlyDrawsStrictlyAboveTheFloor() {
                          .denominator_floor = 1.0};
   probability::Rng rng(92U);
   const auto result = simulateWeightedRatio(
-      model, scriptedSampler(script), policy, rng, Limits{256U, 32768U, 64U});
+      model, scriptedSampler(script), policy, rng,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 64U});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().valid == 1U);
   VSS_CHECK(result.value().rejected == 2U);
@@ -436,6 +467,7 @@ void conditionalSimulationUsesOnlyDrawsStrictlyAboveTheFloor() {
 
 } // namespace
 
+// NOLINTNEXTLINE(bugprone-exception-escape)
 int main() {
   directDifferentialReturnsTheExactQuotientJacobianAndHessian();
   directDifferentialRejectsExtentWeightsAndZeroDenominators();

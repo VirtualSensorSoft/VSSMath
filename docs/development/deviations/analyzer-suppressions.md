@@ -193,6 +193,10 @@ annotations.
 | tests/algorithms/test_moment_state.cpp:65 | cppcoreguidelines-no-malloc, cppcoreguidelines-owning-memory | Test sized delete hook | Manual deallocation pairs the test-only global allocation replacement | Pointer originates from the paired test allocation hook | Reviewed |
 | tests/algorithms/test_moment_state.cpp:70 | cppcoreguidelines-no-malloc, cppcoreguidelines-owning-memory | Test sized delete-array hook | Manual deallocation pairs the test-only global array allocation replacement | Pointer originates from the paired test allocation hook | Reviewed |
 
+| tests/algorithms/test_inference_statistics.cpp:105 | cert-msc32-c, cert-msc51-cpp | Reproducible null-calibration test | A fixed seed makes the statistical acceptance case reproducible | The test checks the declared Gaussian-null rejection rate against its sampling tolerance | Reviewed |
+
+| tests/algorithms/test_ratio_estimate.cpp:470 | bugprone-exception-escape | Ratio-estimator test main | Assertions intentionally terminate the test when an acceptance check fails | The shared test helper reports failures and the test process exits non-zero | Reviewed |
+
 When a suppression, replace the `None` row with one row per source
 occurrence. Use an exact check name, a single source line, a narrow rationale,
 and the test or invariant that proves the construct is safe. Update this file
