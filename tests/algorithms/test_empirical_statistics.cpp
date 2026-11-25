@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <numbers>
 #include <span>
 #include <vss/math/Array.hpp>
 #include <vss/math/Error.hpp>
@@ -113,9 +114,102 @@ void multidimensionalHistogramUsesRowMajorBinsAndPreflights() {
   VSS_CHECK(denied.status().code() == ErrorCode::ResourceLimit);
 }
 
+void productKernelsSupportDiagonalBandwidthsAndReflection() {
+  const Matrix observations = matrix({{0.0}});
+  const Matrix evaluation = matrix({{0.0}, {1.0}});
+  const SampleView sample{
+      .rows = observations.view(), .observation_shape = {}, .valid = {}};
+  const SampleView points{
+      .rows = evaluation.view(), .observation_shape = {}, .valid = {}};
+  const WeightSpec unweighted{.rule = WeightRule::unweighted,
+                              .rowWeights = std::nullopt,
+                              .componentWeights = std::nullopt,
+                              .frequencyCounts = {}};
+  const Vector bandwidth = vector({1.0});
+  const KernelSpec gaussian{.kernel = KernelKind::gaussian,
+                            .bandwidth = bandwidth.view(),
+                            .reflection_bounds = std::nullopt};
+  const auto normal =
+      kernelDensityEstimate(sample, unweighted, points, gaussian, ample());
+  VSS_CHECK(normal.hasValue());
+  close(normal.value().at(0U), 1.0 / std::sqrt(2.0 * std::numbers::pi));
+  close(normal.value().at(1U),
+        std::exp(-0.5) / std::sqrt(2.0 * std::numbers::pi));
+
+  const Matrix epanEvaluation = matrix({{0.0}, {-1.0}, {1.0}});
+  const SampleView epanPoints{
+      .rows = epanEvaluation.view(), .observation_shape = {}, .valid = {}};
+  const KernelSpec epan{.kernel = KernelKind::epanechnikov,
+                        .bandwidth = bandwidth.view(),
+                        .reflection_bounds = std::nullopt};
+  const auto compact =
+      kernelDensityEstimate(sample, unweighted, epanPoints, epan, ample());
+  VSS_CHECK(compact.hasValue());
+  close(compact.value().at(0U), 0.75);
+  close(compact.value().at(1U), 0.0);
+  close(compact.value().at(2U), 0.0);
+
+  const Matrix observations2d = matrix({{0.0, 0.0}});
+  const Matrix evaluation2d = matrix({{0.0, 0.0}});
+  const SampleView sample2d{
+      .rows = observations2d.view(), .observation_shape = {}, .valid = {}};
+  const SampleView points2d{
+      .rows = evaluation2d.view(), .observation_shape = {}, .valid = {}};
+  const Vector diagonal = vector({2.0, 4.0});
+  const KernelSpec diagonalEpan{.kernel = KernelKind::epanechnikov,
+                                .bandwidth = diagonal.view(),
+                                .reflection_bounds = std::nullopt};
+  const auto product = kernelDensityEstimate(sample2d, unweighted, points2d,
+                                             diagonalEpan, ample());
+  VSS_CHECK(product.hasValue());
+  close(product.value().at(0U), (0.75 / 2.0) * (0.75 / 4.0));
+
+  const Matrix bounds = matrix({{0.0, 1.0}});
+  const KernelSpec reflected{.kernel = KernelKind::gaussian,
+                             .bandwidth = bandwidth.view(),
+                             .reflection_bounds = bounds.view()};
+  const Index gridCount = 100U;
+  Matrix grid(gridCount + 1U, 1U, 0.0);
+  for (Index i = 0U; i <= gridCount; ++i) {
+    grid.at(i, 0U) = static_cast<Scalar>(i) / gridCount;
+  }
+  const SampleView gridView{
+      .rows = grid.view(), .observation_shape = {}, .valid = {}};
+  const ProbabilityPolicy accuracy{.iteration = {.abs = 1.0e-12,
+                                                 .rel = 1.0e-12,
+                                                 .max_iterations = 4096U,
+                                                 .max_evaluations = 4096U,
+                                                 .bracket = std::nullopt},
+                                   .max_draws = 1U,
+                                   .abs_log_error = 1.0e-12};
+  const auto reflectedDensity = kernelDensityEstimate(
+      sample, unweighted, gridView, reflected, accuracy, ample());
+  VSS_CHECK(reflectedDensity.hasValue());
+  long double integral = 0.0L;
+  for (Index i = 1U; i < gridCount; ++i) {
+    integral += reflectedDensity.value().at(i);
+  }
+  integral += 0.5L * (reflectedDensity.value().at(0U) +
+                      reflectedDensity.value().at(gridCount));
+  integral /= gridCount;
+  VSS_CHECK(std::abs(integral - 1.0L) < 2.0e-5L);
+
+  ProbabilityPolicy capped = accuracy;
+  capped.iteration.max_evaluations = 1U;
+  const Vector broadBandwidth = vector({10.0});
+  const KernelSpec broad{.kernel = KernelKind::gaussian,
+                         .bandwidth = broadBandwidth.view(),
+                         .reflection_bounds = bounds.view()};
+  const auto noConvergence =
+      kernelDensityEstimate(sample, unweighted, points, broad, capped, ample());
+  VSS_CHECK(!noConvergence.hasValue());
+  VSS_CHECK(noConvergence.status().code() == ErrorCode::NoConvergence);
+}
+
 } // namespace
 
 int main() {
   oneDimensionalHistogramsUseSpecifiedEdgesAndMass();
   multidimensionalHistogramUsesRowMajorBinsAndPreflights();
+  productKernelsSupportDiagonalBandwidthsAndReflection();
 }
