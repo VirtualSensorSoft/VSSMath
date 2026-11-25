@@ -89,6 +89,8 @@ vss_math_add_algorithm_test(test_integration
                              algorithms/test_integration.cpp
                              math.integration)
 vss_math_add_algorithm_test(test_ode algorithms/test_ode.cpp math.ode)
+vss_math_add_algorithm_test(test_functions algorithms/test_functions.cpp
+                             math.functions)
 vss_math_add_algorithm_test(test_differentiation_extensions
                              algorithms/test_differentiation_extensions.cpp
                              math.differentiation_extensions)
