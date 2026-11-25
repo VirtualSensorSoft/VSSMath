@@ -11,9 +11,13 @@ namespace vss::math::probability {
 
 /// @brief A possibly unbounded interval with explicit endpoint inclusion.
 struct IntervalSupport final {
+  /// Lower endpoint; negative infinity denotes an unbounded lower side.
   Scalar lower;
+  /// Upper endpoint; positive infinity denotes an unbounded upper side.
   Scalar upper;
+  /// Whether values equal to the lower endpoint belong to the interval.
   bool include_lower{true};
+  /// Whether values equal to the upper endpoint belong to the interval.
   bool include_upper{true};
 };
 
