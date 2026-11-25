@@ -37,6 +37,7 @@ add_library(vss_math STATIC
   src/Interpolation.cpp
   src/Roots.cpp
   src/Integration.cpp
+  src/ODE.cpp
   src/FirstMoment.cpp
   src/FourthMoment.cpp
   src/MultivariateMoments.cpp
