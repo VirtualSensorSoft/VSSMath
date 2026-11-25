@@ -34,19 +34,18 @@ void latinHypercubeStrataAndReplay() {
   VSS_CHECK(design.value().points.columns() == 2U);
   VSS_CHECK(design.value().algorithm == "latin-hypercube-fisher-yates-v1");
   VSS_CHECK(design.value().provenance.has_value());
-  if (design.value().provenance.has_value()) {
-    const auto& provenance = *design.value().provenance;
-    VSS_CHECK(provenance.kind == SamplingDesignKind::latin_hypercube);
-    VSS_CHECK(provenance.algorithm_version == 1U);
-    VSS_CHECK(provenance.coordinate_bits == 52U);
-    VSS_CHECK(provenance.direction_bits == 0U);
-    VSS_CHECK(!provenance.digital_shift);
-    VSS_CHECK(!provenance.seed.has_value());
-    VSS_CHECK(provenance.direction_table_sha256.empty());
-    VSS_CHECK(provenance.first_index == 0U);
-    VSS_CHECK(provenance.dimension == 2U);
-    VSS_CHECK(provenance.count == 4U);
-  }
+  const auto provenance = design.value().provenance.value_or(
+      SamplingDesignProvenance{});
+  VSS_CHECK(provenance.kind == SamplingDesignKind::latin_hypercube);
+  VSS_CHECK(provenance.algorithm_version == 1U);
+  VSS_CHECK(provenance.coordinate_bits == 52U);
+  VSS_CHECK(provenance.direction_bits == 0U);
+  VSS_CHECK(!provenance.digital_shift);
+  VSS_CHECK(!provenance.seed.has_value());
+  VSS_CHECK(provenance.direction_table_sha256.empty());
+  VSS_CHECK(provenance.first_index == 0U);
+  VSS_CHECK(provenance.dimension == 2U);
+  VSS_CHECK(provenance.count == 4U);
 
   for (Index column = 0U; column < 2U; ++column) {
     std::array<bool, 4> seen{};
