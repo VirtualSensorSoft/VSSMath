@@ -15,8 +15,11 @@ namespace vss::math::statistics {
 /// @details `count` is the tuple's g increment and `slack` is its delta rank
 ///          uncertainty. Values are ordered by value then stable arrival order.
 struct QuantileMarker final {
+  /// @brief Sample value represented by this ordered marker tuple.
   Scalar value;
+  /// @brief g increment: observations between this tuple and its predecessor.
   Index count;
+  /// @brief delta: additional maximum rank uncertainty for this marker.
   Index slack;
 };
 
@@ -26,10 +29,15 @@ struct QuantileMarker final {
 ///          retained after they are summarized. The owner must not mutate the
 ///          public fields; every update/query validates the representation.
 struct QuantileState final {
+  /// @brief Ordered owned Greenwald-Khanna marker tuples.
   Array<QuantileMarker> markers;
+  /// @brief Requested deterministic sample-rank error fraction.
   Scalar epsilon;
+  /// @brief Maximum retained marker tuple count.
   Index capacity;
+  /// @brief Total observations accepted, including compressed observations.
   Index count;
+  /// @brief Storage and work limits applied to state updates.
   Limits limits;
 };
 
@@ -39,8 +47,11 @@ struct QuantileState final {
 ///          occurrences; the interval identifies a possible retained tuple
 ///          rank and does not imply arrival-identity equality.
 struct QuantileBound final {
+  /// @brief Value returned for the requested target rank.
   Scalar value;
+  /// @brief Inclusive minimum one-based rank of the retained occurrence.
   Index lower_rank;
+  /// @brief Inclusive maximum one-based rank of the retained occurrence.
   Index upper_rank;
 };
 

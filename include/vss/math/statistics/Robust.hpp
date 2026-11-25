@@ -20,11 +20,18 @@ namespace vss::math::statistics {
 ///          uses center and metric when supplied. The iteration policy bounds
 ///          the safeguarded robust-location root search.
 struct RobustPolicy final {
+  /// @brief Positive Huber clipping threshold used by location/scatter fits.
   Scalar huber_cutoff;
+  /// @brief Positive multiplier applied to coordinatewise median absolute
+  /// deviation.
   Scalar scale_factor;
+  /// @brief Optional positive fixed coordinate scales for robust location.
   std::optional<ConstVectorView> fixed_scale;
+  /// @brief Optional symmetric positive-definite metric for radial clipping.
   std::optional<ConstMatrixView> metric;
+  /// @brief Iteration tolerance and cap for safeguarded location solving.
   IterPolicy iteration;
+  /// @brief Optional fixed center for robust covariance estimation.
   std::optional<ConstVectorView> center;
 };
 
