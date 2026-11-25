@@ -2,7 +2,9 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/probability/MomentBounds.hpp>
 
 namespace vss::math::probability {
