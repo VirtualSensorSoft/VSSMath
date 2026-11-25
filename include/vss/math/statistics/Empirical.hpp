@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/ProbabilityPolicy.hpp>
@@ -41,9 +42,10 @@ struct Histogram final {
 /// @brief Declares product-kernel bandwidths and optional reflecting bounds.
 struct KernelSpec final {
   /// @brief Gaussian or compact-support Epanechnikov kernel.
-  KernelKind kernel;
+  KernelKind kernel{KernelKind::gaussian};
   /// @brief One bandwidth broadcast to all coordinates or one per coordinate.
-  ConstVectorView bandwidth;
+  ConstVectorView bandwidth{
+      ConstVectorView::create(std::span<const Scalar>{}, 0U).value()};
   /// @brief Optional d-by-2 lower/upper reflecting interval bounds.
   std::optional<ConstMatrixView> reflection_bounds;
 };

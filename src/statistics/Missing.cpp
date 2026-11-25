@@ -1,24 +1,28 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
-#include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 #include <vss/math/statistics/Missing.hpp>
+#include <vss/math/statistics/Population.hpp>
 
 namespace vss::math::statistics {
 namespace {
@@ -96,22 +100,22 @@ diagnostics(Extent input, Extent validCount, WeightRule weight,
             CenterRule center, std::string algorithm, std::string premises,
             std::vector<TupleSupport> tuples = {},
             std::vector<ErrorCode> warnings = {}, Limits limits = {}) {
-  const Scalar n = static_cast<Scalar>(validCount);
-  Support support{.input = input,
-                  .valid = validCount,
-                  .positive = validCount,
-                  .frequency_mass = std::nullopt,
-                  .weight_mass = n,
-                  .normalized_weight_powers =
-                      validCount == 0U
-                          ? std::array<std::optional<Scalar>, 3>{}
-                          : std::array<std::optional<Scalar>, 3>{1.0, 1.0 / n,
-                                                                 1.0 / (n * n)},
-                  .effective_count = validCount == 0U
-                                         ? std::nullopt
-                                         : std::optional<Scalar>(n),
-                  .degrees_of_freedom = std::nullopt,
-                  .squared_weight_mass = std::nullopt};
+  const auto n = static_cast<Scalar>(validCount);
+  const Support support{
+      .input = input,
+      .valid = validCount,
+      .positive = validCount,
+      .frequency_mass = std::nullopt,
+      .weight_mass = n,
+      .normalized_weight_powers =
+          validCount == 0U
+              ? std::array<std::optional<Scalar>, 3>{}
+              : std::array<std::optional<Scalar>, 3>{1.0, 1.0 / n,
+                                                     1.0 / (n * n)},
+      .effective_count =
+          validCount == 0U ? std::nullopt : std::optional<Scalar>(n),
+      .degrees_of_freedom = std::nullopt,
+      .squared_weight_mass = std::nullopt};
   auto tupleArray = Array<TupleSupport>::copy(tuples, limits);
   auto warningArray = Array<ErrorCode>::copy(warnings, limits);
   if (!tupleArray || !warningArray) {
@@ -595,8 +599,7 @@ Result<EmParameters> emUpdate(const SampleView& sample, ConstVectorView mean,
     for (Extent j = 0U; j < d; ++j) {
       conditionalMean[j] = mean.at(j);
     }
-    for (Extent oi = 0U; oi < block.value().indices.size(); ++oi) {
-      const Extent j = block.value().indices[oi];
+    for (const Extent j : block.value().indices) {
       present[j] = true;
       conditionalMean[j] = sample.rows.at(row, j);
     }
@@ -651,7 +654,7 @@ Result<EmParameters> emUpdate(const SampleView& sample, ConstVectorView mean,
   }
   Vector nextMean(d, 0.0);
   Matrix nextCovariance(d, d, 0.0);
-  const long double count = static_cast<long double>(effectiveRows);
+  const auto count = static_cast<long double>(effectiveRows);
   for (Extent i = 0U; i < d; ++i) {
     nextMean.at(i) = static_cast<Scalar>(sumMean[i] / count);
   }
@@ -802,6 +805,12 @@ Result<Estimate<Matrix>> covarianceWithMissing(const SampleView& x,
           ErrorCode::InvalidDomain,
           "Gaussian EM requires both initialization values");
     }
+    if (!policy.initial_mean.has_value() ||
+        !policy.initial_covariance.has_value()) {
+      return fail<Estimate<Matrix>>(
+          ErrorCode::InvalidDomain,
+          "Gaussian EM requires both initialization values");
+    }
     if (d > std::numeric_limits<Extent>::max() / d || d * d > limits.elements ||
         d * d > limits.bytes / (sizeof(long double) * 16U)) {
       return fail<Estimate<Matrix>>(
@@ -826,8 +835,8 @@ Result<Estimate<Matrix>> covarianceWithMissing(const SampleView& x,
     }
     Limits workLimits = limits;
     workLimits.evaluations = evaluationCap;
-    Vector mean = *policy.initial_mean;
-    Matrix covariance = *policy.initial_covariance;
+    Vector mean = policy.initial_mean.value();
+    Matrix covariance = policy.initial_covariance.value();
     std::uint64_t evaluations = 0U;
     auto oldLikelihood =
         observedLogLikelihood(x, mean.view(), covariance.view(), policy.policy,
@@ -1081,7 +1090,7 @@ Result<Estimate<Matrix>> covarianceWithMissing(const SampleView& x,
             coordinateArray.status().code(),
             std::string(coordinateArray.status().message()));
       }
-      const Scalar count = static_cast<Scalar>(rows.size());
+      const auto count = static_cast<Scalar>(rows.size());
       tupleSupport.push_back(TupleSupport{
           .coordinates = std::move(coordinateArray).value(),
           .support =

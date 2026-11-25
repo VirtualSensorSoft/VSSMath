@@ -3,20 +3,27 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Empirical.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 namespace vss::math::statistics {
 namespace {
@@ -135,7 +142,7 @@ Result<Histogram> buildHistogram(const SampleView& sample,
     return fail<Histogram>(ErrorCode::InsufficientSamples,
                            "histogram requires nonempty observations");
   }
-  if (sample.valid.size() != 0U &&
+  if (!sample.valid.empty() &&
       (rows > std::numeric_limits<Extent>::max() / dimensions ||
        sample.valid.size() != rows * dimensions)) {
     return fail<Histogram>(
@@ -238,12 +245,13 @@ Result<Histogram> buildHistogram(const SampleView& sample,
         above = true;
         continue;
       }
-      const auto begin = axisEdges.data();
-      const auto end = begin + axisEdges.size();
-      const auto upper = std::upper_bound(begin, end, value);
+      const std::span<const Scalar> axisValues{axisEdges.data(),
+                                               axisEdges.size()};
+      const auto upper = std::ranges::upper_bound(axisValues, value);
+      const auto upperIndex = std::ranges::distance(axisValues.begin(), upper);
       const Extent index = value == axisEdges.at(axisEdges.size() - 1U)
                                ? axisEdges.size() - 2U
-                               : static_cast<Extent>(upper - begin - 1);
+                               : static_cast<Extent>(upperIndex - 1);
       flattened = flattened * extents[axis] + index;
     }
     if (below) {
@@ -302,13 +310,25 @@ Result<Histogram> buildHistogram(const SampleView& sample,
       representable(overflow, "histogram overflow is not representable");
   auto acceptedValue =
       representable(accepted, "histogram accepted mass is not representable");
-  if (!extentsArray || !edgesArray || !under || !over || !acceptedValue) {
-    const Status& status = !extentsArray ? extentsArray.status()
-                           : !edgesArray ? edgesArray.status()
-                           : !under      ? under.status()
-                           : !over       ? over.status()
-                                         : acceptedValue.status();
-    return fail<Histogram>(status.code(), std::string(status.message()));
+  if (!extentsArray) {
+    return fail<Histogram>(extentsArray.status().code(),
+                           std::string(extentsArray.status().message()));
+  }
+  if (!edgesArray) {
+    return fail<Histogram>(edgesArray.status().code(),
+                           std::string(edgesArray.status().message()));
+  }
+  if (!under) {
+    return fail<Histogram>(under.status().code(),
+                           std::string(under.status().message()));
+  }
+  if (!over) {
+    return fail<Histogram>(over.status().code(),
+                           std::string(over.status().message()));
+  }
+  if (!acceptedValue) {
+    return fail<Histogram>(acceptedValue.status().code(),
+                           std::string(acceptedValue.status().message()));
   }
   return Result<Histogram>::success(
       Histogram{.extents = std::move(extentsArray).value(),
@@ -335,12 +355,12 @@ Status validateDensitySample(const SampleView& sample, bool allowEmpty) {
     return Status::failure(ErrorCode::DimensionMismatch,
                            "KDE validity mask must match sample cells");
   }
-  for (Extent i = 0U; i < sample.valid.size(); ++i) {
-    if (sample.valid[i] > 1U) {
+  for (const std::uint8_t bit : sample.valid) {
+    if (bit > 1U) {
       return Status::failure(ErrorCode::InvalidDomain,
                              "KDE validity mask entries must be zero or one");
     }
-    if (sample.valid[i] == 0U) {
+    if (bit == 0U) {
       return Status::failure(ErrorCode::InvalidDomain,
                              "KDE requires complete observations");
     }
@@ -432,10 +452,8 @@ reflectedAxis(KernelKind kind, long double observation, long double evaluation,
                                "Gaussian reflected KDE tail bound did not "
                                "converge within the iteration cap");
     }
-    if (maximum > static_cast<Index>(std::numeric_limits<std::uint64_t>::max() /
-                                     4U) ||
-        maximum >
-            static_cast<Index>(std::numeric_limits<std::int64_t>::max())) {
+    if (maximum >
+        static_cast<Index>(std::numeric_limits<std::uint64_t>::max() / 4U)) {
       return fail<long double>(
           ErrorCode::ResourceLimit,
           "Gaussian reflected KDE image count is not representable");
@@ -484,7 +502,7 @@ reflectedAxis(KernelKind kind, long double observation, long double evaluation,
     if (last < first) {
       return;
     }
-    for (std::int64_t k = static_cast<std::int64_t>(first);
+    for (auto k = static_cast<std::int64_t>(first);
          k <= static_cast<std::int64_t>(last); ++k) {
       const long double shift = static_cast<long double>(k) * period;
       sum +=

@@ -13,11 +13,11 @@ namespace vss::math::statistics {
 ///          the owning values are copied by the estimator and never modified.
 struct MissingPolicy final {
   /// @brief Reject, complete-row, pairwise or explicit Gaussian-EM policy.
-  MissingMode mode;
+  MissingMode mode{MissingMode::reject};
   /// @brief Bounded numerical solve and convergence policy used by Gaussian EM.
   SolvePolicy policy;
   /// @brief Minimum observed support required for each estimated quantity.
-  Index minimum_support;
+  Index minimum_support{1U};
   /// @brief Owned Gaussian-EM initial mean; required only in Gaussian-EM mode.
   std::optional<Vector> initial_mean = std::nullopt;
   /// @brief Owned Gaussian-EM initial covariance; required only in Gaussian-EM
