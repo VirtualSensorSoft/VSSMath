@@ -35,7 +35,7 @@ void latinHypercubeStrataAndReplay() {
   VSS_CHECK(design.value().algorithm == "latin-hypercube-fisher-yates-v1");
   VSS_CHECK(design.value().provenance.has_value());
   if (design.value().provenance.has_value()) {
-    const auto& provenance = design.value().provenance.value();
+    const auto& provenance = *design.value().provenance;
     VSS_CHECK(provenance.kind == SamplingDesignKind::latin_hypercube);
     VSS_CHECK(provenance.algorithm_version == 1U);
     VSS_CHECK(provenance.coordinate_bits == 52U);
@@ -287,11 +287,14 @@ void sobolEdgesAndFullTable() {
 }
 } // namespace
 
-int main() {
+int main() try {
   latinHypercubeStrataAndReplay();
   validationAndLimitPreflight();
   sobolPrefixRangeAndProvenance();
   sobolEdgesAndFullTable();
+  return 0;
+} catch (...) {
+  return 1;
 }
 
 // VSS-MATH-TRACEABILITY: C106 CASE-C106.latin-hypercube-strata
