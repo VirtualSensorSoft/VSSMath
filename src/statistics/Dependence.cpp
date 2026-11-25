@@ -3,11 +3,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <numeric>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/SampleView.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/statistics/Dependence.hpp>
 
 namespace vss::math::statistics {
@@ -116,7 +120,7 @@ Result<long double> pearsonRanks(const std::vector<long double>& x,
     xSum.add(x[i]);
     ySum.add(y[i]);
   }
-  const long double n = static_cast<long double>(x.size());
+  const auto n = static_cast<long double>(x.size());
   const long double xMean = xSum.value() / n;
   const long double yMean = ySum.value() / n;
   CompensatedSum cross;
@@ -389,7 +393,7 @@ Result<Scalar> distanceCorrelation(const SampleView& x, const SampleView& y,
       yGrandSum.add(2.0L * yDistance.value());
     }
   }
-  const long double denominator = static_cast<long double>(n);
+  const auto denominator = static_cast<long double>(n);
   std::vector<long double> xMeans(n);
   std::vector<long double> yMeans(n);
   for (Extent i = 0U; i < n; ++i) {

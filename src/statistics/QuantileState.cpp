@@ -4,8 +4,13 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/statistics/Order.hpp>
 #include <vss/math/statistics/QuantileState.hpp>
 
@@ -123,7 +128,7 @@ Result<QuantileState> makeStreamingQuantile(Scalar epsilon, Index capacity,
 }
 
 Status add(QuantileState& state, Scalar observation) {
-  const Status valid = validateState(state);
+  Status valid = validateState(state);
   if (!valid.ok()) {
     return valid;
   }
@@ -203,7 +208,7 @@ Status add(QuantileState& state, Scalar observation) {
                         .capacity = state.capacity,
                         .count = newCount,
                         .limits = state.limits};
-  const Status invariant = validateState(updated);
+  Status invariant = validateState(updated);
   if (!invariant.ok()) {
     return invariant;
   }
