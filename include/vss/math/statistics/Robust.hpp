@@ -21,10 +21,10 @@ namespace vss::math::statistics {
 ///          the safeguarded robust-location root search.
 struct RobustPolicy final {
   /// @brief Positive Huber clipping threshold used by location/scatter fits.
-  Scalar huber_cutoff;
+  Scalar huber_cutoff{};
   /// @brief Positive multiplier applied to coordinatewise median absolute
   /// deviation.
-  Scalar scale_factor;
+  Scalar scale_factor{};
   /// @brief Optional positive fixed coordinate scales for robust location.
   std::optional<ConstVectorView> fixed_scale;
   /// @brief Optional symmetric positive-definite metric for radial clipping.

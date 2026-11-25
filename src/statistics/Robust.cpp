@@ -1,15 +1,18 @@
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
+#include <cstdint>
 #include <limits>
-#include <numeric>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/covariance/Conditioning.hpp>
 #include <vss/math/covariance/PropagationResult.hpp>
@@ -17,6 +20,7 @@
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 #include <vss/math/statistics/Order.hpp>
+#include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/Robust.hpp>
 
 namespace vss::math::statistics {
@@ -191,7 +195,7 @@ Result<EstimatorDiagnostics> diagnostics(Extent n, WeightRule weight,
                                          CenterRule center,
                                          std::string algorithm,
                                          std::string premises) {
-  const Scalar count = static_cast<Scalar>(n);
+  const auto count = static_cast<Scalar>(n);
   const Support support{
       .input = n,
       .valid = n,
@@ -222,8 +226,8 @@ Result<EstimatorDiagnostics> diagnostics(Extent n, WeightRule weight,
 long double score(const SampleView& sample, Extent coordinate, Scalar candidate,
                   Scalar scale, Scalar cutoff) {
   long double total = 0.0L;
-  const long double s = static_cast<long double>(scale);
-  const long double c = static_cast<long double>(cutoff);
+  const auto s = static_cast<long double>(scale);
+  const auto c = static_cast<long double>(cutoff);
   for (Extent i = 0U; i < sample.rows.rows(); ++i) {
     const long double residual =
         static_cast<long double>(sample.rows.at(i, coordinate)) -
@@ -269,15 +273,15 @@ Result<Scalar> huberLocation(const SampleView& sample, Extent coordinate,
       const long double width = static_cast<long double>(high) - low;
       const long double tolerance =
           absoluteTolerance +
-          relativeTolerance *
-              std::max(std::abs(static_cast<long double>(low)),
-                       std::abs(static_cast<long double>(high)));
+          (relativeTolerance *
+           std::max(std::abs(static_cast<long double>(low)),
+                    std::abs(static_cast<long double>(high))));
       if (width <= tolerance) {
         converged = true;
         break;
       }
-      const Scalar middle =
-          static_cast<Scalar>(static_cast<long double>(low) + width * 0.5L);
+      const auto middle =
+          static_cast<Scalar>(static_cast<long double>(low) + (width * 0.5L));
       if (middle <= low || middle >= high) {
         converged = true;
         break;
@@ -294,9 +298,9 @@ Result<Scalar> huberLocation(const SampleView& sample, Extent coordinate,
       const long double width = static_cast<long double>(high) - low;
       const long double tolerance =
           absoluteTolerance +
-          relativeTolerance *
-              std::max(std::abs(static_cast<long double>(low)),
-                       std::abs(static_cast<long double>(high)));
+          (relativeTolerance *
+           std::max(std::abs(static_cast<long double>(low)),
+                    std::abs(static_cast<long double>(high))));
       converged = width <= tolerance;
     }
     if (!converged) {
@@ -305,7 +309,7 @@ Result<Scalar> huberLocation(const SampleView& sample, Extent coordinate,
     }
     return Result<Scalar>::success(
         static_cast<Scalar>(static_cast<long double>(low) +
-                            (static_cast<long double>(high) - low) * 0.5L));
+                            ((static_cast<long double>(high) - low) * 0.5L)));
   };
   auto lower = rootBoundary(true);
   if (!lower) {
@@ -584,10 +588,10 @@ Result<Estimate<Matrix>> robustCovariance(const SampleView& x,
     }
     for (Extent i = 0U; i < d; ++i) {
       for (Extent j = 0U; j < d; ++j) {
-        const long double updated = static_cast<long double>(output.at(i, j)) +
-                                    static_cast<long double>(clipped.at(i)) *
-                                        clipped.at(j) /
-                                        static_cast<long double>(x.rows.rows());
+        const long double updated =
+            static_cast<long double>(output.at(i, j)) +
+            (static_cast<long double>(clipped.at(i)) * clipped.at(j) /
+             static_cast<long double>(x.rows.rows()));
         if (!std::isfinite(updated) ||
             std::abs(updated) > std::numeric_limits<Scalar>::max()) {
           return fail<Estimate<Matrix>>(ErrorCode::NonFiniteResult,
