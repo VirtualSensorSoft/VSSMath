@@ -1,12 +1,23 @@
+#include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <limits>
-#include <numbers>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
 #include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/linear/Cholesky.hpp>
+#include <vss/math/linear/FactorizationOptions.hpp>
 #include <vss/math/linear/LinearSolve.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 #include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/Special.hpp>
@@ -81,13 +92,13 @@ Result<Interval> varianceConfidenceInterval(Scalar sampleVariance, Index n,
         "variance must be non-negative and confidence must be in (0,1)");
   }
   if (sampleVariance == 0.0) {
-    return Result<Interval>::success(Interval{0.0, 0.0});
+    return Result<Interval>::success(Interval{.lower = 0.0, .upper = 0.0});
   }
 
   const Scalar alpha = 1.0 - confidence;
   const Scalar lowerProbability = alpha * 0.5;
   const Scalar upperProbability = 1.0 - lowerProbability;
-  const Scalar degreesOfFreedom = static_cast<Scalar>(n - 1U);
+  const auto degreesOfFreedom = static_cast<Scalar>(n - 1U);
   const auto law = probability::chiSquare(degreesOfFreedom);
   if (!law.hasValue()) {
     return propagateFailure<Interval>(law.status());
@@ -130,7 +141,8 @@ Result<Interval> varianceConfidenceInterval(Scalar sampleVariance, Index n,
         ErrorCode::NoConvergence,
         "variance confidence interval endpoints are not ordered");
   }
-  return Result<Interval>::success(Interval{lower.value(), upper.value()});
+  return Result<Interval>::success(
+      Interval{.lower = lower.value(), .upper = upper.value()});
 }
 
 Result<TestResult> hotellingT2(const SampleView& sample, ConstVectorView center,
@@ -177,8 +189,8 @@ Result<TestResult> hotellingT2(const SampleView& sample, ConstVectorView center,
     return propagateFailure<TestResult>(covariance.status());
   }
   linear::SymmetricFactorizationOptions factorOptions{};
-  factorOptions.factorization.rankTolerance =
-      linear::RankTolerance{policy.rank_abs, policy.rank_rel};
+  factorOptions.factorization.rankTolerance = linear::RankTolerance{
+      .absolute = policy.rank_abs, .relative = policy.rank_rel};
   factorOptions.factorization.conditionLimit =
       policy.reciprocal_condition_floor > 0.0
           ? 1.0 / policy.reciprocal_condition_floor
@@ -227,7 +239,7 @@ Result<TestResult> hotellingT2(const SampleView& sample, ConstVectorView center,
         ErrorCode::NonFiniteResult,
         "Hotelling T2 statistic is not representable");
   }
-  const Scalar statistic = static_cast<Scalar>(t2);
+  const auto statistic = static_cast<Scalar>(t2);
   Scalar pValue = 1.0;
   if (statistic > 0.0) {
     const Scalar ratio = statistic / static_cast<Scalar>(n - 1U);
@@ -283,7 +295,7 @@ Result<TestResult> ljungBox(ConstVectorView residuals, Index lag,
   }
   long double denominator = 0.0L;
   for (Index i = 0U; i < n; ++i) {
-    const long double centered = residuals.at(i) / scale - mean;
+    const long double centered = (residuals.at(i) / scale) - mean;
     denominator += centered * centered;
   }
   if (!(denominator > 0.0L)) {
@@ -322,21 +334,27 @@ Result<TestResult> ljungBox(ConstVectorView residuals, Index lag,
         ErrorCode::InvalidDomain,
         "Ljung-Box reference tag conflicts with fitted degrees");
   }
-  const auto base = ljungBox(residuals, lag, fittedDegrees, limits);
+  auto base = ljungBox(residuals, lag, fittedDegrees, limits);
   if (!base.hasValue()) {
     return base;
   }
-  const Scalar degrees = *base.value().effective_df;
+  const auto& baseValue = base.value();
+  if (!baseValue.effective_df) {
+    return Result<TestResult>::failure(
+        ErrorCode::InvalidDomain,
+        "Ljung-Box result lacks effective degrees of freedom");
+  }
+  const Scalar degrees = baseValue.effective_df.value();
   const auto law = probability::chiSquare(degrees);
   if (!law.hasValue()) {
     return propagateFailure<TestResult>(law.status());
   }
-  const auto tail = probability::evaluate(law.value(), base.value().statistic,
+  const auto tail = probability::evaluate(law.value(), baseValue.statistic,
                                           inferenceProbabilityPolicy());
   if (!tail.hasValue()) {
     return propagateFailure<TestResult>(tail.status());
   }
-  TestResult result = base.value();
+  TestResult result = baseValue;
   result.p_value = tail.value().survival;
   result.calibration_method =
       reference == LjungBoxReference::white_noise
@@ -408,7 +426,7 @@ covarianceEstimatorUncertainty(ConstMatrixView sampleCovariance, Index n,
   }
   const auto entryAt = [&](Index index) {
     return specification.selected.empty()
-               ? CovarianceEntry{index / d, index % d}
+               ? CovarianceEntry{.row = index / d, .column = index % d}
                : specification.selected[index];
   };
   for (Index p = 0U; p < entryCount; ++p) {
@@ -419,7 +437,7 @@ covarianceEstimatorUncertainty(ConstMatrixView sampleCovariance, Index n,
           "selected covariance entry is outside the matrix");
     }
   }
-  const long double divisor = static_cast<long double>(n - 1U);
+  const auto divisor = static_cast<long double>(n - 1U);
   Matrix uncertainty(entryCount, entryCount);
   for (Index a = 0U; a < entryCount; ++a) {
     const CovarianceEntry left = entryAt(a);
@@ -441,15 +459,15 @@ covarianceEstimatorUncertainty(ConstMatrixView sampleCovariance, Index n,
       uncertainty.at(a, b) = static_cast<Scalar>(value);
     }
   }
-  Support support{.input = n,
-                  .valid = n,
-                  .positive = n,
-                  .frequency_mass = std::nullopt,
-                  .weight_mass = static_cast<Scalar>(n),
-                  .normalized_weight_powers = {},
-                  .effective_count = static_cast<Scalar>(n),
-                  .degrees_of_freedom = static_cast<Scalar>(n - 1U),
-                  .squared_weight_mass = static_cast<Scalar>(n)};
+  const Support support{.input = n,
+                        .valid = n,
+                        .positive = n,
+                        .frequency_mass = std::nullopt,
+                        .weight_mass = static_cast<Scalar>(n),
+                        .normalized_weight_powers = {},
+                        .effective_count = static_cast<Scalar>(n),
+                        .degrees_of_freedom = static_cast<Scalar>(n - 1U),
+                        .squared_weight_mass = static_cast<Scalar>(n)};
   EstimatorDiagnostics diagnostics{
       .estimand = Estimand::estimate,
       .weight = WeightRule::fixed_iid,
@@ -520,7 +538,7 @@ bootstrapCovarianceUncertainty(const SampleView& sample,
     const Matrix& covariance = estimate.value().value;
     for (Index i = 0U; i < covariance.rows(); ++i) {
       for (Index j = 0U; j < covariance.columns(); ++j) {
-        flattened.at(i * covariance.columns() + j) = covariance.at(i, j);
+        flattened.at((i * covariance.columns()) + j) = covariance.at(i, j);
       }
     }
     return Result<Vector>::success(std::move(flattened));
