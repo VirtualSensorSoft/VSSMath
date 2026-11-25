@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <limits>
@@ -9,7 +10,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/SampleView.hpp>
@@ -125,7 +128,7 @@ Status preflightInput(std::size_t sampleElements, Index draws,
                              "bootstrap callback count is not representable");
     }
   }
-  std::uint64_t calls = static_cast<std::uint64_t>(draws);
+  auto calls = static_cast<std::uint64_t>(draws);
   if (originalCall) {
     if (calls == std::numeric_limits<std::uint64_t>::max()) {
       return Status::failure(ErrorCode::ResourceLimit,
@@ -299,7 +302,7 @@ Result<Scalar> standardError(const std::vector<Vector>& values,
                               static_cast<long double>(values.size());
   const long double error =
       static_cast<long double>(scale) * std::sqrt(squared / divisor);
-  const Scalar result = static_cast<Scalar>(error);
+  const auto result = static_cast<Scalar>(error);
   if (!std::isfinite(result)) {
     return failure<Scalar>(ErrorCode::NonFiniteResult,
                            "bootstrap Monte Carlo error is not representable");
@@ -442,9 +445,10 @@ Result<BootstrapResult> bootstrapEstimate(const SampleView& sample,
       }
     }
     Matrix intervals(width, 2U, 0.0);
-    std::optional<Vector> monteCarloError;
-    if (estimates.size() >= 2U) {
-      monteCarloError.emplace(width, 0.0);
+    const bool estimateMonteCarloError = estimates.size() >= 2U;
+    Vector monteCarloError;
+    if (estimateMonteCarloError) {
+      monteCarloError = Vector(width, 0.0);
     }
     Vector coordinateValues(estimates.size(), 0.0);
     for (Index coordinate = 0U; coordinate < width; ++coordinate) {
@@ -474,19 +478,22 @@ Result<BootstrapResult> bootstrapEstimate(const SampleView& sample,
       }
       intervals.at(coordinate, 0U) = lowerEndpoint;
       intervals.at(coordinate, 1U) = upperEndpoint;
-      if (monteCarloError.has_value()) {
+      if (estimateMonteCarloError) {
         const auto error = standardError(estimates, coordinate);
         if (!error.hasValue()) {
           return copyFailure<BootstrapResult>(error.status());
         }
-        monteCarloError->at(coordinate) = error.value();
+        monteCarloError.at(coordinate) = error.value();
       }
     }
-    return Result<BootstrapResult>::success(
-        BootstrapResult{.estimates = std::move(resultEstimates),
-                        .intervals = std::move(intervals),
-                        .rejected = rejected,
-                        .monte_carlo_error = std::move(monteCarloError)});
+    return Result<BootstrapResult>::success(BootstrapResult{
+        .estimates = std::move(resultEstimates),
+        .intervals = std::move(intervals),
+        .rejected = rejected,
+        .monte_carlo_error =
+            estimateMonteCarloError
+                ? std::optional<Vector>{std::move(monteCarloError)}
+                : std::nullopt});
   } catch (const std::bad_alloc&) {
     return failure<BootstrapResult>(ErrorCode::ResourceLimit,
                                     "bootstrap allocation failed");
