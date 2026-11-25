@@ -62,6 +62,8 @@ add_library(vss_math STATIC
   src/differentiation/FiniteDifference.cpp
   src/probability/ChiSquare.cpp
   src/probability/Distribution.cpp
+  src/probability/SamplingDesign.cpp
+  src/probability/MomentBounds.cpp
   src/probability/Likelihood.cpp
   src/probability/Gaussian.cpp
   src/probability/Special.cpp
@@ -171,6 +173,10 @@ install(DIRECTORY include/
 install(FILES
   "${CMAKE_CURRENT_BINARY_DIR}/generated/vss/math/version.hpp"
   DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/vss/math"
+  COMPONENT Development)
+install(FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/VirtualSensorMath"
   COMPONENT Development)
 install(EXPORT VirtualSensorMathTargets
   FILE VirtualSensorMathTargets.cmake
