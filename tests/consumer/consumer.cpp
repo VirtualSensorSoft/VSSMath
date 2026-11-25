@@ -43,12 +43,17 @@
 #include <vss/math/probability/MomentBounds.hpp>
 #include <vss/math/probability/SamplingDesign.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
+#include <vss/math/statistics/Dependence.hpp>
 #include <vss/math/statistics/Descriptive.hpp>
+#include <vss/math/statistics/Empirical.hpp>
+#include <vss/math/statistics/Missing.hpp>
 #include <vss/math/statistics/MomentDiagnostics.hpp>
 #include <vss/math/statistics/MomentState.hpp>
 #include <vss/math/statistics/Moments.hpp>
 #include <vss/math/statistics/Order.hpp>
 #include <vss/math/statistics/Population.hpp>
+#include <vss/math/statistics/QuantileState.hpp>
+#include <vss/math/statistics/Robust.hpp>
 #include <vss/math/statistics/Weighted.hpp>
 #include <vss/math/version.hpp>
 
@@ -639,6 +644,111 @@ bool verifyInstalledProbabilityAndSamplingContracts() {
   return true;
 }
 
+bool verifyInstalledU06StatisticsContracts() {
+  using namespace vss::math;
+
+  constexpr Limits ample{4096U, 262144U, 1000000U};
+  const Vector values{std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0}};
+  const Matrix rows =
+      matrixFromArray(std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0}, 4U, 1U);
+  const SampleView sample{
+      .rows = rows.view(), .observation_shape = {}, .valid = {}};
+
+  statistics::RobustPolicy robust{.huber_cutoff = 1.345,
+                                  .scale_factor = 1.0,
+                                  .fixed_scale = std::nullopt,
+                                  .metric = std::nullopt,
+                                  .iteration = {.abs = 1.0e-10,
+                                                .rel = 1.0e-10,
+                                                .max_iterations = 128U,
+                                                .max_evaluations = 0U,
+                                                .bracket = std::nullopt},
+                                  .center = std::nullopt};
+  const auto scale = statistics::robustScale(sample, robust, ample);
+  const auto location = statistics::robustLocation(sample, robust, ample);
+  if (!require(scale.hasValue() && location.hasValue(),
+               "installed robust estimators failed")) {
+    return false;
+  }
+
+  statistics::MissingPolicy missing{.mode = statistics::MissingMode::reject,
+                                    .policy = {},
+                                    .minimum_support = 2U,
+                                    .initial_mean = std::nullopt,
+                                    .initial_covariance = std::nullopt};
+  const auto selected =
+      statistics::sampleWithMissingPolicy(sample, missing, ample);
+  const auto covariance =
+      statistics::covarianceWithMissing(sample, missing, ample);
+  if (!require(selected.hasValue() && selected.value().data.rows() == 4U &&
+                   covariance.hasValue(),
+               "installed missing-data APIs failed")) {
+    return false;
+  }
+
+  const Vector edges{std::array<Scalar, 3U>{0.0, 2.0, 5.0}};
+  const Vector weights{std::array<Scalar, 4U>{1.0, 1.0, 2.0, 2.0}};
+  const auto counts =
+      statistics::histogram(values.view(), edges.view(),
+                            statistics::HistogramNormalization::counts, ample);
+  const auto weighted = statistics::weightedHistogram(
+      values.view(), weights.view(), edges.view(),
+      statistics::HistogramNormalization::mass, ample);
+  const std::array<Vector, 1U> axes{edges};
+  const statistics::WeightSpec unweighted{.rule = WeightRule::unweighted,
+                                          .rowWeights = std::nullopt,
+                                          .componentWeights = std::nullopt,
+                                          .frequencyCounts = {}};
+  const auto multidimensional = statistics::histogramND(
+      sample, axes, unweighted, statistics::HistogramNormalization::counts,
+      ample);
+  const Vector bandwidth{std::array<Scalar, 1U>{1.0}};
+  const statistics::KernelSpec kernel{.kernel =
+                                          statistics::KernelKind::gaussian,
+                                      .bandwidth = bandwidth.view(),
+                                      .reflection_bounds = std::nullopt};
+  const auto density = statistics::kernelDensityEstimate(sample, unweighted,
+                                                         sample, kernel, ample);
+  if (!require(counts.hasValue() && weighted.hasValue() &&
+                   multidimensional.hasValue() && density.hasValue(),
+               "installed empirical distribution APIs failed")) {
+    return false;
+  }
+
+  const Vector x{std::array<Scalar, 4U>{1.0, 2.0, 3.0, 4.0}};
+  const Vector y{std::array<Scalar, 4U>{2.0, 4.0, 6.0, 8.0}};
+  const auto spearman =
+      statistics::spearmanCorrelation(x.view(), y.view(), ample);
+  const auto kendall = statistics::kendallTau(x.view(), y.view(), ample);
+  const Matrix yRows =
+      matrixFromArray(std::array<Scalar, 4U>{2.0, 4.0, 6.0, 8.0}, 4U, 1U);
+  const SampleView ySample{
+      .rows = yRows.view(), .observation_shape = {}, .valid = {}};
+  const auto distance = statistics::distanceCorrelation(sample, ySample, ample);
+  if (!require(spearman.hasValue() && kendall.hasValue() && distance.hasValue(),
+               "installed dependence APIs failed")) {
+    return false;
+  }
+
+  auto sketch = statistics::makeStreamingQuantile(0.1, 64U, ample);
+  if (!require(sketch.hasValue(),
+               "installed quantile sketch creation failed")) {
+    return false;
+  }
+  for (Extent index = 0U; index < values.size(); ++index) {
+    if (!require(statistics::add(sketch.value(), values.at(index)).ok(),
+                 "installed quantile sketch update failed")) {
+      return false;
+    }
+  }
+  const auto estimate = statistics::streamingQuantile(sketch.value(), 0.5);
+  const auto rolling = statistics::rollingQuantile(values.view(), 0.5,
+                                                   QuantileRule::linear, ample);
+  return require(estimate.hasValue() && rolling.hasValue() &&
+                     std::abs(rolling.value() - 2.5) < 1.0e-12,
+                 "installed streaming or rolling quantile APIs failed");
+}
+
 } // namespace
 
 int main() {
@@ -655,6 +765,9 @@ int main() {
     return 1;
   }
   if (!verifyInstalledProbabilityAndSamplingContracts()) {
+    return 1;
+  }
+  if (!verifyInstalledU06StatisticsContracts()) {
     return 1;
   }
 
