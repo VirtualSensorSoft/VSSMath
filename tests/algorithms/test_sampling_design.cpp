@@ -2,9 +2,16 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <type_traits>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/SamplingDesign.hpp>
 
 namespace {
@@ -27,8 +34,8 @@ void latinHypercubeStrataAndReplay() {
   VSS_CHECK(design.value().points.columns() == 2U);
   VSS_CHECK(design.value().algorithm == "latin-hypercube-fisher-yates-v1");
   VSS_CHECK(design.value().provenance.has_value());
-  if (design.value().provenance) {
-    const auto& provenance = *design.value().provenance;
+  if (design.value().provenance.has_value()) {
+    const auto& provenance = design.value().provenance.value();
     VSS_CHECK(provenance.kind == SamplingDesignKind::latin_hypercube);
     VSS_CHECK(provenance.algorithm_version == 1U);
     VSS_CHECK(provenance.coordinate_bits == 52U);
@@ -49,8 +56,8 @@ void latinHypercubeStrataAndReplay() {
       const auto stratum = static_cast<Index>(value * 4.0);
       VSS_CHECK(stratum < seen.size());
       if (stratum < seen.size()) {
-        VSS_CHECK(!seen[stratum]);
-        seen[stratum] = true;
+        VSS_CHECK(!seen.at(stratum));
+        seen.at(stratum) = true;
       }
       VSS_CHECK(value == repeated.value().points.at(row, column));
     }
@@ -77,9 +84,12 @@ void validationAndLimitPreflight() {
       latinHypercube(2U, 4U, untouchedRng, Limits{64U, 4096U, 0U});
   VSS_CHECK(afterInvalid.hasValue() && untouched.hasValue());
   if (afterInvalid && untouched) {
-    for (Index i = 0U; i < afterInvalid.value().points.size(); ++i) {
-      VSS_CHECK(afterInvalid.value().points.data()[i] ==
-                untouched.value().points.data()[i]);
+    for (Index row = 0U; row < afterInvalid.value().points.rows(); ++row) {
+      for (Index column = 0U; column < afterInvalid.value().points.columns();
+           ++column) {
+        VSS_CHECK(afterInvalid.value().points.at(row, column) ==
+                  untouched.value().points.at(row, column));
+      }
     }
   }
 }
@@ -108,12 +118,13 @@ void sobolPrefixRangeAndProvenance() {
   VSS_CHECK(prefix.value().points.rows() == expected.size());
   VSS_CHECK(prefix.value().points.columns() == expected.front().size());
   for (Index row = 0U; row < expected.size(); ++row) {
-    for (Index column = 0U; column < expected[row].size(); ++column) {
-      VSS_CHECK(prefix.value().points.at(row, column) == expected[row][column]);
+    for (Index column = 0U; column < expected.at(row).size(); ++column) {
+      VSS_CHECK(prefix.value().points.at(row, column) ==
+                expected.at(row).at(column));
     }
   }
   VSS_CHECK(prefix.value().provenance.has_value());
-  if (prefix.value().provenance) {
+  if (prefix.value().provenance.has_value()) {
     const auto& provenance = *prefix.value().provenance;
     VSS_CHECK(provenance.kind == SamplingDesignKind::sobol);
     VSS_CHECK(provenance.coordinate_bits == 52U);
@@ -138,14 +149,20 @@ void sobolPrefixRangeAndProvenance() {
   VSS_CHECK(shifted.hasValue());
   if (shifted) {
     for (Index row = 0U; row < shiftedExpected.size(); ++row) {
-      for (Index column = 0U; column < shiftedExpected[row].size(); ++column) {
+      for (Index column = 0U; column < shiftedExpected.at(row).size();
+           ++column) {
         const auto actual = static_cast<std::uint64_t>(
             shifted.value().points.at(row, column) * 0x1p52);
-        VSS_CHECK(actual == shiftedExpected[row][column]);
+        VSS_CHECK(actual == shiftedExpected.at(row).at(column));
       }
     }
-    VSS_CHECK(shifted.value().provenance->seed == 42U);
-    VSS_CHECK(shifted.value().provenance->digital_shift);
+    if (shifted.value().provenance.has_value()) {
+      const auto& provenance = shifted.value().provenance.value();
+      VSS_CHECK(provenance.seed == 42U);
+      VSS_CHECK(provenance.digital_shift);
+    } else {
+      VSS_CHECK(false);
+    }
   }
 
   const auto shiftedPrefix =
@@ -188,7 +205,10 @@ void sobolPrefixRangeAndProvenance() {
                                            Limits{dimension * 8U, 65536U, 0U});
     VSS_CHECK(full.hasValue() && first.hasValue() && second.hasValue() &&
               interior.hasValue());
-    if (full && first && second && interior) {
+    if (full && first && second && interior &&
+        first.value().provenance.has_value() &&
+        second.value().provenance.has_value() &&
+        interior.value().provenance.has_value()) {
       for (Index row = 0U; row < 8U; ++row) {
         for (Index column = 0U; column < dimension; ++column) {
           VSS_CHECK(first.value().points.at(row, column) ==
@@ -203,9 +223,9 @@ void sobolPrefixRangeAndProvenance() {
                     full.value().points.at(row + 3U, column));
         }
       }
-      VSS_CHECK(first.value().provenance->first_index == 0U);
-      VSS_CHECK(second.value().provenance->first_index == 8U);
-      VSS_CHECK(interior.value().provenance->first_index == 3U);
+      VSS_CHECK(first.value().provenance.value().first_index == 0U);
+      VSS_CHECK(second.value().provenance.value().first_index == 8U);
+      VSS_CHECK(interior.value().provenance.value().first_index == 3U);
     }
   }
 }
@@ -256,8 +276,9 @@ void sobolEdgesAndFullTable() {
   VSS_CHECK(extentOverflow.status().code() == ErrorCode::SizeOverflow);
 
   // Requesting all dimensions validates every pinned table row and boundary.
-  const auto allDimensions = sobolDesign(
-      21201U, 0U, 0U, false, Limits{21201U, 16U * 1024U * 1024U, 0U});
+  const auto allDimensions =
+      sobolDesign(21201U, 0U, 0U, false,
+                  Limits{21201U, std::size_t{16U} * 1024U * 1024U, 0U});
   VSS_CHECK(allDimensions.hasValue());
   if (allDimensions) {
     VSS_CHECK(allDimensions.value().points.rows() == 1U);
