@@ -1104,7 +1104,7 @@ frequencyWeightedCovariance(const SampleView& sample,
     }
     frequencyMass += counts[row];
     maximumCount = std::max(maximumCount, counts[row]);
-    const long double countValue = static_cast<long double>(counts[row]);
+    const auto countValue = static_cast<long double>(counts[row]);
     squaredFrequencyMass += countValue * countValue;
     ++positiveRows;
   }
