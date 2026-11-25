@@ -69,6 +69,7 @@ add_library(vss_math STATIC
   src/probability/Special.cpp
   src/statistics/Descriptive.cpp
   src/statistics/Order.cpp
+  src/statistics/Robust.cpp
   src/statistics/Summary.cpp
   src/statistics/Population.cpp
   src/statistics/Weighted.cpp

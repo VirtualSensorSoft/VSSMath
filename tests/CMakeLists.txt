@@ -88,6 +88,9 @@ vss_math_add_algorithm_test(test_order_statistics
 vss_math_add_algorithm_test(test_population_statistics
                              algorithms/test_population_statistics.cpp
                              math.population_statistics)
+vss_math_add_algorithm_test(test_robust_statistics
+                             algorithms/test_robust_statistics.cpp
+                             math.robust_statistics)
 vss_math_add_algorithm_test(test_weighted_population
                              algorithms/test_weighted_population.cpp
                              math.weighted_population)
