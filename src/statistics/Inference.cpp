@@ -7,8 +7,10 @@
 #include <vss/math/ProbabilityPolicy.hpp>
 #include <vss/math/linear/Cholesky.hpp>
 #include <vss/math/linear/LinearSolve.hpp>
+#include <vss/math/linear/SymmetricEigen.hpp>
 #include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/Special.hpp>
+#include <vss/math/statistics/Bootstrap.hpp>
 #include <vss/math/statistics/Inference.hpp>
 #include <vss/math/statistics/Population.hpp>
 
@@ -341,6 +343,189 @@ Result<TestResult> ljungBox(ConstVectorView residuals, Index lag,
           ? "asymptotic chi-square white-noise reference"
           : "asymptotic chi-square fitted-residual reference";
   return Result<TestResult>::success(std::move(result));
+}
+
+Result<Estimate<Matrix>>
+covarianceEstimatorUncertainty(ConstMatrixView sampleCovariance, Index n,
+                               const CovarianceUncertaintySpec& specification,
+                               Limits limits) {
+  if (!specification.premise.acknowledged) {
+    return Result<Estimate<Matrix>>::failure(
+        ErrorCode::InvalidDomain,
+        "covariance estimator uncertainty requires acknowledged NormalIID");
+  }
+  if (n < 2U) {
+    return Result<Estimate<Matrix>>::failure(
+        ErrorCode::InvalidDomain,
+        "covariance estimator uncertainty requires N>=2");
+  }
+  const Index d = sampleCovariance.rows();
+  if (d == 0U) {
+    return Result<Estimate<Matrix>>::failure(
+        ErrorCode::InvalidExtent, "sample covariance must be nonempty");
+  }
+  if (sampleCovariance.columns() != d) {
+    return Result<Estimate<Matrix>>::failure(
+        ErrorCode::DimensionMismatch, "sample covariance must be square");
+  }
+  for (Index i = 0U; i < d; ++i) {
+    for (Index j = 0U; j < d; ++j) {
+      if (!std::isfinite(sampleCovariance.at(i, j))) {
+        return Result<Estimate<Matrix>>::failure(
+            ErrorCode::NonFiniteInput,
+            "sample covariance contains non-finite values");
+      }
+    }
+  }
+  const auto eigen = linear::decomposeSymmetricEigen(sampleCovariance);
+  if (!eigen.hasValue()) {
+    return propagateFailure<Estimate<Matrix>>(eigen.status());
+  }
+  if (eigen.value().definiteness() ==
+      linear::PositiveDefiniteness::NotPositiveSemidefinite) {
+    return Result<Estimate<Matrix>>::failure(
+        ErrorCode::NotPositiveSemidefinite,
+        "sample covariance is not positive semidefinite");
+  }
+  Index entryCount = specification.selected.size();
+  if (entryCount == 0U) {
+    if (d > std::numeric_limits<Index>::max() / d) {
+      return Result<Estimate<Matrix>>::failure(
+          ErrorCode::SizeOverflow, "covariance entry count overflows");
+    }
+    entryCount = d * d;
+  }
+  if (entryCount > std::numeric_limits<Index>::max() / entryCount) {
+    return Result<Estimate<Matrix>>::failure(
+        ErrorCode::SizeOverflow, "covariance uncertainty extent overflows");
+  }
+  const Index outputElements = entryCount * entryCount;
+  if (outputElements > limits.elements ||
+      outputElements > limits.bytes / sizeof(Scalar)) {
+    return Result<Estimate<Matrix>>::failure(
+        ErrorCode::ResourceLimit,
+        "covariance uncertainty output exceeds limits");
+  }
+  const auto entryAt = [&](Index index) {
+    return specification.selected.empty()
+               ? CovarianceEntry{index / d, index % d}
+               : specification.selected[index];
+  };
+  for (Index p = 0U; p < entryCount; ++p) {
+    const CovarianceEntry entry = entryAt(p);
+    if (entry.row >= d || entry.column >= d) {
+      return Result<Estimate<Matrix>>::failure(
+          ErrorCode::IndexOutOfRange,
+          "selected covariance entry is outside the matrix");
+    }
+  }
+  const long double divisor = static_cast<long double>(n - 1U);
+  Matrix uncertainty(entryCount, entryCount);
+  for (Index a = 0U; a < entryCount; ++a) {
+    const CovarianceEntry left = entryAt(a);
+    for (Index b = 0U; b < entryCount; ++b) {
+      const CovarianceEntry right = entryAt(b);
+      const long double first =
+          static_cast<long double>(sampleCovariance.at(left.row, right.row)) *
+          sampleCovariance.at(left.column, right.column);
+      const long double second = static_cast<long double>(sampleCovariance.at(
+                                     left.row, right.column)) *
+                                 sampleCovariance.at(left.column, right.row);
+      const long double value = (first + second) / divisor;
+      if (!std::isfinite(value) ||
+          std::abs(value) > std::numeric_limits<Scalar>::max()) {
+        return Result<Estimate<Matrix>>::failure(
+            ErrorCode::NonFiniteResult,
+            "covariance estimator uncertainty is not representable");
+      }
+      uncertainty.at(a, b) = static_cast<Scalar>(value);
+    }
+  }
+  Support support{.input = n,
+                  .valid = n,
+                  .positive = n,
+                  .frequency_mass = std::nullopt,
+                  .weight_mass = static_cast<Scalar>(n),
+                  .normalized_weight_powers = {},
+                  .effective_count = static_cast<Scalar>(n),
+                  .degrees_of_freedom = static_cast<Scalar>(n - 1U),
+                  .squared_weight_mass = static_cast<Scalar>(n)};
+  EstimatorDiagnostics diagnostics{
+      .estimand = Estimand::estimate,
+      .weight = WeightRule::fixed_iid,
+      .center = CenterRule::estimated,
+      .approximation = Approximation::exact,
+      .global = support,
+      .coordinate_support = {},
+      .tuple_support = {},
+      .reciprocal_condition = std::nullopt,
+      .numerical_error = std::nullopt,
+      .sampling_error = std::nullopt,
+      .rank = std::nullopt,
+      .algorithm = specification.plug_in
+                       ? "Gaussian-IID plug-in covariance of covariance"
+                       : "Gaussian-IID model covariance of covariance",
+      .premises =
+          specification.plug_in
+              ? "NormalIID; unknown mean estimated; supplied covariance "
+                "interpreted as estimated S; plug-in, not finite-sample "
+                "unbiased"
+              : "NormalIID; unknown mean estimated; supplied covariance "
+                "interpreted as true Sigma",
+      .warnings = {}};
+  return Result<Estimate<Matrix>>::success(
+      Estimate<Matrix>{.value = std::move(uncertainty),
+                       .diagnostics = std::move(diagnostics),
+                       .error_covariance = std::nullopt});
+}
+
+Result<BootstrapResult>
+bootstrapCovarianceUncertainty(const SampleView& sample,
+                               const BootstrapPolicy& policy,
+                               probability::Rng& rng, Limits limits) {
+  if (sample.rows.columns() == 0U || sample.rows.rows() == 0U) {
+    return Result<BootstrapResult>::failure(
+        ErrorCode::InsufficientSamples,
+        "covariance bootstrap requires nonempty observations");
+  }
+  if (!sample.valid.empty()) {
+    return Result<BootstrapResult>::failure(
+        ErrorCode::InvalidDomain,
+        "covariance bootstrap requires complete observation rows");
+  }
+  const Index d = sample.rows.columns();
+  if (d > std::numeric_limits<Index>::max() / d) {
+    return Result<BootstrapResult>::failure(
+        ErrorCode::SizeOverflow,
+        "covariance bootstrap output extent overflows");
+  }
+  const Index covarianceElements = d * d;
+  if (covarianceElements > limits.elements ||
+      covarianceElements > limits.bytes / sizeof(Scalar)) {
+    return Result<BootstrapResult>::failure(
+        ErrorCode::ResourceLimit,
+        "covariance bootstrap statistic exceeds limits");
+  }
+  const Statistic covarianceStatistic = [limits](const SampleView& rows) {
+    const auto estimate = covarianceMatrix(
+        rows, CenterSpec{.rule = CenterRule::estimated, .center = std::nullopt},
+        PopulationPolicy{.normalization = VarianceMode::iid_sample,
+                         .missingness = MissingMode::reject,
+                         .estimand = Estimand::observed},
+        limits);
+    if (!estimate.hasValue()) {
+      return propagateFailure<Vector>(estimate.status());
+    }
+    Vector flattened(estimate.value().value.size());
+    const Matrix& covariance = estimate.value().value;
+    for (Index i = 0U; i < covariance.rows(); ++i) {
+      for (Index j = 0U; j < covariance.columns(); ++j) {
+        flattened.at(i * covariance.columns() + j) = covariance.at(i, j);
+      }
+    }
+    return Result<Vector>::success(std::move(flattened));
+  };
+  return bootstrapEstimate(sample, covarianceStatistic, policy, rng, limits);
 }
 
 } // namespace vss::math::statistics

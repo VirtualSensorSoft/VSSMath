@@ -152,6 +152,73 @@ void ljungBoxReportsUncalibratedStatisticAndDeclaredTails() {
   VSS_CHECK(!invalidReference.hasValue());
 }
 
+void covarianceEstimatorUncertaintyMatchesWickIdentityAndSelection() {
+  Matrix scalar(1U, 1U, 4.0);
+  const CovarianceUncertaintySpec allScalar{NormalIID{true}, false, {}};
+  const auto scalarUncertainty = covarianceEstimatorUncertainty(
+      scalar.view(), 5U, allScalar, Limits{16U, 1024U, 16U});
+  VSS_CHECK(scalarUncertainty.hasValue());
+  VSS_CHECK(scalarUncertainty.value().value.rows() == 1U);
+  VSS_CHECK(scalarUncertainty.value().value.at(0U, 0U) == 8.0);
+  VSS_CHECK(scalarUncertainty.value().diagnostics.estimand ==
+            Estimand::estimate);
+
+  Matrix diagonal(2U, 2U);
+  diagonal.at(0U, 0U) = 1.0;
+  diagonal.at(1U, 1U) = 2.0;
+  const std::array<CovarianceEntry, 3U> selected{CovarianceEntry{0U, 0U},
+                                                 CovarianceEntry{1U, 1U},
+                                                 CovarianceEntry{0U, 1U}};
+  const CovarianceUncertaintySpec selection{NormalIID{true}, false, selected};
+  const auto result = covarianceEstimatorUncertainty(
+      diagonal.view(), 5U, selection, Limits{16U, 1024U, 16U});
+  VSS_CHECK(result.hasValue());
+  VSS_CHECK(result.value().value.rows() == 3U);
+  VSS_CHECK(std::abs(result.value().value.at(0U, 0U) - 0.5) < 1.0e-12);
+  VSS_CHECK(std::abs(result.value().value.at(1U, 1U) - 2.0) < 1.0e-12);
+  VSS_CHECK(std::abs(result.value().value.at(2U, 2U) - 0.5) < 1.0e-12);
+  VSS_CHECK(result.value().value.at(0U, 1U) == 0.0);
+  const CovarianceUncertaintySpec noPremise{NormalIID{false}, false, selected};
+  VSS_CHECK(!covarianceEstimatorUncertainty(diagonal.view(), 5U, noPremise,
+                                            Limits{16U, 1024U, 16U})
+                 .hasValue());
+  const auto capped = covarianceEstimatorUncertainty(
+      diagonal.view(), 5U, allScalar, Limits{1U, 8U, 1U});
+  VSS_CHECK(!capped.hasValue());
+  VSS_CHECK(capped.status().code() == ErrorCode::ResourceLimit);
+}
+
+void covarianceBootstrapResamplesWholeRows() {
+  Matrix rows(3U, 2U);
+  for (Index i = 0U; i < 3U; ++i) {
+    rows.at(i, 0U) = static_cast<Scalar>(i + 1U);
+    rows.at(i, 1U) = 2.0 * rows.at(i, 0U);
+  }
+  const std::array<Index, 1U> shape{2U};
+  const SampleView sample{rows.view(), shape, {}};
+  const BootstrapPolicy policy{.kind = BootstrapKind::iid,
+                               .block_length = 1U,
+                               .draws = 32U,
+                               .confidence = 0.8,
+                               .interval = QuantileInterval::percentile,
+                               .invalid = InvalidDraw::reject};
+  probability::Rng rng(71U);
+  const auto result = bootstrapCovarianceUncertainty(
+      sample, policy, rng, Limits{4096U, 32768U, 4096U});
+  VSS_CHECK(result.hasValue());
+  VSS_CHECK(result.value().estimates.rows() == 32U);
+  VSS_CHECK(result.value().estimates.columns() == 4U);
+  VSS_CHECK(result.value().intervals.rows() == 4U);
+  VSS_CHECK(result.value().intervals.columns() == 2U);
+  for (Index i = 0U; i < result.value().estimates.rows(); ++i) {
+    const Scalar variance = result.value().estimates.at(i, 0U);
+    VSS_CHECK(std::abs(result.value().estimates.at(i, 1U) - 2.0 * variance) <
+              1.0e-12);
+    VSS_CHECK(std::abs(result.value().estimates.at(i, 3U) - 4.0 * variance) <
+              1.0e-12);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -160,4 +227,6 @@ int main() {
   hotellingT2MatchesExactBivariateReference();
   hotellingT2HasDeclaredGaussianNullRejectionRate();
   ljungBoxReportsUncalibratedStatisticAndDeclaredTails();
+  covarianceEstimatorUncertaintyMatchesWickIdentityAndSelection();
+  covarianceBootstrapResamplesWholeRows();
 }

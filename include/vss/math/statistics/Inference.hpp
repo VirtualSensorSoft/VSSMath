@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
@@ -10,6 +11,8 @@
 #include <vss/math/SampleView.hpp>
 #include <vss/math/VectorView.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
+#include <vss/math/statistics/Bootstrap.hpp>
+#include <vss/math/statistics/Population.hpp>
 
 namespace vss::math {
 
@@ -39,6 +42,22 @@ struct TestResult final {
   std::optional<Scalar> sampling_error;
   /// @brief Description of the calibration actually used.
   std::string calibration_method;
+};
+
+/// @brief One selected covariance entry, in (row, column) order.
+struct CovarianceEntry final {
+  Index row{};
+  Index column{};
+};
+
+/// @brief Declares Gaussian assumptions and selected covariance entries.
+/// @details An empty selection requests every entry in row-major order.
+struct CovarianceUncertaintySpec final {
+  NormalIID premise;
+  /// @brief True when the supplied covariance is an estimate used plug-in.
+  bool plug_in{};
+  /// @brief Borrowed entry list; retained only for the duration of the call.
+  std::span<const CovarianceEntry> selected;
 };
 
 /// @brief Computes the equal-tail confidence interval for a normal-IID
@@ -86,6 +105,27 @@ struct TestResult final {
                                           Index fittedDegrees,
                                           LjungBoxReference reference,
                                           Limits limits);
+
+/// @brief Computes covariance among selected sample-covariance entries.
+/// @details For unknown mean and N Gaussian-IID rows, uses Wick's identity
+///          Cov(Sij,Skl)=(Sigma_ik Sigma_jl+Sigma_il Sigma_jk)/(N−1).
+///          With `plug_in=false`, Sigma is the declared model covariance; with
+///          `true`, the supplied matrix is interpreted as an estimated S and
+///          the result is explicitly labelled plug-in. Duplicate and reversed
+///          pairs are retained. Empty selection expands to all row-major
+///          matrix entries.
+[[nodiscard]] Result<Estimate<Matrix>>
+covarianceEstimatorUncertainty(ConstMatrixView sampleCovariance, Index n,
+                               const CovarianceUncertaintySpec& specification,
+                               Limits limits);
+
+/// @brief Bootstraps covariance by resampling complete observation rows.
+/// @details Each replicate computes unbiased sample covariance and vectorizes
+///          all d*d entries in row-major order before interval construction.
+[[nodiscard]] Result<BootstrapResult>
+bootstrapCovarianceUncertainty(const SampleView& sample,
+                               const BootstrapPolicy& policy,
+                               probability::Rng& rng, Limits limits);
 
 } // namespace vss::math::statistics
 
