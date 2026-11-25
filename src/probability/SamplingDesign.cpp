@@ -21,13 +21,50 @@ constexpr char latinAlgorithm[] = "latin-hypercube-fisher-yates-v1";
 constexpr char sobolAlgorithm[] = "sobol-gray-code-joe-kuo-d6-v1";
 constexpr char directionTableSha256[] =
     "68eedd2a4e3b659b9695e7aff0f8ac68718bcf620730fc3d3a8c65df2a067441";
-constexpr char directionTableData[] =
+const std::array<std::string_view, 58U> directionTableChunks{
 #include "detail/SobolJoeKuoD6.inc"
-    ;
-constexpr std::string_view directionTable{directionTableData,
-                                          sizeof(directionTableData) - 1U};
+};
 constexpr Index maximumSobolDimension = 21201U;
 constexpr std::size_t directionBits = 64U;
+
+struct DirectionTableCursor final {
+  std::size_t chunk{0U};
+  std::size_t offset{0U};
+};
+
+bool atEnd(const DirectionTableCursor& cursor) noexcept {
+  return cursor.chunk >= directionTableChunks.size();
+}
+
+char peek(const DirectionTableCursor& cursor) noexcept {
+  return directionTableChunks[cursor.chunk][cursor.offset];
+}
+
+void advance(DirectionTableCursor& cursor) noexcept {
+  ++cursor.offset;
+  if (cursor.offset == directionTableChunks[cursor.chunk].size()) {
+    ++cursor.chunk;
+    cursor.offset = 0U;
+  }
+}
+
+void skipWhitespace(DirectionTableCursor& cursor) noexcept {
+  while (!atEnd(cursor) && (peek(cursor) == ' ' || peek(cursor) == '\t' ||
+                            peek(cursor) == '\r' || peek(cursor) == '\n')) {
+    advance(cursor);
+  }
+}
+
+bool skipLine(DirectionTableCursor& cursor) noexcept {
+  while (!atEnd(cursor) && peek(cursor) != '\n') {
+    advance(cursor);
+  }
+  if (atEnd(cursor)) {
+    return false;
+  }
+  advance(cursor);
+  return true;
+}
 
 bool addBytes(std::size_t value, std::size_t& total) noexcept {
   if (value > std::numeric_limits<std::size_t>::max() - total) {
@@ -68,26 +105,20 @@ Scalar openUniform(Rng& rng) noexcept {
   return value;
 }
 
-bool readUnsigned(std::string_view input, std::size_t& cursor,
-                  std::uint64_t& value) noexcept {
-  while (cursor < input.size() &&
-         (input[cursor] == ' ' || input[cursor] == '\t' ||
-          input[cursor] == '\r' || input[cursor] == '\n')) {
-    ++cursor;
-  }
-  if (cursor == input.size() || input[cursor] < '0' || input[cursor] > '9') {
+bool readUnsigned(DirectionTableCursor& cursor, std::uint64_t& value) noexcept {
+  skipWhitespace(cursor);
+  if (atEnd(cursor) || peek(cursor) < '0' || peek(cursor) > '9') {
     return false;
   }
   value = 0U;
   do {
-    const auto digit = static_cast<std::uint64_t>(input[cursor] - '0');
+    const auto digit = static_cast<std::uint64_t>(peek(cursor) - '0');
     if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10U) {
       return false;
     }
     value = value * 10U + digit;
-    ++cursor;
-  } while (cursor < input.size() && input[cursor] >= '0' &&
-           input[cursor] <= '9');
+    advance(cursor);
+  } while (!atEnd(cursor) && peek(cursor) >= '0' && peek(cursor) <= '9');
   return true;
 }
 
@@ -101,23 +132,17 @@ bool loadDirections(Index dimensions,
     return true;
   }
 
-  std::size_t cursor = directionTable.find('\n');
-  if (cursor == std::string_view::npos) {
+  DirectionTableCursor cursor{};
+  if (!skipLine(cursor)) {
     return false;
   }
-  cursor = directionTable.find('\n', cursor + 1U);
-  if (cursor == std::string_view::npos) {
-    return false;
-  }
-  ++cursor;
   for (Index dimension = 2U; dimension <= dimensions; ++dimension) {
     std::uint64_t rowDimension = 0U;
     std::uint64_t degree = 0U;
     std::uint64_t polynomial = 0U;
-    if (!readUnsigned(directionTable, cursor, rowDimension) ||
-        !readUnsigned(directionTable, cursor, degree) ||
-        !readUnsigned(directionTable, cursor, polynomial) ||
-        rowDimension != dimension || degree == 0U || degree >= directionBits ||
+    if (!readUnsigned(cursor, rowDimension) || !readUnsigned(cursor, degree) ||
+        !readUnsigned(cursor, polynomial) || rowDimension != dimension ||
+        degree == 0U || degree >= directionBits ||
         polynomial >= (std::uint64_t{1U} << degree)) {
       return false;
     }
@@ -125,8 +150,7 @@ bool loadDirections(Index dimensions,
     std::array<std::uint64_t, directionBits> initial{};
     for (std::size_t index = 0U; index < degree; ++index) {
       std::uint64_t numerator = 0U;
-      if (!readUnsigned(directionTable, cursor, numerator) ||
-          (numerator & 1U) == 0U ||
+      if (!readUnsigned(cursor, numerator) || (numerator & 1U) == 0U ||
           (index + 1U < directionBits &&
            numerator >= (std::uint64_t{1U} << (index + 1U)))) {
         return false;
@@ -151,12 +175,8 @@ bool loadDirections(Index dimensions,
     }
   }
   if (dimensions == maximumSobolDimension) {
-    while (cursor < directionTable.size() &&
-           (directionTable[cursor] == ' ' || directionTable[cursor] == '\t' ||
-            directionTable[cursor] == '\r' || directionTable[cursor] == '\n')) {
-      ++cursor;
-    }
-    if (cursor != directionTable.size()) {
+    skipWhitespace(cursor);
+    if (!atEnd(cursor)) {
       return false;
     }
   }
