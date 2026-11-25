@@ -81,6 +81,9 @@ vss_math_add_algorithm_test(test_finite_difference
                              math.finite_difference)
 vss_math_add_algorithm_test(test_polynomial algorithms/test_polynomial.cpp
                              math.polynomial)
+vss_math_add_algorithm_test(test_interpolation
+                             algorithms/test_interpolation.cpp
+                             math.interpolation)
 vss_math_add_algorithm_test(test_differentiation_extensions
                              algorithms/test_differentiation_extensions.cpp
                              math.differentiation_extensions)

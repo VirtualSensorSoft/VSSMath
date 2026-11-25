@@ -34,6 +34,7 @@ add_library(vss_math STATIC
   src/Error.cpp
   src/Matrix.cpp
   src/Polynomial.cpp
+  src/Interpolation.cpp
   src/FirstMoment.cpp
   src/FourthMoment.cpp
   src/MultivariateMoments.cpp
