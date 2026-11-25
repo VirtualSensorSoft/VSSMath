@@ -3,7 +3,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <limits>
 #include <numbers>
 #include <optional>
@@ -245,13 +244,19 @@ Result<Histogram> buildHistogram(const SampleView& sample,
         above = true;
         continue;
       }
-      const std::span<const Scalar> axisValues{axisEdges.data(),
-                                               axisEdges.size()};
-      const auto upper = std::ranges::upper_bound(axisValues, value);
-      const auto upperIndex = std::ranges::distance(axisValues.begin(), upper);
+      Extent first = 0U;
+      Extent last = axisEdges.size();
+      while (first < last) {
+        const Extent middle = first + (last - first) / 2U;
+        if (value < axisEdges.at(middle)) {
+          last = middle;
+        } else {
+          first = middle + 1U;
+        }
+      }
       const Extent index = value == axisEdges.at(axisEdges.size() - 1U)
                                ? axisEdges.size() - 2U
-                               : static_cast<Extent>(upperIndex - 1);
+                               : first - 1U;
       flattened = flattened * extents[axis] + index;
     }
     if (below) {
