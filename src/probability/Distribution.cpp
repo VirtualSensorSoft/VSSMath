@@ -416,6 +416,16 @@ std::span<const Scalar> Distribution::parameters() const noexcept {
                 : std::span<const Scalar>{};
 }
 
+FiniteAtomView Distribution::finiteAtoms() const noexcept {
+  if (!state_ ||
+      (state_->family != Family::empirical &&
+       state_->family != Family::finite_convolution) ||
+      state_->atoms.empty() || state_->atoms.size() != state_->masses.size()) {
+    return {};
+  }
+  return {state_->atoms, state_->masses};
+}
+
 std::shared_ptr<const Distribution::State>
 detail::DistributionEngine::share(const Distribution& law) noexcept {
   return law.state_;
@@ -851,11 +861,13 @@ detail::DistributionEngine::convolution(std::span<const Distribution> terms,
   }
   const bool normalWithDiscrete =
       normalCount > 0U && normalCount < terms.size() &&
-      std::all_of(terms.begin(), terms.end(), [](const Distribution& term) {
-        return term.state_->family == Family::normal ||
-               term.state_->measure == Measure::integer_mass ||
-               term.state_->measure == Measure::atom_mass;
-      });
+      std::all_of(
+          terms.begin(), terms.end(),
+          [](const Distribution& term) {
+            return term.state_->family == Family::normal ||
+                   term.state_->measure == Measure::integer_mass ||
+                   term.state_->measure == Measure::atom_mass;
+          });
   const bool twoUniforms = terms.size() == 2U &&
                            terms[0].state_->family == Family::uniform &&
                            terms[1].state_->family == Family::uniform;

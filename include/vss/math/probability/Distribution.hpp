@@ -53,6 +53,17 @@ enum class Measure : std::uint8_t {
   joint_atom_mass
 };
 
+/// @brief Read-only locations and masses for a stored finite atom table.
+/// @details The spans are aligned by index and borrowed from their owning
+///          immutable distribution. Both are empty when no explicit finite
+///          atom table is available.
+struct FiniteAtomView final {
+  /// Sorted finite atom locations.
+  std::span<const Scalar> locations;
+  /// Non-negative masses aligned with @ref locations.
+  std::span<const Scalar> masses;
+};
+
 namespace detail {
 class DistributionFactory;
 class DistributionEngine;
@@ -83,6 +94,10 @@ public:
   [[nodiscard]] Measure measure() const noexcept;
   /// Return family-specific parameters in canonical order.
   [[nodiscard]] std::span<const Scalar> parameters() const noexcept;
+  /// Return the explicitly stored finite atoms, when available.
+  /// @details Empirical and materialized finite-convolution laws expose their
+  ///          atom table. An empty view does not imply a continuous law.
+  [[nodiscard]] FiniteAtomView finiteAtoms() const noexcept;
 
 private:
   struct State;

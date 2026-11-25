@@ -7,7 +7,10 @@
 #include <random>
 #include <vss/math/Error.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/probability/Distribution.hpp>
+#include <vss/math/statistics/Diagnostics.hpp>
 #include <vss/math/statistics/Inference.hpp>
 
 using namespace vss::math;
@@ -219,6 +222,183 @@ void covarianceBootstrapResamplesWholeRows() {
   }
 }
 
+void informationCriteriaAndGoodnessStatisticsMatchReferences() {
+  VSS_CHECK(aic(-10.0, 2U).value() == 24.0);
+  VSS_CHECK(std::abs(bic(-10.0, 2U, 4U).value() -
+                     (20.0 + 2.0 * std::log(4.0))) < 1.0e-12);
+  VSS_CHECK(aic(std::numeric_limits<Scalar>::infinity(), 0U).status().code() ==
+            ErrorCode::NonFiniteInput);
+  VSS_CHECK(aic(std::numeric_limits<Scalar>::max(), 0U).status().code() ==
+            ErrorCode::NonFiniteResult);
+  VSS_CHECK(bic(-1.0, 1U, 0U).status().code() == ErrorCode::InvalidDomain);
+  VSS_CHECK(bic(std::numeric_limits<Scalar>::max(), 0U, 1U).status().code() ==
+            ErrorCode::NonFiniteResult);
+
+  const auto uniform = probability::uniform(0.0, 1.0);
+  VSS_CHECK(uniform.hasValue());
+  Matrix rows(2U, 1U);
+  rows.at(0U, 0U) = 0.25;
+  rows.at(1U, 0U) = 0.75;
+  const SampleView sample{rows.view(), {}, {}};
+  probability::Rng rng(22U);
+  const GoodnessCalibration statisticOnly{true, 0U, {}};
+  const auto ksResult =
+      ks(sample, uniform.value(), statisticOnly, rng, Limits{32U, 4096U, 100U});
+  VSS_CHECK(ksResult.hasValue());
+  VSS_CHECK(ksResult.value().statistic == 0.25);
+  VSS_CHECK(!ksResult.value().p_value.has_value());
+  rows.at(0U, 0U) = 0.5;
+  rows.at(1U, 0U) = 0.5;
+  const auto tiedKs =
+      ks(sample, uniform.value(), statisticOnly, rng, Limits{32U, 4096U, 100U});
+  VSS_CHECK(tiedKs.hasValue());
+  VSS_CHECK(tiedKs.value().statistic == 0.5);
+  rows.at(0U, 0U) = 1.5;
+  rows.at(1U, 0U) = 0.75;
+  const auto outsideKs =
+      ks(sample, uniform.value(), statisticOnly, rng, Limits{32U, 4096U, 100U});
+  VSS_CHECK(outsideKs.hasValue());
+  VSS_CHECK(std::isinf(outsideKs.value().statistic));
+  rows.at(0U, 0U) = 0.25;
+  rows.at(1U, 0U) = 0.75;
+  const auto adResult = andersonDarling(sample, uniform.value(), statisticOnly,
+                                        rng, Limits{32U, 4096U, 100U});
+  VSS_CHECK(adResult.hasValue());
+  const Scalar expectedAd =
+      -2.0 - 0.5 * std::log(1.0 / 16.0) - 1.5 * std::log(9.0 / 16.0);
+  VSS_CHECK(std::abs(adResult.value().statistic - expectedAd) < 1.0e-12);
+
+  rows.at(0U, 0U) = 0.0;
+  const auto boundary = andersonDarling(sample, uniform.value(), statisticOnly,
+                                        rng, Limits{32U, 4096U, 100U});
+  VSS_CHECK(boundary.hasValue());
+  VSS_CHECK(std::isinf(boundary.value().statistic));
+
+  rows.at(0U, 0U) = 0.0;
+  rows.at(1U, 0U) = 1.0;
+  const SampleView bernoulliSample{rows.view(), {}, {}};
+  const auto bernoulli = probability::bernoulli(0.5);
+  VSS_CHECK(bernoulli.hasValue());
+  const auto discreteAd =
+      andersonDarling(bernoulliSample, bernoulli.value(), statisticOnly, rng,
+                      Limits{32U, 4096U, 100U});
+  VSS_CHECK(discreteAd.hasValue());
+  VSS_CHECK(discreteAd.value().statistic == 0.0);
+  const auto discreteKs = ks(bernoulliSample, bernoulli.value(), statisticOnly,
+                             rng, Limits{32U, 4096U, 100U});
+  VSS_CHECK(discreteKs.hasValue());
+  VSS_CHECK(discreteKs.value().statistic == 0.0);
+
+  rows.at(0U, 0U) = 1.0;
+  rows.at(1U, 0U) = 1.0;
+  const SampleView bernoulliTail{rows.view(), {}, {}};
+  const auto discreteTailAd =
+      andersonDarling(bernoulliTail, bernoulli.value(), statisticOnly, rng,
+                      Limits{32U, 4096U, 100U});
+  VSS_CHECK(discreteTailAd.hasValue());
+  VSS_CHECK(discreteTailAd.value().statistic == 1.0);
+
+  const std::array<Scalar, 2U> atomLocations{0.5, 1.5};
+  const std::array<Scalar, 2U> atomMasses{0.5, 0.5};
+  const auto empiricalLaw = probability::empirical(
+      ConstVectorView::create(atomLocations, 2U).value(),
+      ConstVectorView::create(atomMasses, 2U).value(), Limits{16U, 1024U, 16U});
+  VSS_CHECK(empiricalLaw.hasValue());
+  const auto finiteAtoms = empiricalLaw.value().finiteAtoms();
+  VSS_CHECK(finiteAtoms.locations.size() == 2U);
+  VSS_CHECK(finiteAtoms.masses.size() == 2U);
+  VSS_CHECK(finiteAtoms.locations[0U] == 0.5);
+  VSS_CHECK(finiteAtoms.masses[1U] == 0.5);
+  rows.at(0U, 0U) = 0.5;
+  rows.at(1U, 0U) = 1.5;
+  const SampleView empiricalSample{rows.view(), {}, {}};
+  const auto empiricalKs = ks(empiricalSample, empiricalLaw.value(),
+                              statisticOnly, rng, Limits{32U, 4096U, 100U});
+  VSS_CHECK(empiricalKs.hasValue());
+  VSS_CHECK(empiricalKs.value().statistic == 0.0);
+  const auto empiricalAd =
+      andersonDarling(empiricalSample, empiricalLaw.value(), statisticOnly, rng,
+                      Limits{32U, 4096U, 100U});
+  VSS_CHECK(empiricalAd.hasValue());
+  VSS_CHECK(empiricalAd.value().statistic == 0.0);
+
+  const auto poisson = probability::poisson(1.0);
+  VSS_CHECK(poisson.hasValue());
+  rows.at(0U, 0U) = 0.0;
+  rows.at(1U, 0U) = 1.0;
+  const SampleView poissonSample{rows.view(), {}, {}};
+  const auto poissonAd =
+      andersonDarling(poissonSample, poisson.value(), statisticOnly, rng,
+                      Limits{32U, 4096U, 256U});
+  VSS_CHECK(poissonAd.hasValue());
+  VSS_CHECK(std::abs(poissonAd.value().statistic - 0.35408100975136214) <
+            1.0e-12);
+
+  const std::array<Scalar, 1U> singleAtom{4.5};
+  const std::array<Scalar, 1U> unitMass{1.0};
+  const auto pointMass = probability::empirical(
+      ConstVectorView::create(singleAtom, 1U).value(),
+      ConstVectorView::create(unitMass, 1U).value(), Limits{8U, 512U, 8U});
+  VSS_CHECK(pointMass.hasValue());
+  rows.at(0U, 0U) = 4.5;
+  rows.at(1U, 0U) = 4.5;
+  const SampleView pointSample{rows.view(), {}, {}};
+  const auto pointKs = ks(pointSample, pointMass.value(), statisticOnly, rng,
+                          Limits{32U, 4096U, 100U});
+  const auto pointAd =
+      andersonDarling(pointSample, pointMass.value(), statisticOnly, rng,
+                      Limits{32U, 4096U, 100U});
+  VSS_CHECK(pointKs.hasValue() && pointKs.value().statistic == 0.0);
+  VSS_CHECK(pointAd.hasValue() && pointAd.value().statistic == 0.0);
+  rows.at(1U, 0U) = 4.0;
+  const auto outsidePoint =
+      andersonDarling(pointSample, pointMass.value(), statisticOnly, rng,
+                      Limits{32U, 4096U, 100U});
+  VSS_CHECK(outsidePoint.hasValue());
+  VSS_CHECK(std::isinf(outsidePoint.value().statistic));
+}
+
+void goodnessCalibrationRefitsObservedAndEveryReplicate() {
+  const auto normal = probability::normal(0.0, 1.0);
+  VSS_CHECK(normal.hasValue());
+  Matrix rows(3U, 1U);
+  rows.at(0U, 0U) = -1.0;
+  rows.at(1U, 0U) = 0.0;
+  rows.at(2U, 0U) = 1.0;
+  const SampleView sample{rows.view(), {}, {}};
+  Index calls = 0U;
+  const GoodnessCalibration calibration{
+      false, 8U, [&calls](ConstVectorView values) {
+        ++calls;
+        Scalar mean = 0.0;
+        for (Index i = 0U; i < values.size(); ++i) {
+          mean += values.at(i) / static_cast<Scalar>(values.size());
+        }
+        return probability::normal(mean, 1.0);
+      }};
+  probability::Rng rng(551U);
+  const auto result =
+      ks(sample, normal.value(), calibration, rng, Limits{128U, 16384U, 1000U});
+  VSS_CHECK(result.hasValue());
+  VSS_CHECK(calls == 9U);
+  VSS_CHECK(result.value().calibration_method ==
+            "approximate_composite_bootstrap");
+  VSS_CHECK(result.value().sampling_error.has_value());
+
+  Index failedCalls = 0U;
+  const GoodnessCalibration failedCalibration{
+      false, 8U, [&failedCalls](ConstVectorView) {
+        ++failedCalls;
+        return Result<probability::Distribution>::failure(
+            ErrorCode::InvalidDomain, "scripted refit failure");
+      }};
+  const auto failed = ks(sample, normal.value(), failedCalibration, rng,
+                         Limits{128U, 16384U, 1000U});
+  VSS_CHECK(!failed.hasValue());
+  VSS_CHECK(failed.status().code() == ErrorCode::CallbackFailure);
+  VSS_CHECK(failedCalls == 1U);
+}
+
 } // namespace
 
 int main() {
@@ -229,4 +409,6 @@ int main() {
   ljungBoxReportsUncalibratedStatisticAndDeclaredTails();
   covarianceEstimatorUncertaintyMatchesWickIdentityAndSelection();
   covarianceBootstrapResamplesWholeRows();
+  informationCriteriaAndGoodnessStatisticsMatchReferences();
+  goodnessCalibrationRefitsObservedAndEveryReplicate();
 }
