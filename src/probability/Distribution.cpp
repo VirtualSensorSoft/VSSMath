@@ -3169,6 +3169,7 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
 }
 
 Result<Scalar>
+// NOLINTNEXTLINE(misc-no-recursion): nested truncated laws have a depth cap.
 DistributionEngine::intervalLogProbability(const Distribution& law,
                                            IntervalSupport interval,
                                            ProbabilityPolicy policy) {
@@ -3802,12 +3803,19 @@ Result<Scalar> DistributionEngine::rawMoment(const Distribution& law,
     auto middleValue = integrand(integrationLower +
                                  0.5 * (integrationUpper - integrationLower));
     auto rightValue = integrand(integrationUpper);
-    if (!leftValue || !middleValue || !rightValue) {
-      const Status& status = !leftValue     ? leftValue.status()
-                             : !middleValue ? middleValue.status()
-                                            : rightValue.status();
-      return Result<Scalar>::failure(status.code(),
-                                     std::string(status.message()));
+    if (!leftValue) {
+      return Result<Scalar>::failure(leftValue.status().code(),
+                                     std::string(leftValue.status().message()));
+    }
+    if (!middleValue) {
+      return Result<Scalar>::failure(
+          middleValue.status().code(),
+          std::string(middleValue.status().message()));
+    }
+    if (!rightValue) {
+      return Result<Scalar>::failure(
+          rightValue.status().code(),
+          std::string(rightValue.status().message()));
     }
     std::uint64_t evaluations = 3U;
     const long double whole =

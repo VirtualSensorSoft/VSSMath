@@ -1,15 +1,22 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <new>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/SamplingDesign.hpp>
 
 namespace vss::math::probability {
@@ -17,9 +24,9 @@ namespace {
 
 constexpr std::uint64_t coordinateCount = std::uint64_t{1U} << 52U;
 constexpr Scalar inverseCoordinateCount = 0x1p-52;
-constexpr char latinAlgorithm[] = "latin-hypercube-fisher-yates-v1";
-constexpr char sobolAlgorithm[] = "sobol-gray-code-joe-kuo-d6-v1";
-constexpr char directionTableSha256[] =
+constexpr std::string_view latinAlgorithm = "latin-hypercube-fisher-yates-v1";
+constexpr std::string_view sobolAlgorithm = "sobol-gray-code-joe-kuo-d6-v1";
+constexpr std::string_view directionTableSha256 =
     "68eedd2a4e3b659b9695e7aff0f8ac68718bcf620730fc3d3a8c65df2a067441";
 const std::array<std::string_view, 58U> directionTableChunks{
 #include "detail/SobolJoeKuoD6.inc"
@@ -37,12 +44,12 @@ bool atEnd(const DirectionTableCursor& cursor) noexcept {
 }
 
 char peek(const DirectionTableCursor& cursor) noexcept {
-  return directionTableChunks[cursor.chunk][cursor.offset];
+  return directionTableChunks.at(cursor.chunk).at(cursor.offset);
 }
 
 void advance(DirectionTableCursor& cursor) noexcept {
   ++cursor.offset;
-  if (cursor.offset == directionTableChunks[cursor.chunk].size()) {
+  if (cursor.offset == directionTableChunks.at(cursor.chunk).size()) {
     ++cursor.chunk;
     cursor.offset = 0U;
   }
@@ -111,14 +118,14 @@ bool readUnsigned(DirectionTableCursor& cursor, std::uint64_t& value) noexcept {
     return false;
   }
   value = 0U;
-  do {
+  while (!atEnd(cursor) && peek(cursor) >= '0' && peek(cursor) <= '9') {
     const auto digit = static_cast<std::uint64_t>(peek(cursor) - '0');
     if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10U) {
       return false;
     }
     value = value * 10U + digit;
     advance(cursor);
-  } while (!atEnd(cursor) && peek(cursor) >= '0' && peek(cursor) <= '9');
+  }
   return true;
 }
 
@@ -126,7 +133,7 @@ bool loadDirections(Index dimensions,
                     std::vector<std::array<std::uint64_t, directionBits>>&
                         directions) noexcept {
   for (std::size_t bit = 0U; bit < directionBits; ++bit) {
-    directions[0U][bit] = std::uint64_t{1U} << (63U - bit);
+    directions.at(0U).at(bit) = std::uint64_t{1U} << (63U - bit);
   }
   if (dimensions == 1U) {
     return true;
@@ -155,23 +162,23 @@ bool loadDirections(Index dimensions,
            numerator >= (std::uint64_t{1U} << (index + 1U)))) {
         return false;
       }
-      initial[index] = numerator;
+      initial.at(index) = numerator;
     }
-    auto& values = directions[dimension - 1U];
+    auto& values = directions.at(dimension - 1U);
     for (std::size_t index = 0U; index < degree; ++index) {
-      values[index] = initial[index] << (63U - index);
+      values.at(index) = initial.at(index) << (63U - index);
     }
-    for (std::size_t index = static_cast<std::size_t>(degree);
-         index < directionBits; ++index) {
+    for (auto index = static_cast<std::size_t>(degree); index < directionBits;
+         ++index) {
       std::uint64_t value =
-          values[index - degree] ^ (values[index - degree] >> degree);
+          values.at(index - degree) ^ (values.at(index - degree) >> degree);
       for (std::size_t coefficient = 1U; coefficient < degree; ++coefficient) {
         const auto bit = static_cast<unsigned>(degree - 1U - coefficient);
         if (((polynomial >> bit) & 1U) != 0U) {
-          value ^= values[index - coefficient];
+          value ^= values.at(index - coefficient);
         }
       }
-      values[index] = value;
+      values.at(index) = value;
     }
   }
   if (dimensions == maximumSobolDimension) {
@@ -229,7 +236,7 @@ Result<SampleDesign> latinHypercube(Index dimensions, Index count, Rng& rng,
       !addBytes(count * sizeof(Index), peakBytes) ||
       !addBytes(sizeof(SampleDesign) + sizeof(SamplingDesignProvenance),
                 peakBytes) ||
-      !addBytes(sizeof(latinAlgorithm), peakBytes) ||
+      !addBytes(latinAlgorithm.size() + 1U, peakBytes) ||
       peakBytes > limits.bytes) {
     return Result<SampleDesign>::failure(
         ErrorCode::ResourceLimit,
@@ -237,10 +244,11 @@ Result<SampleDesign> latinHypercube(Index dimensions, Index count, Rng& rng,
   }
 
   try {
-    SampleDesign design{Matrix(count, dimensions), 0U, latinAlgorithm,
-                        SamplingDesignProvenance{
-                            SamplingDesignKind::latin_hypercube, 1U, 52U, 0U,
-                            false, std::nullopt, "", 0U, dimensions, count}};
+    SampleDesign design{
+        Matrix(count, dimensions), 0U, std::string(latinAlgorithm),
+        SamplingDesignProvenance{SamplingDesignKind::latin_hypercube, 1U, 52U,
+                                 0U, false, std::nullopt, "", 0U, dimensions,
+                                 count}};
     std::vector<Index> permutation(count);
     for (Index column = 0U; column < dimensions; ++column) {
       std::iota(permutation.begin(), permutation.end(), Index{0U});
@@ -254,11 +262,11 @@ Result<SampleDesign> latinHypercube(Index dimensions, Index count, Rng& rng,
         const long double fraction =
             (static_cast<long double>(stratum) + openUniform(rng)) /
             static_cast<long double>(count);
-        Scalar value = static_cast<Scalar>(fraction);
-        const Scalar lower =
+        auto value = static_cast<Scalar>(fraction);
+        const auto lower =
             static_cast<Scalar>(static_cast<long double>(stratum) /
                                 static_cast<long double>(count));
-        const Scalar upper =
+        const auto upper =
             static_cast<Scalar>((static_cast<long double>(stratum) + 1.0L) /
                                 static_cast<long double>(count));
         if (value < lower) {
@@ -267,7 +275,7 @@ Result<SampleDesign> latinHypercube(Index dimensions, Index count, Rng& rng,
         if (value >= upper) {
           value = std::nextafter(upper, lower);
         }
-        if (!(value >= lower && value < upper)) {
+        if (value < lower || value >= upper) {
           return Result<SampleDesign>::failure(
               ErrorCode::InvalidDomain,
               "a Latin hypercube stratum has no representable interior point");
@@ -331,7 +339,8 @@ Result<SampleDesign> sobolDesignRange(Index dimensions,
       directionElements + (scramble ? dimensions : 0U);
   std::size_t peakBytes = 0U;
   if (!checkedSobolBytes(outputElements, workElements,
-                         sizeof(sobolAlgorithm) + sizeof(directionTableSha256),
+                         sobolAlgorithm.size() + directionTableSha256.size() +
+                             2U,
                          limits.bytes, peakBytes)) {
     return Result<SampleDesign>::failure(
         ErrorCode::ResourceLimit,
@@ -366,7 +375,7 @@ Result<SampleDesign> sobolDesignRange(Index dimensions,
         std::size_t bit = 0U;
         while (grayBits != 0U) {
           if ((grayBits & 1U) != 0U) {
-            coordinate ^= directions[column][bit];
+            coordinate ^= directions.at(column).at(bit);
           }
           grayBits >>= 1U;
           ++bit;
@@ -386,13 +395,13 @@ Result<SampleDesign> sobolDesignRange(Index dimensions,
         64U,
         scramble,
         scramble ? std::optional<std::uint64_t>(seed) : std::nullopt,
-        directionTableSha256,
+        std::string(directionTableSha256),
         firstIndex,
         dimensions,
         count};
     return Result<SampleDesign>::success(
-        SampleDesign{std::move(points), scramble ? seed : 0U, sobolAlgorithm,
-                     std::move(provenance)});
+        SampleDesign{std::move(points), scramble ? seed : 0U,
+                     std::string(sobolAlgorithm), std::move(provenance)});
   } catch (const std::length_error& error) {
     return Result<SampleDesign>::failure(ErrorCode::SizeOverflow, error.what());
   } catch (const std::bad_alloc&) {
@@ -417,7 +426,7 @@ Result<SampleDesign> sobolDesign(Index dimensions, Index log2Count,
           "Sobol prefix count does not fit the Index representation");
     }
   }
-  const Index count = static_cast<Index>(count64);
+  const auto count = static_cast<Index>(count64);
   return sobolDesignRange(dimensions, 0U, count, seed, scramble, limits);
 }
 

@@ -74,7 +74,7 @@ struct SampleDesign final {
 
 /// @brief Generate an indexed Sobol range without walking its prefix.
 [[nodiscard]] Result<SampleDesign>
-sobolDesignRange(Index dimensions, std::uint64_t first_index, Index count,
+sobolDesignRange(Index dimensions, std::uint64_t firstIndex, Index count,
                  std::uint64_t seed, bool scramble, Limits limits);
 
 } // namespace vss::math::probability
