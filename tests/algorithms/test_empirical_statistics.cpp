@@ -135,6 +135,15 @@ void productKernelsSupportDiagonalBandwidthsAndReflection() {
   close(normal.value().at(0U), 1.0 / std::sqrt(2.0 * std::numbers::pi));
   close(normal.value().at(1U),
         std::exp(-0.5) / std::sqrt(2.0 * std::numbers::pi));
+  const Vector rowWeights = vector({1.0});
+  const WeightSpec weighted{.rule = WeightRule::empirical,
+                            .rowWeights = rowWeights.view(),
+                            .componentWeights = std::nullopt,
+                            .frequencyCounts = {}};
+  const auto weightedDensity =
+      kernelDensityEstimate(sample, weighted, points, gaussian, ample());
+  VSS_CHECK(weightedDensity.hasValue());
+  close(weightedDensity.value().at(0U), normal.value().at(0U));
 
   const Matrix epanEvaluation = matrix({{0.0}, {-1.0}, {1.0}});
   const SampleView epanPoints{
@@ -204,6 +213,12 @@ void productKernelsSupportDiagonalBandwidthsAndReflection() {
       kernelDensityEstimate(sample, unweighted, points, broad, capped, ample());
   VSS_CHECK(!noConvergence.hasValue());
   VSS_CHECK(noConvergence.status().code() == ErrorCode::NoConvergence);
+  Limits outputCapped = ample();
+  outputCapped.elements = 1U;
+  const auto outputLimit =
+      kernelDensityEstimate(sample, unweighted, points, gaussian, outputCapped);
+  VSS_CHECK(!outputLimit.hasValue());
+  VSS_CHECK(outputLimit.status().code() == ErrorCode::ResourceLimit);
 }
 
 } // namespace

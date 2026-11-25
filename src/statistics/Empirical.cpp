@@ -432,6 +432,14 @@ reflectedAxis(KernelKind kind, long double observation, long double evaluation,
                                "Gaussian reflected KDE tail bound did not "
                                "converge within the iteration cap");
     }
+    if (maximum > static_cast<Index>(std::numeric_limits<std::uint64_t>::max() /
+                                     4U) ||
+        maximum >
+            static_cast<Index>(std::numeric_limits<std::int64_t>::max())) {
+      return fail<long double>(
+          ErrorCode::ResourceLimit,
+          "Gaussian reflected KDE image count is not representable");
+    }
     const std::uint64_t terms =
         2U * (2U * static_cast<std::uint64_t>(maximum) + 1U);
     if (terms > evaluationCap - evaluations) {
@@ -464,9 +472,9 @@ reflectedAxis(KernelKind kind, long double observation, long double evaluation,
       std::max(0.0L, reflectedUpper - reflectedLower + 1.0L);
   if (!std::isfinite(imageCount) || imageCount > evaluationCap - evaluations ||
       std::abs(directLower) > std::numeric_limits<std::int64_t>::max() ||
-      std::abs(directUpper) > std::numeric_limits<std::int64_t>::max() ||
+      std::abs(directUpper) >= std::numeric_limits<std::int64_t>::max() ||
       std::abs(reflectedLower) > std::numeric_limits<std::int64_t>::max() ||
-      std::abs(reflectedUpper) > std::numeric_limits<std::int64_t>::max()) {
+      std::abs(reflectedUpper) >= std::numeric_limits<std::int64_t>::max()) {
     return fail<long double>(
         ErrorCode::NoConvergence,
         "Epanechnikov reflected KDE image budget is not met");
@@ -516,6 +524,28 @@ Result<Vector> evaluateKde(const SampleView& observations,
     return fail<Vector>(ErrorCode::DimensionMismatch,
                         "KDE training and evaluation dimensions differ");
   }
+  std::size_t requiredBytes = 0U;
+  const auto addWorkspace = [&](Extent count, std::size_t elementSize) {
+    if (count > std::numeric_limits<std::size_t>::max() / elementSize) {
+      return false;
+    }
+    const std::size_t bytes = static_cast<std::size_t>(count) * elementSize;
+    if (bytes > limits.bytes - requiredBytes) {
+      return false;
+    }
+    requiredBytes += bytes;
+    return true;
+  };
+  if (points > limits.elements || !addWorkspace(points, sizeof(Scalar)) ||
+      !addWorkspace(n, sizeof(long double)) ||
+      !addWorkspace(n, sizeof(long double)) ||
+      !addWorkspace(dimensions, sizeof(long double)) ||
+      !addWorkspace(dimensions, sizeof(long double)) ||
+      !addWorkspace(dimensions, sizeof(long double)) ||
+      !addWorkspace(dimensions, sizeof(long double))) {
+    return fail<Vector>(ErrorCode::ResourceLimit,
+                        "KDE output and workspace exceed configured limits");
+  }
   if (kernel.kernel != KernelKind::gaussian &&
       kernel.kernel != KernelKind::epanechnikov) {
     return fail<Vector>(ErrorCode::InvalidDomain,
@@ -527,7 +557,8 @@ Result<Vector> evaluateKde(const SampleView& observations,
         "KDE bandwidth must be scalar or diagonal by coordinate");
   }
   std::vector<long double> bandwidths(dimensions, 0.0L);
-  long double maximumProduct = 1.0L;
+  long double logMaximumProduct = 0.0L;
+  std::vector<long double> logAxisMaximum(dimensions, 0.0L);
   for (Extent j = 0U; j < dimensions; ++j) {
     const Scalar h =
         kernel.bandwidth.at(kernel.bandwidth.size() == 1U ? 0U : j);
@@ -541,10 +572,8 @@ Result<Vector> evaluateKde(const SampleView& observations,
              ? 1.0L / std::sqrt(2.0L * std::numbers::pi_v<long double>)
              : 0.75L) /
         h;
-    maximumProduct *= maximum;
-    if (!std::isfinite(maximumProduct)) {
-      maximumProduct = std::numeric_limits<long double>::infinity();
-    }
+    logAxisMaximum[j] = std::log(maximum);
+    logMaximumProduct += logAxisMaximum[j];
   }
   const bool reflected = kernel.reflection_bounds.has_value();
   if (reflected && (kernel.reflection_bounds->rows() != dimensions ||
@@ -591,12 +620,6 @@ Result<Vector> evaluateKde(const SampleView& observations,
   for (const long double weight : rowWeights.value()) {
     scaledMass += weight / maximumWeight;
   }
-  if (points > limits.elements || points > limits.bytes / sizeof(Scalar) ||
-      n > limits.bytes / sizeof(long double)) {
-    return fail<Vector>(
-        ErrorCode::ResourceLimit,
-        "KDE output and row workspace exceed configured limits");
-  }
   Vector output(points, 0.0);
   std::uint64_t imageEvaluations = 0U;
   const std::uint64_t imageCap = std::min<std::uint64_t>(
@@ -630,11 +653,15 @@ Result<Vector> evaluateKde(const SampleView& observations,
           axisDensity = std::exp(kernelLog(
               kernel.kernel, queryValue - observedValue, bandwidths[j]));
         } else {
+          const long double logTolerance =
+              std::log(static_cast<long double>(accuracy.iteration.abs)) -
+              std::log(static_cast<long double>(dimensions)) -
+              logMaximumProduct + logAxisMaximum[j];
           const long double axisTolerance =
-              accuracy.iteration.abs > 0.0 && std::isfinite(maximumProduct)
-                  ? static_cast<long double>(accuracy.iteration.abs) /
-                        std::max(1.0L, maximumProduct * dimensions)
-                  : static_cast<long double>(accuracy.iteration.abs);
+              logTolerance <
+                      std::log(std::numeric_limits<long double>::denorm_min())
+                  ? 0.0L
+                  : std::exp(logTolerance);
           auto reflectedValue = reflectedAxis(
               kernel.kernel, observedValue, queryValue, lower[j], upper[j],
               bandwidths[j], axisTolerance, accuracy.iteration.max_iterations,
