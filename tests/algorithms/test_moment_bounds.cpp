@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/probability/MomentBounds.hpp>
 

@@ -4,10 +4,16 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <type_traits>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/VectorView.hpp>
 #include <vss/math/probability/Composite.hpp>
+#include <vss/math/probability/Distribution.hpp>
 
 namespace {
 using namespace vss::math;
