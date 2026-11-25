@@ -84,6 +84,7 @@ vss_math_add_algorithm_test(test_polynomial algorithms/test_polynomial.cpp
 vss_math_add_algorithm_test(test_interpolation
                              algorithms/test_interpolation.cpp
                              math.interpolation)
+vss_math_add_algorithm_test(test_roots algorithms/test_roots.cpp math.roots)
 vss_math_add_algorithm_test(test_differentiation_extensions
                              algorithms/test_differentiation_extensions.cpp
                              math.differentiation_extensions)
