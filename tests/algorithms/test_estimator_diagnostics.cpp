@@ -1,10 +1,20 @@
 #include "Test.hpp"
 
 #include <array>
-#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <optional>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/EstimatorDiagnostics.hpp>
+#include <vss/math/statistics/Moments.hpp>
+#include <vss/math/statistics/Population.hpp>
 #include <vss/math/statistics/Weighted.hpp>
 
 using namespace vss::math;
@@ -17,7 +27,7 @@ EstimatorDiagnostics diagnosticsWith(Support support) {
                               .weight = WeightRule::empirical,
                               .center = CenterRule::estimated,
                               .approximation = Approximation::exact,
-                              .global = std::move(support),
+                              .global = support,
                               .coordinate_support = {},
                               .tuple_support = {},
                               .reciprocal_condition = std::nullopt,
@@ -30,7 +40,7 @@ EstimatorDiagnostics diagnosticsWith(Support support) {
 }
 
 Support unweightedSupport(Index count) {
-  const Scalar n = static_cast<Scalar>(count);
+  const auto n = static_cast<Scalar>(count);
   return Support{
       .input = count,
       .valid = count,
@@ -48,7 +58,7 @@ Support unweightedSupport(Index count) {
 }
 
 void diagnosticsValidatorAcceptsExactWeightSupportAndOptionalFields() {
-  Support support{
+  const Support support{
       .input = 3U,
       .valid = 3U,
       .positive = 2U,
@@ -106,7 +116,9 @@ void diagnosticsValidatorRejectsContradictoryAndFatalRecords() {
   auto fatalWarning = diagnosticsWith(unweightedSupport(3U));
   const std::array<ErrorCode, 1U> singular{ErrorCode::Singular};
   fatalWarning.warnings =
-      Array<ErrorCode>::copy(singular, {4U, 64U, 0U}).value();
+      Array<ErrorCode>::copy(singular,
+                             {.elements = 4U, .bytes = 64U, .evaluations = 0U})
+          .value();
   const auto warning = validateEstimatorDiagnostics(fatalWarning);
   VSS_CHECK(!warning.hasValue());
   VSS_CHECK(warning.status().code() == ErrorCode::InvalidDomain);
@@ -117,19 +129,27 @@ void diagnosticsValidatorRequiresSortedUniqueTupleSupport() {
   const std::array<Index, 2U> firstCoordinates{0U, 1U};
   const std::array<Index, 2U> secondCoordinates{1U, 2U};
   const std::array<TupleSupport, 2U> ordered{
-      {{.coordinates =
-            Array<Index>::copy(firstCoordinates, {4U, 64U, 0U}).value(),
+      {{.coordinates = Array<Index>::copy(
+                           firstCoordinates,
+                           {.elements = 4U, .bytes = 64U, .evaluations = 0U})
+                           .value(),
         .support = unweightedSupport(3U)},
-       {.coordinates =
-            Array<Index>::copy(secondCoordinates, {4U, 64U, 0U}).value(),
+       {.coordinates = Array<Index>::copy(
+                           secondCoordinates,
+                           {.elements = 4U, .bytes = 64U, .evaluations = 0U})
+                           .value(),
         .support = unweightedSupport(2U)}}};
   diagnostics.tuple_support =
-      Array<TupleSupport>::copy(ordered, {8U, 1024U, 0U}).value();
+      Array<TupleSupport>::copy(
+          ordered, {.elements = 8U, .bytes = 1024U, .evaluations = 0U})
+          .value();
   VSS_CHECK(validateEstimatorDiagnostics(diagnostics).hasValue());
   const auto tupleView = diagnostics.tuple_support.view();
   const std::array<TupleSupport, 2U> reversed{tupleView[1U], tupleView[0U]};
   diagnostics.tuple_support =
-      Array<TupleSupport>::copy(reversed, {8U, 1024U, 0U}).value();
+      Array<TupleSupport>::copy(
+          reversed, {.elements = 8U, .bytes = 1024U, .evaluations = 0U})
+          .value();
   const auto unsorted = validateEstimatorDiagnostics(diagnostics);
   VSS_CHECK(!unsorted.hasValue());
 }
@@ -156,8 +176,9 @@ void extremeFiniteWeightsKeepNormalizedPowersWhenRawMassOverflows() {
                            .rowWeights = view.value(),
                            .componentWeights = std::nullopt,
                            .frequencyCounts = {}};
-  const auto result = weightedMean(SampleView{values.view(), {}, {}}, weights,
-                                   Limits{128U, 16384U, 0U});
+  const auto result = weightedMean(
+      SampleView{.rows = values.view(), .observation_shape = {}, .valid = {}},
+      weights, Limits{.elements = 128U, .bytes = 16384U, .evaluations = 0U});
   VSS_CHECK(result.hasValue());
   if (result) {
     const Support& support = result.value().diagnostics.global;
@@ -177,8 +198,9 @@ void frequencyDiagnosticsDistinguishPhysicalRowsAndReplications() {
   values.at(2U, 0U) = 4.0;
   const std::array<std::uint64_t, 3U> counts{1U, 2U, 0U};
   const auto estimate = frequencyWeightedCovariance(
-      SampleView{values.view(), {}, {}}, counts, VarianceMode::empirical,
-      Limits{256U, 32768U, 0U});
+      SampleView{.rows = values.view(), .observation_shape = {}, .valid = {}},
+      counts, VarianceMode::empirical,
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 0U});
   VSS_CHECK(estimate.hasValue());
   if (estimate) {
     const Support& support = estimate.value().diagnostics.global;
@@ -207,9 +229,10 @@ void groupedStatisticsKeepsEachGroupsWeightsAndSupportSeparate() {
                                   ConstVectorView::create(weights, 4U).value(),
                               .componentWeights = std::nullopt,
                               .frequencyCounts = {}};
-  const auto result =
-      groupedStatistics(SampleView{values.view(), {}, {}}, groupIds, weightSpec,
-                        firstComponentMoment(), Limits{256U, 32768U, 0U});
+  const auto result = groupedStatistics(
+      SampleView{.rows = values.view(), .observation_shape = {}, .valid = {}},
+      groupIds, weightSpec, firstComponentMoment(),
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 0U});
   VSS_CHECK(result.hasValue());
   VSS_CHECK(result.value().value.size() == 2U);
   VSS_CHECK(result.value().value.at(0U) == 6.5);
@@ -240,9 +263,11 @@ void groupedStatisticsMapsComponentSupportToFlattenedCoordinates() {
                            .rowWeights = std::nullopt,
                            .componentWeights = componentWeights.view(),
                            .frequencyCounts = {}};
-  const auto result =
-      groupedStatistics(SampleView{values.view(), shape, {}}, groupIds, weights,
-                        firstComponentMoment(), Limits{256U, 32768U, 0U});
+  const auto result = groupedStatistics(
+      SampleView{
+          .rows = values.view(), .observation_shape = shape, .valid = {}},
+      groupIds, weights, firstComponentMoment(),
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 0U});
   VSS_CHECK(result.hasValue());
   if (result) {
     VSS_CHECK(result.value().value.size() == 2U);
@@ -266,22 +291,26 @@ void groupedStatisticsCountsCandidatesAndFailsEmptySupport() {
                            .rowWeights = std::nullopt,
                            .componentWeights = std::nullopt,
                            .frequencyCounts = {}};
-  const auto result =
-      groupedStatistics(SampleView{values.view(), {}, valid}, groupIds, weights,
-                        firstComponentMoment(), Limits{256U, 32768U, 0U});
+  const auto result = groupedStatistics(
+      SampleView{
+          .rows = values.view(), .observation_shape = {}, .valid = valid},
+      groupIds, weights, firstComponentMoment(),
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 0U});
   VSS_CHECK(!result.hasValue());
   VSS_CHECK(result.status().code() == ErrorCode::InsufficientSamples);
 
   const std::array<Index, 2U> wrongIds{1U, 1U};
-  const auto mismatch =
-      groupedStatistics(SampleView{values.view(), {}, {}}, wrongIds, weights,
-                        firstComponentMoment(), Limits{256U, 32768U, 0U});
+  const auto mismatch = groupedStatistics(
+      SampleView{.rows = values.view(), .observation_shape = {}, .valid = {}},
+      wrongIds, weights, firstComponentMoment(),
+      Limits{.elements = 256U, .bytes = 32768U, .evaluations = 0U});
   VSS_CHECK(!mismatch.hasValue());
   VSS_CHECK(mismatch.status().code() == ErrorCode::DimensionMismatch);
 }
 
 } // namespace
 
+// NOLINTNEXTLINE(bugprone-exception-escape)
 int main() {
   diagnosticsValidatorAcceptsExactWeightSupportAndOptionalFields();
   diagnosticsValidatorRejectsContradictoryAndFatalRecords();

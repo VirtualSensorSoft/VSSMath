@@ -197,6 +197,8 @@ annotations.
 
 | tests/algorithms/test_ratio_estimate.cpp:470 | bugprone-exception-escape | Ratio-estimator test main | Assertions intentionally terminate the test when an acceptance check fails | The shared test helper reports failures and the test process exits non-zero | Reviewed |
 
+| tests/algorithms/test_estimator_diagnostics.cpp:313 | bugprone-exception-escape | Estimator-diagnostics test main | Assertions intentionally terminate the test when an acceptance check fails | The shared test helper reports failures and the test process exits non-zero | Reviewed |
+
 When a suppression, replace the `None` row with one row per source
 occurrence. Use an exact check name, a single source line, a narrow rationale,
 and the test or invariant that proves the construct is safe. Update this file

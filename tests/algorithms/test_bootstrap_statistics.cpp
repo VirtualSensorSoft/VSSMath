@@ -2,12 +2,17 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
-#include <span>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/SampleView.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/probability/Distribution.hpp>
 #include <vss/math/statistics/Bootstrap.hpp>
 
 using namespace vss::math;
@@ -53,10 +58,10 @@ Index unbiasedIndex(probability::Rng& rng, Index bound) {
 }
 
 Scalar linearQuantile(std::vector<Scalar> values, Scalar probabilityValue) {
-  std::sort(values.begin(), values.end());
+  std::ranges::sort(values);
   const Scalar position =
       static_cast<Scalar>(values.size() - 1U) * probabilityValue;
-  const Index lower = static_cast<Index>(std::floor(position));
+  const auto lower = static_cast<Index>(std::floor(position));
   const Index upper = std::min(lower + 1U, values.size() - 1U);
   return std::lerp(values[lower], values[upper],
                    position - static_cast<Scalar>(lower));
@@ -81,7 +86,11 @@ void bootstrapReturnsPercentileAndBasicIntervals() {
   VSS_CHECK(result.value().intervals.at(0U, 0U) == 2.0);
   VSS_CHECK(result.value().intervals.at(0U, 1U) == 2.0);
   VSS_CHECK(result.value().monte_carlo_error.has_value());
-  VSS_CHECK(result.value().monte_carlo_error->at(0U) == 0.0);
+  const auto monteCarloError = result.value().monte_carlo_error;
+  VSS_CHECK(monteCarloError.has_value());
+  if (monteCarloError.has_value()) {
+    VSS_CHECK(monteCarloError.value().at(0U) == 0.0);
+  }
 
   BootstrapPolicy basic = percentile;
   basic.interval = QuantileInterval::basic;
