@@ -34,8 +34,8 @@ void latinHypercubeStrataAndReplay() {
   VSS_CHECK(design.value().points.columns() == 2U);
   VSS_CHECK(design.value().algorithm == "latin-hypercube-fisher-yates-v1");
   VSS_CHECK(design.value().provenance.has_value());
-  const auto provenance = design.value().provenance.value_or(
-      SamplingDesignProvenance{});
+  const auto provenance =
+      design.value().provenance.value_or(SamplingDesignProvenance{});
   VSS_CHECK(provenance.kind == SamplingDesignKind::latin_hypercube);
   VSS_CHECK(provenance.algorithm_version == 1U);
   VSS_CHECK(provenance.coordinate_bits == 52U);
