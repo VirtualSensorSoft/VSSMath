@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <limits>
 #include <span>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>

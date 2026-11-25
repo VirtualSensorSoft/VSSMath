@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
@@ -14,6 +15,8 @@
 #include <vss/math/Matrix.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/statistics/Robust.hpp>
 
 using namespace vss::math;

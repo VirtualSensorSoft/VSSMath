@@ -6,12 +6,15 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <optional>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/statistics/Missing.hpp>
+#include <vss/math/statistics/Population.hpp>
 
 using namespace vss::math;
 using namespace vss::math::statistics;

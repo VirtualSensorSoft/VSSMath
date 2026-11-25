@@ -8,10 +8,13 @@
 #include <initializer_list>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/statistics/Order.hpp>
 #include <vss/math/statistics/QuantileState.hpp>
 
 using namespace vss::math;
@@ -69,7 +72,7 @@ void checkEveryRank(const QuantileState& state,
     VSS_CHECK(bound.lower_rank <= bound.upper_rank);
     VSS_CHECK(bound.upper_rank <= n);
     const Index k = p == 1.0 ? n : target;
-    const Index tolerance =
+    const auto tolerance =
         static_cast<Index>(std::floor(epsilon * static_cast<Scalar>(n)));
     bool certified = false;
     for (Index rank = 1U; rank <= n; ++rank) {
@@ -102,7 +105,13 @@ void deterministicSketchHonorsRankBoundsForAdversarialPrefixes() {
     streams[2U].push_back(i % 2U == 0U ? static_cast<Scalar>(i)
                                        : -static_cast<Scalar>(i));
     streams[3U].push_back(static_cast<Scalar>(i % 3U));
-    streams[4U].push_back(i % 4U == 0U ? 1.0 : i % 4U == 1U ? -1.0 : 0.0);
+    Scalar value = 0.0;
+    if (i % 4U == 0U) {
+      value = 1.0;
+    } else if (i % 4U == 1U) {
+      value = -1.0;
+    }
+    streams[4U].push_back(value);
   }
   for (const Scalar epsilon : {0.01, 0.1, 0.49}) {
     for (const auto& stream : streams) {

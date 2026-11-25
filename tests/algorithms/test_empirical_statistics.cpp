@@ -7,14 +7,19 @@
 #include <initializer_list>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <span>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/statistics/Empirical.hpp>
+#include <vss/math/statistics/Weighted.hpp>
 
 using namespace vss::math;
 using namespace vss::math::statistics;
