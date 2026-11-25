@@ -97,6 +97,9 @@ vss_math_add_algorithm_test(test_missing_statistics
 vss_math_add_algorithm_test(test_empirical_statistics
                              algorithms/test_empirical_statistics.cpp
                              math.empirical_statistics)
+vss_math_add_algorithm_test(test_dependence_statistics
+                             algorithms/test_dependence_statistics.cpp
+                             math.dependence_statistics)
 vss_math_add_algorithm_test(test_weighted_population
                              algorithms/test_weighted_population.cpp
                              math.weighted_population)

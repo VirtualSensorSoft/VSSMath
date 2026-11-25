@@ -72,6 +72,7 @@ add_library(vss_math STATIC
   src/statistics/Robust.cpp
   src/statistics/Missing.cpp
   src/statistics/Empirical.cpp
+  src/statistics/Dependence.cpp
   src/statistics/Summary.cpp
   src/statistics/Population.cpp
   src/statistics/Weighted.cpp
