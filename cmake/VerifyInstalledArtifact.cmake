@@ -154,6 +154,7 @@ set(vss_expected_files
   include/vss/math/covariance/PropagationResult.hpp
   include/vss/math/covariance/Budget.hpp
   include/vss/math/covariance/Propagation.hpp
+  include/vss/math/covariance/Sensitivity.hpp
   include/vss/math/covariance/Structured.hpp
   include/vss/math/covariance/UncertaintySummary.hpp
   include/vss/math/covariance/Covariance.hpp

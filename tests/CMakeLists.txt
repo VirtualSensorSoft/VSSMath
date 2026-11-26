@@ -61,6 +61,12 @@ vss_math_add_algorithm_test(test_covariance
 vss_math_add_algorithm_test(test_error_models
                              algorithms/test_error_models.cpp
                              math.error_models)
+vss_math_add_algorithm_test(test_sensitivity
+                             algorithms/test_sensitivity.cpp
+                             math.sensitivity)
+set_tests_properties(math.sensitivity PROPERTIES
+                     LABELS "ci-once-per-full;ci-extended"
+                     ENVIRONMENT "VSS_MATH_FULL_SENSITIVITY_ACCEPTANCE=1")
 vss_math_add_algorithm_test(test_propagation
                              algorithms/test_propagation.cpp
                              math.propagation)

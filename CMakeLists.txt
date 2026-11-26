@@ -67,6 +67,7 @@ add_library(vss_math STATIC
   src/covariance/Propagation.cpp
   src/covariance/Budget.cpp
   src/covariance/ErrorModels.cpp
+  src/covariance/Sensitivity.cpp
   src/covariance/Conditioning.cpp
   src/covariance/Structured.cpp
   src/covariance/Diagnostics.cpp
