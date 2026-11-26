@@ -1,11 +1,23 @@
 #include "Test.hpp"
 
+#include <algorithm>
 #include <cmath>
-#include <limits>
+#include <exception>
+#include <initializer_list>
+#include <iostream>
+#include <numbers>
+#include <optional>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Integration.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/TensorElementwise.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/linear/Iterative.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace {
 
@@ -32,7 +44,7 @@ void adaptiveCases() {
   const UnaryFunction square = [](Scalar x) {
     return Result<Scalar>::success(x * x);
   };
-  const Limits resources{100'000U, 4U * 1024U * 1024U, 100'000U};
+  const Limits resources{100'000U, Index{4U} * 1024U * 1024U, 100'000U};
   const auto result =
       quadratureAdaptive(square, {0.0, 1.0}, policy(), resources);
   VSS_CHECK(result && result.value().termination == Termination::converged);
@@ -45,7 +57,7 @@ void adaptiveCases() {
   near(quadratureAdaptive(exponential, {0.0, 1.0}, policy(), resources)
            .value()
            .value,
-       std::exp(1.0) - 1.0);
+       std::numbers::e - 1.0);
 
   const UnaryFunction kink = [](Scalar x) {
     return Result<Scalar>::success(std::abs(x - 0.3));

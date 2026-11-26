@@ -1,9 +1,23 @@
 #include "Test.hpp"
 
 #include <cmath>
+#include <exception>
+#include <initializer_list>
+#include <iostream>
+#include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/Roots.hpp>
+#include <vss/math/TensorElementwise.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/linear/Iterative.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace {
 
@@ -39,7 +53,11 @@ void scalarBracketing() {
                     {0.0, 2.0}, policy());
   VSS_CHECK(exactEndpoint && exactEndpoint.value().value == 0.0);
   VSS_CHECK(exactEndpoint.value().function_evaluations == 1U);
-  VSS_CHECK(exactEndpoint.value().enclosure->lower == 0.0);
+  if (!exactEndpoint.value().enclosure.has_value()) {
+    VSS_CHECK(false);
+  } else {
+    VSS_CHECK(exactEndpoint.value().enclosure->lower == 0.0);
+  }
 }
 
 void newtonAndCaps() {
