@@ -53,11 +53,9 @@ void scalarBracketing() {
                     {0.0, 2.0}, policy());
   VSS_CHECK(exactEndpoint && exactEndpoint.value().value == 0.0);
   VSS_CHECK(exactEndpoint.value().function_evaluations == 1U);
-  if (!exactEndpoint.value().enclosure.has_value()) {
-    VSS_CHECK(false);
-  } else {
-    VSS_CHECK(exactEndpoint.value().enclosure->lower == 0.0);
-  }
+  const auto endpointEnclosure = exactEndpoint.value().enclosure;
+  VSS_CHECK(endpointEnclosure.has_value());
+  VSS_CHECK(endpointEnclosure.value_or(Interval{}).lower == 0.0);
 }
 
 void newtonAndCaps() {
