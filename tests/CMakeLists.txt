@@ -166,6 +166,9 @@ vss_math_add_algorithm_test(test_distributions
 vss_math_add_algorithm_test(test_composite
                              algorithms/test_composite.cpp
                              math.probability.composite)
+vss_math_add_algorithm_test(test_nonideal_observations
+                             algorithms/test_nonideal_observations.cpp
+                             math.probability.nonideal_observations)
 vss_math_add_algorithm_test(test_moment_bounds
                              algorithms/test_moment_bounds.cpp
                              math.probability.moment_bounds)

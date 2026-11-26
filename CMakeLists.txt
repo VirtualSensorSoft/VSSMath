@@ -76,6 +76,7 @@ add_library(vss_math STATIC
   src/differentiation/ForwardAD.cpp
   src/probability/ChiSquare.cpp
   src/probability/Distribution.cpp
+  src/probability/Composite.cpp
   src/probability/SamplingDesign.cpp
   src/probability/MomentBounds.cpp
   src/probability/Likelihood.cpp
