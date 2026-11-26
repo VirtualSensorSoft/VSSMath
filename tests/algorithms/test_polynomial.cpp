@@ -1,10 +1,15 @@
 #include "Test.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
-#include <cstdint>
+#include <exception>
+#include <initializer_list>
+#include <iostream>
 #include <limits>
+#include <type_traits>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Polynomial.hpp>
@@ -13,6 +18,11 @@
 namespace {
 
 using namespace vss::math;
+
+template <typename Enum> Enum unknownEnumValue() {
+  using Underlying = std::underlying_type_t<Enum>;
+  return std::bit_cast<Enum>(std::numeric_limits<Underlying>::max());
+}
 
 Vector vector(std::initializer_list<Scalar> values) {
   return Vector(std::vector<Scalar>(values));
@@ -28,7 +38,8 @@ void fail(const auto& result, ErrorCode expected) {
   VSS_CHECK(result.status().code() == expected);
 }
 
-constexpr Limits generous{100'000U, 8U * 1024U * 1024U, 0U};
+constexpr Index generousBytes = Index{8U} * 1024U * 1024U;
+constexpr Limits generous{100'000U, generousBytes, 0U};
 
 void powerBasisAndEvaluation() {
   const Vector x = vector({0.0, 1.0, 2.0});
@@ -81,7 +92,7 @@ void dimensionsLimitsAndErrors() {
        ErrorCode::ResourceLimit);
   fail(basisMatrix(x.view(), 1U, {.scale = 0.0}, generous),
        ErrorCode::InvalidDomain);
-  fail(basisMatrix(x.view(), 1U, {static_cast<BasisKind>(255U), 0.0, 1.0},
+  fail(basisMatrix(x.view(), 1U, {unknownEnumValue<BasisKind>(), 0.0, 1.0},
                    generous),
        ErrorCode::InvalidDomain);
   const Vector nonfinite = vector({std::numeric_limits<Scalar>::infinity()});

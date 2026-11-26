@@ -1,9 +1,16 @@
 #include "Test.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <exception>
+#include <initializer_list>
+#include <iostream>
 #include <limits>
+#include <optional>
+#include <type_traits>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Interpolation.hpp>
 #include <vss/math/Limits.hpp>
@@ -12,6 +19,11 @@
 namespace {
 
 using namespace vss::math;
+
+template <typename Enum> Enum unknownEnumValue() {
+  using Underlying = std::underlying_type_t<Enum>;
+  return std::bit_cast<Enum>(std::numeric_limits<Underlying>::max());
+}
 
 Vector vector(std::initializer_list<Scalar> values) {
   return Vector(std::vector<Scalar>(values));
@@ -28,7 +40,8 @@ void fail(const auto& result, ErrorCode expected) {
   VSS_CHECK(result.status().code() == expected);
 }
 
-constexpr Limits generous{100'000U, 8U * 1024U * 1024U, 0U};
+constexpr Index generousBytes = Index{8U} * 1024U * 1024U;
+constexpr Limits generous{100'000U, generousBytes, 0U};
 
 void linearInterpolationAndGap() {
   const Vector nodes = vector({0.0, 1.0, 2.0});
@@ -83,7 +96,7 @@ void extrapolationAndValidation() {
                    {Extrapolation::reject, 0.0}),
        ErrorCode::InvalidTolerance);
   fail(interpolate(nodes.view(), values.view(), 0.5,
-                   {static_cast<Extrapolation>(255U), std::nullopt}),
+                   {unknownEnumValue<Extrapolation>(), std::nullopt}),
        ErrorCode::InvalidDomain);
   fail(interpolate(nodes.view(), values.view(),
                    std::numeric_limits<Scalar>::quiet_NaN(), {}),
@@ -129,7 +142,7 @@ void splineErrorsAndCallerValidation() {
        ErrorCode::InvalidDomain);
   fail(makeSpline(
            nodes.view(), values.view(),
-           {static_cast<SplineBoundary>(255U), std::nullopt, std::nullopt},
+           {unknownEnumValue<SplineBoundary>(), std::nullopt, std::nullopt},
            generous),
        ErrorCode::InvalidDomain);
   fail(makeSpline(nodes.view(), values.view(),
@@ -144,9 +157,9 @@ void splineErrorsAndCallerValidation() {
   VSS_CHECK(spline);
   fail(evaluate(spline.value(), -1.0, Extrapolation::reject),
        ErrorCode::InvalidDomain);
-  fail(evaluate(spline.value(), 0.5, static_cast<Extrapolation>(255U)),
+  fail(evaluate(spline.value(), 0.5, unknownEnumValue<Extrapolation>()),
        ErrorCode::InvalidDomain);
-  Spline malformed{nodes, Matrix(2U, 4U)};
+  const Spline malformed{nodes, Matrix(2U, 4U)};
   fail(evaluate(malformed, 0.5, Extrapolation::reject),
        ErrorCode::DimensionMismatch);
 }
