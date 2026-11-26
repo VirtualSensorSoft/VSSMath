@@ -79,6 +79,21 @@ vss_math_add_algorithm_test(test_uncertainty_summary
 vss_math_add_algorithm_test(test_finite_difference
                              algorithms/test_finite_difference.cpp
                              math.finite_difference)
+vss_math_add_algorithm_test(test_polynomial algorithms/test_polynomial.cpp
+                             math.polynomial)
+vss_math_add_algorithm_test(test_interpolation
+                             algorithms/test_interpolation.cpp
+                             math.interpolation)
+vss_math_add_algorithm_test(test_roots algorithms/test_roots.cpp math.roots)
+vss_math_add_algorithm_test(test_integration
+                             algorithms/test_integration.cpp
+                             math.integration)
+vss_math_add_algorithm_test(test_ode algorithms/test_ode.cpp math.ode)
+vss_math_add_algorithm_test(test_functions algorithms/test_functions.cpp
+                             math.functions)
+vss_math_add_algorithm_test(test_scientific_extras
+                             algorithms/test_scientific_extras.cpp
+                             math.scientific_extras)
 vss_math_add_algorithm_test(test_differentiation_extensions
                              algorithms/test_differentiation_extensions.cpp
                              math.differentiation_extensions)
