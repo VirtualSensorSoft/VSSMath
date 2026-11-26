@@ -58,18 +58,24 @@ void independentAndGroupedContributionsAreAssembled() {
     VSS_CHECK(std::abs(result.value().covariance.at(1U, 0U) - 0.25) < 1.0e-12);
   }
 
-  ErrorCovarianceSpec independent = spec;
-  independent.cross = {};
-  independent.dependence = DependencePolicy::declared_independent_blocks;
+  Matrix firstIndependentError = matrix({{0.04}});
+  Matrix secondIndependentError = matrix({{0.04}});
+  const std::array<SourceBlock, 2> independentSources{{
+      {1U, firstCoordinate, firstIndependentError.view()},
+      {2U, secondCoordinate, secondIndependentError.view()},
+  }};
+  const ErrorCovarianceSpec independent{
+      .loading = identity.view(),
+      .sources = independentSources,
+      .dependence = DependencePolicy::declared_independent_blocks};
   const auto independentResult = assembleErrorCovariance(
       independent, state.view(), 0.0, {512U, 16384U, 10U});
   VSS_CHECK(independentResult.hasValue());
   if (independentResult) {
-    VSS_CHECK(std::abs(independentResult.value().covariance.at(0U, 0U) - 1.04) <
-              1.0e-12);
-    VSS_CHECK(std::abs(independentResult.value().covariance.at(1U, 1U) - 1.04) <
-              1.0e-12);
+    VSS_CHECK(independentResult.value().covariance.at(0U, 0U) == 0.04);
+    VSS_CHECK(independentResult.value().covariance.at(1U, 1U) == 0.04);
     VSS_CHECK(independentResult.value().covariance.at(0U, 1U) == 0.0);
+    VSS_CHECK(independentResult.value().covariance.at(1U, 0U) == 0.0);
   }
 }
 
