@@ -159,6 +159,27 @@ void rigidGeometryAndLocalCovariance() {
                                            xQuarter.view(), limits);
   VSS_CHECK(right && right.value().at(0U, 2U) == 0.0 &&
             right.value().at(1U, 2U) == 0.0 && right.value().at(2U, 2U) == 1.0);
+  Matrix halfTurnMatrix(3U, 3U, 0.0);
+  halfTurnMatrix.at(0U, 0U) = -1.0;
+  halfTurnMatrix.at(1U, 1U) = -1.0;
+  halfTurnMatrix.at(2U, 2U) = 1.0;
+  const auto halfTurn = rigidResidualJacobian(vector({1.0, 0.0, 0.0}).view(),
+                                              halfTurnMatrix.view(), limits);
+  VSS_CHECK(halfTurn && halfTurn.value().at(1U, 2U) == -1.0 &&
+            halfTurn.value().at(2U, 1U) == -1.0);
+  const Scalar belowPi = std::nextafter(std::numbers::pi, 0.0);
+  const Scalar abovePi =
+      std::nextafter(std::numbers::pi, std::numeric_limits<Scalar>::infinity());
+  for (const Scalar angle : {belowPi, abovePi}) {
+    Matrix nearCut(3U, 3U, 0.0);
+    nearCut.at(0U, 0U) = std::cos(angle);
+    nearCut.at(0U, 1U) = -std::sin(angle);
+    nearCut.at(1U, 0U) = std::sin(angle);
+    nearCut.at(1U, 1U) = std::cos(angle);
+    nearCut.at(2U, 2U) = 1.0;
+    VSS_CHECK(rigidResidualJacobian(vector({1.0, 0.0, 0.0}).view(),
+                                    nearCut.view(), limits));
+  }
   // Compare the exact action R exp(h[e_z]x)x with its analytic right
   // derivative e_y at the identity, at two smooth-chart step sizes.
   for (const int exponent : {-10, -15}) {
