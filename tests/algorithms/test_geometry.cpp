@@ -1,10 +1,23 @@
 #include "Test.hpp"
+#include "vss/math/Array.hpp"
+#include "vss/math/Core.hpp"
+#include "vss/math/Error.hpp"
+#include "vss/math/Limits.hpp"
+#include "vss/math/Result.hpp"
+#include "vss/math/Tensor.hpp"
+#include "vss/math/TensorLimits.hpp"
+#include "vss/math/TensorShape.hpp"
+#include "vss/math/covariance/PropagationResult.hpp"
+#include "vss/math/statistics/Moments.hpp"
 
 #include <array>
 #include <cmath>
 #include <initializer_list>
 #include <limits>
+#include <numbers>
+#include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 #include <vss/math/AffineMaps.hpp>
 #include <vss/math/Geometry.hpp>
@@ -19,6 +32,16 @@ using namespace vss::math::statistics;
 
 Vector vector(std::initializer_list<Scalar> values) {
   return Vector(std::span<const Scalar>{values.begin(), values.size()});
+}
+
+Result<Tensor> zeroNormalizationHessian() {
+  const std::array<Extent, 3U> dimensions{2U, 2U, 2U};
+  const auto shape = TensorShape::create(dimensions);
+  if (!shape) {
+    return Result<Tensor>::failure(shape.status().code(),
+                                   "normalization Hessian fallback failed");
+  }
+  return Tensor::create(shape.value(), 0.0, TensorLimits(8U));
 }
 
 constexpr Limits limits{4096U, 4096U * sizeof(Scalar), 0U};
@@ -40,6 +63,14 @@ void wrappedAngles() {
   VSS_CHECK(huge && std::isfinite(huge.value()));
   const auto negativeTie = wrappedAngularResidual(-180.0, 0.0, 360.0);
   VSS_CHECK(negativeTie && negativeTie.value() == -180.0);
+  const Scalar belowCut = std::nextafter(180.0, 0.0);
+  const Scalar aboveCut = std::nextafter(180.0, 360.0);
+  const auto belowResidual = wrappedAngularResidual(belowCut, 0.0, 360.0);
+  const auto cutResidual = wrappedAngularResidual(180.0, 0.0, 360.0);
+  const auto aboveResidual = wrappedAngularResidual(aboveCut, 0.0, 360.0);
+  VSS_CHECK(belowResidual && belowResidual.value() == belowCut);
+  VSS_CHECK(cutResidual && cutResidual.value() == -180.0);
+  VSS_CHECK(aboveResidual && aboveResidual.value() == aboveCut - 360.0);
   const auto subnormalPeriod = wrappedAngularResidual(
       0.0, 0.0, std::numeric_limits<Scalar>::denorm_min());
   VSS_CHECK(!subnormalPeriod &&
@@ -92,7 +123,12 @@ void normalizationDifferential() {
   VSS_CHECK(std::abs(normalized.value().jacobian.at(1U, 1U) - 0.5) < 1.0e-14);
   VSS_CHECK(normalized.value().hessian.has_value());
   const std::array<Index, 3U> hIndex{0U, 1U, 1U};
-  VSS_CHECK(std::abs(normalized.value().hessian->at(hIndex) + 0.25) < 1.0e-14);
+  const auto zeroHessian = zeroNormalizationHessian();
+  VSS_CHECK(zeroHessian);
+  const Tensor normalizedHessian =
+      normalized.value().hessian.value_or(zeroHessian.value());
+  VSS_CHECK(normalized.value().hessian.has_value() &&
+            std::abs(normalizedHessian.at(hIndex) + 0.25) < 1.0e-14);
 
   const auto zeroInput = vector({0.0, 0.0});
   const auto zero = normalizeVectorDerivatives(zeroInput.view(), limits);
@@ -126,6 +162,13 @@ void normalizationDifferential() {
     const Scalar expected = 1.0 / (2.0 * scale);
     VSS_CHECK(std::abs(scaled.value().jacobian.at(1U, 1U) / expected - 1.0) <
               1.0e-14);
+    VSS_CHECK(scaled.value().hessian.has_value());
+    const Scalar scaleSquared = scale * scale;
+    const Tensor scaledHessian =
+        scaled.value().hessian.value_or(zeroHessian.value());
+    VSS_CHECK(scaled.value().hessian.has_value() &&
+              std::abs(scaledHessian.at(hIndex) * scaleSquared + 0.25) <
+                  1.0e-14);
   }
 }
 
@@ -180,11 +223,31 @@ void rigidGeometryAndLocalCovariance() {
     VSS_CHECK(rigidResidualJacobian(vector({1.0, 0.0, 0.0}).view(),
                                     nearCut.view(), limits));
   }
+  const Scalar belowHalfTurn = std::nextafter(180.0, 0.0);
+  const Scalar aboveHalfTurn = std::nextafter(180.0, 360.0);
+  for (const Scalar angle : {belowHalfTurn, aboveHalfTurn}) {
+    const Scalar delta = (angle - 180.0) * std::numbers::pi / 180.0;
+    const Scalar cosine = -std::cos(delta);
+    const Scalar sine = -std::sin(delta);
+    Matrix nearCut(3U, 3U, 0.0);
+    nearCut.at(0U, 0U) = cosine;
+    nearCut.at(0U, 1U) = -sine;
+    nearCut.at(1U, 0U) = sine;
+    nearCut.at(1U, 1U) = cosine;
+    nearCut.at(2U, 2U) = 1.0;
+    const auto nearCutJacobian = rigidResidualJacobian(
+        vector({1.0, 0.0, 0.0}).view(), nearCut.view(), limits);
+    VSS_CHECK(nearCutJacobian);
+    VSS_CHECK(std::abs(nearCutJacobian.value().at(0U, 2U) + sine) < 1.0e-14);
+    VSS_CHECK(std::abs(nearCutJacobian.value().at(1U, 2U) - cosine) < 1.0e-14);
+    VSS_CHECK(nearCutJacobian.value().at(2U, 1U) == -1.0);
+  }
   // Compare the exact action R exp(h[e_z]x)x with its analytic right
   // derivative e_y at the identity, at two smooth-chart step sizes.
   for (const int exponent : {-10, -15}) {
     const Scalar h = std::scalbn(1.0, exponent);
-    Matrix plus(3U, 3U, 0.0), minus(3U, 3U, 0.0);
+    Matrix plus(3U, 3U, 0.0);
+    Matrix minus(3U, 3U, 0.0);
     plus.at(0U, 0U) = std::cos(h);
     plus.at(0U, 1U) = -std::sin(h);
     plus.at(1U, 0U) = std::sin(h);
@@ -209,11 +272,14 @@ void rigidGeometryAndLocalCovariance() {
               h * h / 6.0 + 16.0 * std::numeric_limits<Scalar>::epsilon() / h);
     auto multiply3 = [](ConstMatrixView lhs, ConstMatrixView rhs) {
       Matrix product(3U, 3U, 0.0);
-      for (Extent i = 0; i < 3U; ++i)
-        for (Extent j = 0; j < 3U; ++j)
-          for (Extent k = 0; k < 3U; ++k)
+      for (Extent i = 0; i < 3U; ++i) {
+        for (Extent j = 0; j < 3U; ++j) {
+          for (Extent k = 0; k < 3U; ++k) {
             product.at(i, j) =
                 std::fma(lhs.at(i, k), rhs.at(k, j), product.at(i, j));
+          }
+        }
+      }
       return product;
     };
     const auto rightPlus = multiply3(xQuarter.view(), plus.view());
@@ -277,6 +343,61 @@ void rigidGeometryAndLocalCovariance() {
       localCoordinateCovariance(rectangularJ.view(), cov.view(), limits);
   VSS_CHECK(rectangularCov && rectangularCov.value().rows() == 1U &&
             rectangularCov.value().at(0U, 0U) == 13.0);
+
+  Matrix zQuarterTurn(3U, 3U, 0.0);
+  zQuarterTurn.at(0U, 1U) = -1.0;
+  zQuarterTurn.at(1U, 0U) = 1.0;
+  zQuarterTurn.at(2U, 2U) = 1.0;
+  const auto rightChart = rigidResidualJacobian(vector({1.0, 0.0, 0.0}).view(),
+                                                zQuarterTurn.view(), limits);
+  VSS_CHECK(rightChart);
+  Matrix rightJacobian(3U, 3U, 0.0);
+  for (Extent row = 0U; row < 3U; ++row) {
+    for (Extent column = 0U; column < 3U; ++column) {
+      rightJacobian.at(row, column) = rightChart.value().at(row, column);
+    }
+  }
+  Matrix leftJacobian(3U, 3U, 0.0);
+  leftJacobian.at(0U, 2U) = -1.0;
+  leftJacobian.at(2U, 0U) = 1.0;
+  Matrix rightCovariance(3U, 3U, 0.0);
+  rightCovariance.at(0U, 0U) = 4.0;
+  rightCovariance.at(0U, 1U) = 1.0;
+  rightCovariance.at(0U, 2U) = 2.0;
+  rightCovariance.at(1U, 0U) = 1.0;
+  rightCovariance.at(1U, 1U) = 9.0;
+  rightCovariance.at(1U, 2U) = 3.0;
+  rightCovariance.at(2U, 0U) = 2.0;
+  rightCovariance.at(2U, 1U) = 3.0;
+  rightCovariance.at(2U, 2U) = 16.0;
+  Matrix leftCovariance(3U, 3U, 0.0);
+  leftCovariance.at(0U, 0U) = 9.0;
+  leftCovariance.at(0U, 1U) = -1.0;
+  leftCovariance.at(0U, 2U) = -3.0;
+  leftCovariance.at(1U, 0U) = -1.0;
+  leftCovariance.at(1U, 1U) = 4.0;
+  leftCovariance.at(1U, 2U) = 2.0;
+  leftCovariance.at(2U, 0U) = -3.0;
+  leftCovariance.at(2U, 1U) = 2.0;
+  leftCovariance.at(2U, 2U) = 16.0;
+  const auto rightPropagated = localCoordinateCovariance(
+      rightJacobian.view(), rightCovariance.view(), limits);
+  const auto leftPropagated = localCoordinateCovariance(
+      leftJacobian.view(), leftCovariance.view(), limits);
+  VSS_CHECK(rightPropagated && leftPropagated);
+  Matrix expectedCovariance(3U, 3U, 0.0);
+  expectedCovariance.at(0U, 0U) = 16.0;
+  expectedCovariance.at(0U, 2U) = 3.0;
+  expectedCovariance.at(2U, 0U) = 3.0;
+  expectedCovariance.at(2U, 2U) = 9.0;
+  for (Extent row = 0U; row < 3U; ++row) {
+    for (Extent column = 0U; column < 3U; ++column) {
+      VSS_CHECK(std::abs(rightPropagated.value().at(row, column) -
+                         expectedCovariance.at(row, column)) < 1.0e-12);
+      VSS_CHECK(std::abs(leftPropagated.value().at(row, column) -
+                         expectedCovariance.at(row, column)) < 1.0e-12);
+    }
+  }
   Matrix overflowJ(2U, 2U);
   overflowJ.at(0U, 0U) = std::numeric_limits<Scalar>::max() / 2.0;
   overflowJ.at(1U, 1U) = 1.0;
@@ -297,8 +418,12 @@ void circularAndAffineValues() {
                         .frequencyCounts = {}};
   const auto circ = circularStatistics(
       ConstVectorView::create(angles, 2U).value(), unit, 360.0, limits);
-  VSS_CHECK(circ && circ.value().direction &&
-            std::abs(*circ.value().direction) < 1.0e-12);
+  const Scalar undefinedDirection = std::numeric_limits<Scalar>::quiet_NaN();
+  const Scalar direction =
+      circ ? circ.value().direction.value_or(undefinedDirection)
+           : undefinedDirection;
+  VSS_CHECK(circ && circ.value().direction.has_value() &&
+            std::abs(direction) < 1.0e-12);
   VSS_CHECK(std::abs(circ.value().circular_variance - 0.5) < 1.0e-12);
   const std::array<Scalar, 2U> opposite{0.0, 180.0};
   const auto antipodal = circularStatistics(
@@ -308,8 +433,10 @@ void circularAndAffineValues() {
   std::array<Extent, 1U> shapeDims{2U};
   const auto shape = TensorShape::create(shapeDims);
   auto tensor = Tensor::create(shape.value(), 0.0, TensorLimits(8U));
-  tensor.value().data()[0] = 1.0;
-  tensor.value().data()[1] = 2.0;
+  const std::array<Index, 1U> tensorIndex0{0U};
+  const std::array<Index, 1U> tensorIndex1{1U};
+  tensor.value().at(tensorIndex0) = 1.0;
+  tensor.value().at(tensorIndex1) = 2.0;
   Matrix affine(1U, 2U);
   affine.at(0U, 0U) = 1.0;
   affine.at(0U, 1U) = 2.0;
@@ -318,7 +445,11 @@ void circularAndAffineValues() {
   const std::array<Extent, 1U> outShape{1U};
   const auto mapped =
       applyAffine(tensor.value(), affine.view(), b.view(), outShape, limits);
-  VSS_CHECK(mapped && mapped.value().data()[0] == 8.0);
+  if (mapped) {
+    VSS_CHECK(mapped.value().at(tensorIndex0) == 8.0);
+  } else {
+    VSS_CHECK(false);
+  }
   const std::array<Extent, 1U> wrongDims{2U};
   const auto wrongShape =
       applyAffine(tensor.value(), affine.view(), b.view(), wrongDims, limits);
@@ -350,9 +481,18 @@ void circularAndAffineValues() {
       .frequencyCounts = {}};
   const auto scaledCircular = circularStatistics(
       ConstVectorView::create(angles, 2U).value(), scaled, 360.0, limits);
-  VSS_CHECK(scaledCircular && scaledCircular.value().direction &&
-            std::abs(*scaledCircular.value().direction -
-                     *weightedCircular.value().direction) < 1.0e-12);
+  const Scalar scaledDirection =
+      scaledCircular
+          ? scaledCircular.value().direction.value_or(undefinedDirection)
+          : undefinedDirection;
+  const Scalar weightedDirection =
+      weightedCircular
+          ? weightedCircular.value().direction.value_or(undefinedDirection)
+          : undefinedDirection;
+  VSS_CHECK(scaledCircular && scaledCircular.value().direction.has_value() &&
+            weightedCircular &&
+            weightedCircular.value().direction.has_value() &&
+            std::abs(scaledDirection - weightedDirection) < 1.0e-12);
   std::array<Scalar, 2U> nearAntipodal{1.0, 1.0};
   const WeightSpec unresolvedWeights{
       .rule = WeightRule::empirical,
@@ -417,10 +557,10 @@ void centralMomentAffineTransform() {
                              .values = Vector(1U, 2.0)}};
   const auto termArray = Array<MomentTerm>::copy(terms, limits);
   Vector mean(1U, 4.0);
-  MomentEstimate source{.observation_shape = {},
-                        .terms = termArray.value(),
-                        .diagnostics = std::move(diagnostics),
-                        .population_mean = mean};
+  MomentEstimate const source{.observation_shape = {},
+                              .terms = termArray.value(),
+                              .diagnostics = std::move(diagnostics),
+                              .population_mean = mean};
   Matrix a(1U, 1U, 2.0);
   Vector b(1U, 3.0);
   const MomentRequest request{.orders = 0x0bU,
@@ -429,7 +569,12 @@ void centralMomentAffineTransform() {
                               .contraction = std::nullopt};
   const auto result =
       transformMoments(source, a.view(), b.view(), request, limits);
-  VSS_CHECK(result && result.value().population_mean->at(0U) == 11.0);
+  const Vector missingMean(2U, std::numeric_limits<Scalar>::quiet_NaN());
+  const Vector resultMean =
+      result ? result.value().population_mean.value_or(missingMean)
+             : missingMean;
+  VSS_CHECK(result && result.value().population_mean.has_value() &&
+            resultMean.at(0U) == 11.0);
   VSS_CHECK(result.value().terms.view().size() == 3U);
   VSS_CHECK(result.value().terms.view()[0U].values.at(0U) == 0.0);
   VSS_CHECK(result.value().terms.view()[1U].values.at(0U) == 20.0);
@@ -442,7 +587,11 @@ void centralMomentAffineTransform() {
                                  .contraction = projection.view()};
   const auto projected =
       transformMoments(source, a.view(), b.view(), contracted, limits);
-  VSS_CHECK(projected && projected.value().population_mean->at(0U) == 5.5);
+  const Vector projectedMean =
+      projected ? projected.value().population_mean.value_or(missingMean)
+                : missingMean;
+  VSS_CHECK(projected && projected.value().population_mean.has_value() &&
+            projectedMean.at(0U) == 5.5);
   VSS_CHECK(projected.value().terms.view()[1U].values.at(0U) == 5.0);
 
   // Packed symmetric covariance input exercises both tuple orderings while
@@ -456,10 +605,10 @@ void centralMomentAffineTransform() {
   const auto packedTermArray = Array<MomentTerm>::copy(packedTerms, limits);
   const std::array<Extent, 1U> packedDimensions{2U};
   const auto packedShape = Array<Index>::copy(packedDimensions, limits);
-  MomentEstimate packedSource{.observation_shape = packedShape.value(),
-                              .terms = packedTermArray.value(),
-                              .diagnostics = source.diagnostics,
-                              .population_mean = vector({0.0, 0.0})};
+  MomentEstimate const packedSource{.observation_shape = packedShape.value(),
+                                    .terms = packedTermArray.value(),
+                                    .diagnostics = source.diagnostics,
+                                    .population_mean = vector({0.0, 0.0})};
   Matrix mixing(2U, 2U);
   mixing.at(0U, 0U) = 1.0;
   mixing.at(0U, 1U) = 1.0;
@@ -500,10 +649,10 @@ void centralMomentAffineTransform() {
   const auto vectorTermArray = Array<MomentTerm>::copy(vectorTerms, limits);
   const std::array<Extent, 1U> sourceDims{2U};
   const auto sourceShape = Array<Index>::copy(sourceDims, limits);
-  MomentEstimate vectorSource{.observation_shape = sourceShape.value(),
-                              .terms = vectorTermArray.value(),
-                              .diagnostics = source.diagnostics,
-                              .population_mean = vector({1.5, 0.5})};
+  MomentEstimate const vectorSource{.observation_shape = sourceShape.value(),
+                                    .terms = vectorTermArray.value(),
+                                    .diagnostics = source.diagnostics,
+                                    .population_mean = vector({1.5, 0.5})};
   Matrix rectangular(2U, 2U);
   rectangular.at(0U, 0U) = 1.0;
   rectangular.at(0U, 1U) = 2.0;
@@ -517,10 +666,14 @@ void centralMomentAffineTransform() {
   const auto transformedVector = transformMoments(
       vectorSource, rectangular.view(), shift.view(), denseRequest, limits);
   VSS_CHECK(transformedVector);
-  VSS_CHECK(std::abs(transformedVector.value().population_mean->at(0U) - 5.5) <
-            1.0e-14);
-  VSS_CHECK(std::abs(transformedVector.value().population_mean->at(1U) + 2.5) <
-            1.0e-14);
+  const Vector transformedVectorMean =
+      transformedVector
+          ? transformedVector.value().population_mean.value_or(missingMean)
+          : missingMean;
+  VSS_CHECK(transformedVector &&
+            transformedVector.value().population_mean.has_value() &&
+            std::abs(transformedVectorMean.at(0U) - 5.5) < 1.0e-14 &&
+            std::abs(transformedVectorMean.at(1U) + 2.5) < 1.0e-14);
   VSS_CHECK(std::abs(transformedVector.value().terms.view()[1U].values.at(1U) +
                      0.75) < 1.0e-14);
 
@@ -531,15 +684,18 @@ void centralMomentAffineTransform() {
                                                            {{0.0, 2.0, -1.0}},
                                                            {{1.0, 1.0, 2.0}}}};
   Vector populationMean(3U, 0.0);
-  for (const auto& point : population)
-    for (Extent j = 0; j < 3U; ++j)
-      populationMean.at(j) += point[j] / 4.0;
+  for (const auto& point : population) {
+    for (Extent j = 0; j < 3U; ++j) {
+      populationMean.at(j) += point.at(j) / 4.0;
+    }
+  }
   auto populationMoment = [&](std::span<const Index> indices) {
     Scalar value = 0.0;
     for (const auto& point : population) {
       Scalar product = 1.0;
-      for (Index j : indices)
-        product *= point[j] - populationMean.at(j);
+      for (Index const j : indices) {
+        product *= point.at(j) - populationMean.at(j);
+      }
       value += product / 4.0;
     }
     return value;
@@ -552,14 +708,15 @@ void centralMomentAffineTransform() {
     std::vector<MomentTerm> allTerms;
     for (Index order = 1U; order <= 4U; ++order) {
       Extent count = 1U;
-      for (Index i = 0; i < order; ++i)
+      for (Index i = 0; i < order; ++i) {
         count *= 3U;
+      }
       Vector values(count, 0.0);
       for (Extent flat = 0; flat < count; ++flat) {
         Extent remainder = flat;
         std::array<Index, 4U> indices{};
         for (Index i = order; i > 0U; --i) {
-          indices[i - 1U] = remainder % 3U;
+          indices.at(i - 1U) = remainder % 3U;
           remainder /= 3U;
         }
         Scalar value =
@@ -597,17 +754,21 @@ void centralMomentAffineTransform() {
                                .representation = MomentRepresentation::dense,
                                .selected = {},
                                .contraction = std::nullopt};
-  MomentEstimate centralInput{.observation_shape = shape3d.value(),
-                              .terms = centralTerms.value(),
-                              .diagnostics = source.diagnostics,
-                              .population_mean = populationMean};
+  MomentEstimate const centralInput{.observation_shape = shape3d.value(),
+                                    .terms = centralTerms.value(),
+                                    .diagnostics = source.diagnostics,
+                                    .population_mean = populationMean};
   const auto centralOutput = transformMoments(centralInput, map.view(),
                                               offset.view(), allDense, limits);
   VSS_CHECK(centralOutput);
-  VSS_CHECK(std::abs(centralOutput.value().population_mean->at(0U) - 5.0) <
-            1.0e-14);
-  VSS_CHECK(std::abs(centralOutput.value().population_mean->at(1U) + 1.75) <
-            1.0e-14);
+  const Vector centralOutputMean =
+      centralOutput
+          ? centralOutput.value().population_mean.value_or(missingMean)
+          : missingMean;
+  VSS_CHECK(centralOutput &&
+            centralOutput.value().population_mean.has_value() &&
+            std::abs(centralOutputMean.at(0U) - 5.0) < 1.0e-14 &&
+            std::abs(centralOutputMean.at(1U) + 1.75) < 1.0e-14);
   VSS_CHECK(std::abs(centralOutput.value().terms.view()[2U].values.at(1U) -
                      15.0 / 8.0) < 1.0e-13);
   VSS_CHECK(std::abs(centralOutput.value().terms.view()[3U].values.at(3U) -
@@ -640,10 +801,10 @@ void centralMomentAffineTransform() {
                              .values = Vector(1U, 1.0)}};
   const auto sparseTermArray =
       Array<statistics::MomentTerm>::copy(sparseTerms, limits);
-  MomentEstimate sparse{.observation_shape = shapeArray.value(),
-                        .terms = sparseTermArray.value(),
-                        .diagnostics = source.diagnostics,
-                        .population_mean = Vector(2U, 0.0)};
+  MomentEstimate const sparse{.observation_shape = shapeArray.value(),
+                              .terms = sparseTermArray.value(),
+                              .diagnostics = source.diagnostics,
+                              .population_mean = Vector(2U, 0.0)};
   Matrix mix(1U, 2U);
   mix.at(0U, 0U) = 1.0;
   mix.at(0U, 1U) = 1.0;
