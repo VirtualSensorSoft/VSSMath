@@ -39,6 +39,7 @@ add_library(vss_math STATIC
   src/Integration.cpp
   src/ODE.cpp
   src/Functions.cpp
+  src/ScientificExtras.cpp
   src/FirstMoment.cpp
   src/FourthMoment.cpp
   src/MultivariateMoments.cpp

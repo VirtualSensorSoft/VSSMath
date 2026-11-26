@@ -117,16 +117,23 @@ set(vss_expected_files
   include/vss/math/Error.hpp
   include/vss/math/FirstMoment.hpp
   include/vss/math/FourthMoment.hpp
+  include/vss/math/Functions.hpp
+  include/vss/math/Integration.hpp
+  include/vss/math/Interpolation.hpp
   include/vss/math/Limits.hpp
   include/vss/math/Matrix.hpp
   include/vss/math/MatrixView.hpp
   include/vss/math/MultivariateMoments.hpp
   include/vss/math/PrintOptions.hpp
   include/vss/math/NumericalError.hpp
+  include/vss/math/ODE.hpp
   include/vss/math/Operations.hpp
   include/vss/math/PackedSymmetric.hpp
+  include/vss/math/Polynomial.hpp
   include/vss/math/Result.hpp
+  include/vss/math/Roots.hpp
   include/vss/math/Scaling.hpp
+  include/vss/math/ScientificExtras.hpp
   include/vss/math/SampleView.hpp
   include/vss/math/SecondMoment.hpp
   include/vss/math/Tolerance.hpp
