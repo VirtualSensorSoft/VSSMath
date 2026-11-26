@@ -94,6 +94,8 @@ vss_math_add_algorithm_test(test_functions algorithms/test_functions.cpp
 vss_math_add_algorithm_test(test_scientific_extras
                              algorithms/test_scientific_extras.cpp
                              math.scientific_extras)
+vss_math_add_algorithm_test(test_geometry algorithms/test_geometry.cpp
+                            math.geometry)
 vss_math_add_algorithm_test(test_differentiation_extensions
                              algorithms/test_differentiation_extensions.cpp
                              math.differentiation_extensions)
