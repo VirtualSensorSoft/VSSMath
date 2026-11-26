@@ -9,10 +9,13 @@ namespace {
 
 using namespace vss::math;
 
-IterPolicy policy() { return {.abs = 1.0e-12, .rel = 1.0e-12,
-                              .max_iterations = 128U,
-                              .max_evaluations = 512U,
-                              .bracket = std::nullopt}; }
+IterPolicy policy() {
+  return {.abs = 1.0e-12,
+          .rel = 1.0e-12,
+          .max_iterations = 128U,
+          .max_evaluations = 512U,
+          .bracket = std::nullopt};
+}
 
 Vector vec(std::initializer_list<Scalar> values) {
   return Vector(std::vector<Scalar>(values));
@@ -31,9 +34,9 @@ void scalarBracketing() {
   const auto brent = rootBrent(squareRoot, {1.0, 2.0}, policy());
   VSS_CHECK(brent && brent.value().termination == Termination::converged);
   VSS_CHECK(std::abs(brent.value().value - std::sqrt(2.0)) <= 3.0e-10);
-  const auto exactEndpoint = rootBisection(
-      [](Scalar x) { return Result<Scalar>::success(x); }, {0.0, 2.0},
-      policy());
+  const auto exactEndpoint =
+      rootBisection([](Scalar x) { return Result<Scalar>::success(x); },
+                    {0.0, 2.0}, policy());
   VSS_CHECK(exactEndpoint && exactEndpoint.value().value == 0.0);
   VSS_CHECK(exactEndpoint.value().function_evaluations == 1U);
   VSS_CHECK(exactEndpoint.value().enclosure->lower == 0.0);
@@ -53,7 +56,8 @@ void newtonAndCaps() {
   IterPolicy capped = policy();
   capped.max_iterations = 0U;
   const auto cappedResult = rootBisection(f, {1.0, 2.0}, capped);
-  VSS_CHECK(cappedResult && cappedResult.value().termination == Termination::cap);
+  VSS_CHECK(cappedResult &&
+            cappedResult.value().termination == Termination::cap);
   VSS_CHECK(cappedResult.value().enclosure.has_value());
 
   IterPolicy noEvaluations = policy();
@@ -68,10 +72,11 @@ void newtonAndCaps() {
   const auto zeroSlope = rootNewton(
       [](Scalar x) { return Result<Scalar>::success(x + 1.0); },
       [](Scalar) { return Result<Scalar>::success(0.0); }, 0.0, policy());
-  VSS_CHECK(!zeroSlope && zeroSlope.status().code() == ErrorCode::RankDeficient);
+  VSS_CHECK(!zeroSlope &&
+            zeroSlope.status().code() == ErrorCode::RankDeficient);
   const auto escaped = rootNewton(
-      [](Scalar) -> Result<Scalar> { throw std::runtime_error("failure"); },
-      df, 1.0, policy());
+      [](Scalar) -> Result<Scalar> { throw std::runtime_error("failure"); }, df,
+      1.0, policy());
   VSS_CHECK(!escaped && escaped.status().code() == ErrorCode::CallbackFailure);
 }
 
@@ -114,7 +119,8 @@ void vectorRootContracts() {
                                           policy(), {100U, 10000U, 100U});
   VSS_CHECK(backtracked &&
             backtracked.value().termination == Termination::converged);
-  VSS_CHECK(std::abs(backtracked.value().value.at(0U) - std::log(100.0)) < 1e-10);
+  VSS_CHECK(std::abs(backtracked.value().value.at(0U) - std::log(100.0)) <
+            1e-10);
   VSS_CHECK(backtracked.value().function_evaluations >
             backtracked.value().iterations + 1U);
 
@@ -126,9 +132,8 @@ void vectorRootContracts() {
     ++jacobianCalls;
     return Result<Matrix>::success(Matrix(2U, 2U, 0.0));
   };
-  const auto exactInitial = findVectorRoot(exact, countedJacobian,
-                                           vec({1.0, 2.0}), policy(),
-                                           {100U, 10000U, 100U});
+  const auto exactInitial = findVectorRoot(
+      exact, countedJacobian, vec({1.0, 2.0}), policy(), {100U, 10000U, 100U});
   VSS_CHECK(exactInitial && jacobianCalls == 0U &&
             exactInitial.value().function_evaluations == 1U &&
             exactInitial.value().jacobian_evaluations == 0U);
@@ -140,7 +145,8 @@ void vectorRootContracts() {
   };
   const auto deficient = findVectorRoot(function, singular, vec({1.0, 0.0}),
                                         policy(), {100U, 10000U, 100U});
-  VSS_CHECK(!deficient && deficient.status().code() == ErrorCode::RankDeficient);
+  VSS_CHECK(!deficient &&
+            deficient.status().code() == ErrorCode::RankDeficient);
   const JacobianFunction wrongShape = [](ConstVectorView) {
     return Result<Matrix>::success(Matrix(1U, 2U, 0.0));
   };

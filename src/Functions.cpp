@@ -32,9 +32,9 @@ Result<Vector> exponentialSmooth(ConstVectorView values, Scalar alpha,
     Scalar state = initial;
     for (Index i = 0U; i < values.size(); ++i) {
       const Scalar observation = values.at(i);
-      state = alpha == 0.0 ? state
-                           : alpha == 1.0 ? observation
-                                          : std::lerp(state, observation, alpha);
+      state = alpha == 0.0   ? state
+              : alpha == 1.0 ? observation
+                             : std::lerp(state, observation, alpha);
       if (!std::isfinite(state)) {
         return Result<Vector>::failure(
             ErrorCode::NonFiniteResult,

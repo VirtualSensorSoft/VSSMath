@@ -76,15 +76,15 @@ struct Engine final {
   }
 
   Result<Matrix> jacobian(const OdeJacobianFunction& callback, Scalar time,
-                          const std::vector<Scalar>& state,
-                          Extent expectedRows, Extent expectedColumns) {
+                          const std::vector<Scalar>& state, Extent expectedRows,
+                          Extent expectedColumns) {
     if (!callback) {
       return Result<Matrix>::failure(ErrorCode::CallbackFailure,
                                      "required ODE Jacobian callback is empty");
     }
     if (evaluations >= budget) {
-      return Result<Matrix>::failure(ErrorCode::ResourceLimit,
-                                     "ODE callback evaluation budget exhausted");
+      return Result<Matrix>::failure(
+          ErrorCode::ResourceLimit, "ODE callback evaluation budget exhausted");
     }
     ++evaluations;
     Vector stateValue(stateSize);
@@ -135,14 +135,13 @@ Wide componentError(Wide error, Scalar oldValue, Scalar newValue,
                                std::max(std::abs(static_cast<Wide>(oldValue)),
                                         std::abs(static_cast<Wide>(newValue)));
   if (denominator == 0.0L) {
-    return error == 0.0L ? 0.0L :
-                            std::numeric_limits<Wide>::infinity();
+    return error == 0.0L ? 0.0L : std::numeric_limits<Wide>::infinity();
   }
   return std::abs(error) / denominator;
 }
 
 bool checkedMul(std::size_t left, std::size_t right,
-                 std::size_t& output) noexcept {
+                std::size_t& output) noexcept {
   if (left != 0U && right > std::numeric_limits<std::size_t>::max() / left) {
     return false;
   }
@@ -161,11 +160,12 @@ bool checkedAdd(std::size_t left, std::size_t right,
 
 Status validateCommon(const OdeFunction& function, const Vector& initial,
                       const Vector& parameters, const Vector& times,
-                      const OdePolicy& policy, Limits limits,
-                      bool sensitivity, Extent parameterCount) {
+                      const OdePolicy& policy, Limits limits, bool sensitivity,
+                      Extent parameterCount) {
   if (times.empty() || initial.empty()) {
-    return Status::failure(ErrorCode::InsufficientSamples,
-                           "ODE requires a state and at least one requested time");
+    return Status::failure(
+        ErrorCode::InsufficientSamples,
+        "ODE requires a state and at least one requested time");
   }
   for (Index i = 0U; i < times.size(); ++i) {
     if (!std::isfinite(times.at(i))) {
@@ -189,9 +189,9 @@ Status validateCommon(const OdeFunction& function, const Vector& initial,
                              "ODE parameter is non-finite");
     }
   }
-  if (!std::isfinite(policy.min_step) ||
-      !std::isfinite(policy.initial_step) || !std::isfinite(policy.max_step) ||
-      policy.min_step <= 0.0 || policy.initial_step < policy.min_step ||
+  if (!std::isfinite(policy.min_step) || !std::isfinite(policy.initial_step) ||
+      !std::isfinite(policy.max_step) || policy.min_step <= 0.0 ||
+      policy.initial_step < policy.min_step ||
       policy.max_step < policy.initial_step ||
       !std::isfinite(policy.iteration.abs) ||
       !std::isfinite(policy.iteration.rel) || policy.iteration.abs < 0.0 ||
@@ -208,13 +208,15 @@ Status validateCommon(const OdeFunction& function, const Vector& initial,
   }
   if (sensitivity && policy.parameters.has_value()) {
     if (policy.parameters->size() != parameters.size()) {
-      return Status::failure(ErrorCode::DimensionMismatch,
-                             "ODE policy and explicit parameter extents differ");
+      return Status::failure(
+          ErrorCode::DimensionMismatch,
+          "ODE policy and explicit parameter extents differ");
     }
     for (Index i = 0U; i < parameters.size(); ++i) {
       if (policy.parameters->at(i) != parameters.at(i)) {
-        return Status::failure(ErrorCode::InvalidDomain,
-                               "ODE policy parameters differ from explicit values");
+        return Status::failure(
+            ErrorCode::InvalidDomain,
+            "ODE policy parameters differ from explicit values");
       }
     }
   }
@@ -237,8 +239,7 @@ Status validateCommon(const OdeFunction& function, const Vector& initial,
   std::size_t scratchBytes = 0U;
   if (parameterCount > (std::numeric_limits<std::size_t>::max() - 16U) / 12U ||
       !checkedMul(times.size(), initial.size(), states) ||
-      (sensitivity &&
-       !checkedMul(states, parameterCount, sensitivities)) ||
+      (sensitivity && !checkedMul(states, parameterCount, sensitivities)) ||
       !checkedAdd(states, sensitivities, total) ||
       !checkedMul(total, sizeof(Scalar), outputBytes) ||
       !checkedMul(initial.size(), 16U + 12U * parameterCount, scratch) ||
@@ -258,25 +259,25 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
                const std::vector<Scalar>& state,
                const std::vector<Scalar>& sensitivity,
                Index sensitivityColumns) {
-  constexpr std::array<Scalar, 7> c{0.0, 0.2, 0.3, 0.8,
-                                     8.0 / 9.0, 1.0, 1.0};
-  constexpr std::array<std::array<Scalar, 6>, 7> a{{
-      {{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}},
-      {{1.0 / 5.0, 0.0, 0.0, 0.0, 0.0, 0.0}},
-      {{3.0 / 40.0, 9.0 / 40.0, 0.0, 0.0, 0.0, 0.0}},
-      {{44.0 / 45.0, -56.0 / 15.0, 32.0 / 9.0, 0.0, 0.0, 0.0}},
-      {{19372.0 / 6561.0, -25360.0 / 2187.0, 64448.0 / 6561.0,
-        -212.0 / 729.0, 0.0, 0.0}},
-      {{9017.0 / 3168.0, -355.0 / 33.0, 46732.0 / 5247.0,
-        49.0 / 176.0, -5103.0 / 18656.0, 0.0}},
-      {{35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0,
-        -2187.0 / 6784.0, 11.0 / 84.0}}}};
-  constexpr std::array<Scalar, 7> fifth{35.0 / 384.0, 0.0,
-                                        500.0 / 1113.0, 125.0 / 192.0,
-                                        -2187.0 / 6784.0, 11.0 / 84.0, 0.0};
-  constexpr std::array<Scalar, 7> fourth{
-      5179.0 / 57600.0, 0.0, 7571.0 / 16695.0, 393.0 / 640.0,
-      -92097.0 / 339200.0, 187.0 / 2100.0, 1.0 / 40.0};
+  constexpr std::array<Scalar, 7> c{0.0, 0.2, 0.3, 0.8, 8.0 / 9.0, 1.0, 1.0};
+  constexpr std::array<std::array<Scalar, 6>, 7> a{
+      {{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}},
+       {{1.0 / 5.0, 0.0, 0.0, 0.0, 0.0, 0.0}},
+       {{3.0 / 40.0, 9.0 / 40.0, 0.0, 0.0, 0.0, 0.0}},
+       {{44.0 / 45.0, -56.0 / 15.0, 32.0 / 9.0, 0.0, 0.0, 0.0}},
+       {{19372.0 / 6561.0, -25360.0 / 2187.0, 64448.0 / 6561.0, -212.0 / 729.0,
+         0.0, 0.0}},
+       {{9017.0 / 3168.0, -355.0 / 33.0, 46732.0 / 5247.0, 49.0 / 176.0,
+         -5103.0 / 18656.0, 0.0}},
+       {{35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0,
+         11.0 / 84.0}}}};
+  constexpr std::array<Scalar, 7> fifth{
+      35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0,
+      11.0 / 84.0,  0.0};
+  constexpr std::array<Scalar, 7> fourth{5179.0 / 57600.0,    0.0,
+                                         7571.0 / 16695.0,    393.0 / 640.0,
+                                         -92097.0 / 339200.0, 187.0 / 2100.0,
+                                         1.0 / 40.0};
   const Index n = state.size();
   const Index q = sensitivityColumns;
   std::array<std::vector<Scalar>, 7> k;
@@ -302,8 +303,8 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
         return {Status::success(), true, {}, {}, 0.0L};
       }
     }
-    const Wide stageTimeWide = static_cast<Wide>(time) +
-                               static_cast<Wide>(step) * c[stage];
+    const Wide stageTimeWide =
+        static_cast<Wide>(time) + static_cast<Wide>(step) * c[stage];
     Scalar stageTime = 0.0;
     if (!toScalar(stageTimeWide, stageTime)) {
       return {Status::success(), true, {}, {}, 0.0L};
@@ -312,22 +313,32 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
     if (!derivative) {
       return {Status::failure(derivative.status().code(),
                               std::string(derivative.status().message())),
-              false, {}, {}, 0.0L};
+              false,
+              {},
+              {},
+              0.0L};
     }
     k[stage] = std::move(derivative).value();
     if (q > 0U) {
-      auto jy = engine.jacobian(engine.jacobians->state, stageTime, yStage, n, n);
+      auto jy =
+          engine.jacobian(engine.jacobians->state, stageTime, yStage, n, n);
       if (!jy) {
         return {Status::failure(jy.status().code(),
                                 std::string(jy.status().message())),
-                false, {}, {}, 0.0L};
+                false,
+                {},
+                {},
+                0.0L};
       }
-      auto jp = engine.jacobian(engine.jacobians->parameters, stageTime,
-                                yStage, n, q);
+      auto jp = engine.jacobian(engine.jacobians->parameters, stageTime, yStage,
+                                n, q);
       if (!jp) {
         return {Status::failure(jp.status().code(),
                                 std::string(jp.status().message())),
-                false, {}, {}, 0.0L};
+                false,
+                {},
+                {},
+                0.0L};
       }
       sk[stage].assign(n * q, 0.0);
       for (Index i = 0U; i < n; ++i) {
@@ -357,9 +368,9 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
     if (!toScalar(fifthValue, candidate[i])) {
       return {Status::success(), true, {}, {}, 0.0L};
     }
-    error = std::max(error, componentError(fifthValue - fourthValue,
-                                            state[i], candidate[i],
-                                            engine.policy.iteration));
+    error =
+        std::max(error, componentError(fifthValue - fourthValue, state[i],
+                                       candidate[i], engine.policy.iteration));
   }
   for (Index i = 0U; i < sensitivity.size(); ++i) {
     Wide fifthValue = sensitivity[i];
@@ -371,10 +382,10 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
     if (!toScalar(fifthValue, candidateSensitivity[i])) {
       return {Status::success(), true, {}, {}, 0.0L};
     }
-    error = std::max(error, componentError(fifthValue - fourthValue,
-                                            sensitivity[i],
-                                            candidateSensitivity[i],
-                                            engine.policy.iteration));
+    error =
+        std::max(error, componentError(fifthValue - fourthValue, sensitivity[i],
+                                       candidateSensitivity[i],
+                                       engine.policy.iteration));
   }
   return {Status::success(), error > 1.0L, std::move(candidate),
           std::move(candidateSensitivity), error};
@@ -397,12 +408,14 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
   Matrix jy(n, n, 0.0);
   bool converged = false;
   for (Index update = 0U; update <= 12U; ++update) {
-    auto derivative = engine.derivative(static_cast<Scalar>(time + step),
-                                       candidate);
+    auto derivative =
+        engine.derivative(static_cast<Scalar>(time + step), candidate);
     if (!derivative) {
       return {Status::failure(derivative.status().code(),
                               std::string(derivative.status().message())),
-              false, {}, {}};
+              false,
+              {},
+              {}};
     }
     Wide norm = 0.0L;
     for (Index i = 0U; i < n; ++i) {
@@ -416,10 +429,10 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
           static_cast<Wide>(engine.policy.iteration.rel) *
               std::max(std::abs(static_cast<Wide>(candidate[i])),
                        std::abs(static_cast<Wide>(oldState[i])));
-      const Wide component = denominator == 0.0L
-                                 ? (g == 0.0L ? 0.0L :
-                                               std::numeric_limits<Wide>::infinity())
-                                 : std::abs(g) / denominator;
+      const Wide component =
+          denominator == 0.0L
+              ? (g == 0.0L ? 0.0L : std::numeric_limits<Wide>::infinity())
+              : std::abs(g) / denominator;
       norm = std::max(norm, component);
     }
     if (norm <= 0.01L) {
@@ -431,39 +444,45 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
     }
 
     if (engine.jacobians != nullptr && q > 0U) {
-      auto stateJacobian = engine.jacobian(engine.jacobians->state,
-                                            static_cast<Scalar>(time + step),
-                                            candidate, n, n);
+      auto stateJacobian =
+          engine.jacobian(engine.jacobians->state,
+                          static_cast<Scalar>(time + step), candidate, n, n);
       if (!stateJacobian) {
         return {Status::failure(stateJacobian.status().code(),
                                 std::string(stateJacobian.status().message())),
-                false, {}, {}};
+                false,
+                {},
+                {}};
       }
       jy = std::move(stateJacobian).value();
     } else {
       for (Index column = 0U; column < n; ++column) {
         const Scalar original = candidate[column];
-        const Wide proposed = static_cast<Wide>(original) +
-                              std::sqrt(std::numeric_limits<Scalar>::epsilon()) *
-                                  std::max(1.0L, std::abs(static_cast<Wide>(original)));
+        const Wide proposed =
+            static_cast<Wide>(original) +
+            std::sqrt(std::numeric_limits<Scalar>::epsilon()) *
+                std::max(1.0L, std::abs(static_cast<Wide>(original)));
         Scalar perturbed = 0.0;
         bool forward = toScalar(proposed, perturbed) && perturbed != original;
         if (!forward) {
-          const Wide backward = static_cast<Wide>(original) -
-                                std::sqrt(std::numeric_limits<Scalar>::epsilon()) *
-                                    std::max(1.0L, std::abs(static_cast<Wide>(original)));
+          const Wide backward =
+              static_cast<Wide>(original) -
+              std::sqrt(std::numeric_limits<Scalar>::epsilon()) *
+                  std::max(1.0L, std::abs(static_cast<Wide>(original)));
           if (!toScalar(backward, perturbed) || perturbed == original) {
             return {Status::success(), true, {}, {}};
           }
         }
         candidate[column] = perturbed;
-        auto shifted = engine.derivative(static_cast<Scalar>(time + step),
-                                         candidate);
+        auto shifted =
+            engine.derivative(static_cast<Scalar>(time + step), candidate);
         candidate[column] = original;
         if (!shifted) {
           return {Status::failure(shifted.status().code(),
                                   std::string(shifted.status().message())),
-                  false, {}, {}};
+                  false,
+                  {},
+                  {}};
         }
         const Wide displacement = static_cast<Wide>(perturbed) - original;
         for (Index row = 0U; row < n; ++row) {
@@ -495,8 +514,10 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
     if (!factor || factor.value().rank() != n) {
       return {Status::success(), true, {}, {}};
     }
-    auto direction = factor.value().leastSquares(rhs.view(),
-        {.illConditionedPolicy = linear::IllConditionedSolvePolicy::AllowWithDiagnostic});
+    auto direction = factor.value().leastSquares(
+        rhs.view(),
+        {.illConditionedPolicy =
+             linear::IllConditionedSolvePolicy::AllowWithDiagnostic});
     if (!direction) {
       return {Status::success(), true, {}, {}};
     }
@@ -516,12 +537,15 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
       if (!representable || trial == candidate) {
         continue;
       }
-      auto trialDerivative = engine.derivative(static_cast<Scalar>(time + step),
-                                               trial);
+      auto trialDerivative =
+          engine.derivative(static_cast<Scalar>(time + step), trial);
       if (!trialDerivative) {
-        return {Status::failure(trialDerivative.status().code(),
-                                std::string(trialDerivative.status().message())),
-                false, {}, {}};
+        return {
+            Status::failure(trialDerivative.status().code(),
+                            std::string(trialDerivative.status().message())),
+            false,
+            {},
+            {}};
       }
       Wide trialNorm = 0.0L;
       for (Index i = 0U; i < n; ++i) {
@@ -532,9 +556,11 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
             static_cast<Wide>(engine.policy.iteration.rel) *
                 std::max(std::abs(static_cast<Wide>(trial[i])),
                          std::abs(static_cast<Wide>(oldState[i])));
-        trialNorm = std::max(trialNorm, denominator == 0.0L
-            ? (g == 0.0L ? 0.0L : std::numeric_limits<Wide>::infinity())
-            : std::abs(g) / denominator);
+        trialNorm = std::max(
+            trialNorm,
+            denominator == 0.0L
+                ? (g == 0.0L ? 0.0L : std::numeric_limits<Wide>::infinity())
+                : std::abs(g) / denominator);
       }
       if (trialNorm < norm) {
         candidate = std::move(trial);
@@ -552,32 +578,38 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
 
   std::vector<Scalar> newSensitivity(oldSensitivity.size());
   if (q > 0U) {
-    auto stateJacobian = engine.jacobian(engine.jacobians->state,
-                                          static_cast<Scalar>(time + step),
-                                          candidate, n, n);
+    auto stateJacobian =
+        engine.jacobian(engine.jacobians->state,
+                        static_cast<Scalar>(time + step), candidate, n, n);
     if (!stateJacobian) {
       return {Status::failure(stateJacobian.status().code(),
                               std::string(stateJacobian.status().message())),
-              false, {}, {}};
+              false,
+              {},
+              {}};
     }
-    auto parameterJacobian = engine.jacobian(engine.jacobians->parameters,
-                                              static_cast<Scalar>(time + step),
-                                              candidate, n, q);
+    auto parameterJacobian =
+        engine.jacobian(engine.jacobians->parameters,
+                        static_cast<Scalar>(time + step), candidate, n, q);
     if (!parameterJacobian) {
-      return {Status::failure(parameterJacobian.status().code(),
-                              std::string(parameterJacobian.status().message())),
-              false, {}, {}};
+      return {
+          Status::failure(parameterJacobian.status().code(),
+                          std::string(parameterJacobian.status().message())),
+          false,
+          {},
+          {}};
     }
     Matrix system(n, n, 0.0);
     for (Index i = 0U; i < n; ++i) {
       for (Index j = 0U; j < n; ++j) {
-        system.at(i, j) = (i == j ? 1.0 : 0.0) - step *
-                           stateJacobian.value().at(i, j);
+        system.at(i, j) =
+            (i == j ? 1.0 : 0.0) - step * stateJacobian.value().at(i, j);
       }
     }
     linear::FactorizationOptions options{};
-    options.rankTolerance = {0.0, 64.0 * std::numeric_limits<Scalar>::epsilon() *
-                                       static_cast<Scalar>(std::max<Index>(1U, n))};
+    options.rankTolerance = {0.0,
+                             64.0 * std::numeric_limits<Scalar>::epsilon() *
+                                 static_cast<Scalar>(std::max<Index>(1U, n))};
     options.conditionLimit = 1.0e300;
     auto factor = linear::factorizeQR(system.view(), options);
     if (!factor || factor.value().rank() != n) {
@@ -586,14 +618,17 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
     for (Index column = 0U; column < q; ++column) {
       Vector rhs(n);
       for (Index i = 0U; i < n; ++i) {
-        Wide value = oldSensitivity[i * q + column] +
-                     static_cast<Wide>(step) * parameterJacobian.value().at(i, column);
+        Wide value =
+            oldSensitivity[i * q + column] +
+            static_cast<Wide>(step) * parameterJacobian.value().at(i, column);
         if (!toScalar(value, rhs.at(i))) {
           return {Status::success(), true, {}, {}};
         }
       }
-      auto solved = factor.value().leastSquares(rhs.view(),
-          {.illConditionedPolicy = linear::IllConditionedSolvePolicy::AllowWithDiagnostic});
+      auto solved = factor.value().leastSquares(
+          rhs.view(),
+          {.illConditionedPolicy =
+               linear::IllConditionedSolvePolicy::AllowWithDiagnostic});
       if (!solved) {
         return {Status::success(), true, {}, {}};
       }
@@ -616,8 +651,8 @@ Step backwardStep(Engine& engine, Scalar time, Scalar step,
   if (full.failed) {
     return {Status::success(), true, {}, {}, 0.0L};
   }
-  auto halfOne = backwardEulerSubstep(engine, time, step / 2.0, state,
-                                      sensitivity, q);
+  auto halfOne =
+      backwardEulerSubstep(engine, time, step / 2.0, state, sensitivity, q);
   if (!halfOne.status.ok()) {
     return {halfOne.status, false, {}, {}, 0.0L};
   }
@@ -634,14 +669,17 @@ Step backwardStep(Engine& engine, Scalar time, Scalar step,
   }
   Wide error = 0.0L;
   for (Index i = 0U; i < state.size(); ++i) {
-    error = std::max(error, componentError(
-        static_cast<Wide>(halfTwo.state[i]) - full.state[i], state[i],
-        halfTwo.state[i], engine.policy.iteration));
+    error = std::max(
+        error,
+        componentError(static_cast<Wide>(halfTwo.state[i]) - full.state[i],
+                       state[i], halfTwo.state[i], engine.policy.iteration));
   }
   for (Index i = 0U; i < sensitivity.size(); ++i) {
-    error = std::max(error, componentError(
-        static_cast<Wide>(halfTwo.sensitivity[i]) - full.sensitivity[i],
-        sensitivity[i], halfTwo.sensitivity[i], engine.policy.iteration));
+    error = std::max(error,
+                     componentError(static_cast<Wide>(halfTwo.sensitivity[i]) -
+                                        full.sensitivity[i],
+                                    sensitivity[i], halfTwo.sensitivity[i],
+                                    engine.policy.iteration));
   }
   return {Status::success(), error > 1.0L, std::move(halfTwo.state),
           std::move(halfTwo.sensitivity), error};
@@ -659,10 +697,10 @@ struct IntegrationOutput final {
 };
 
 Result<IntegrationOutput> integrate(const OdeFunction& function,
-                             const OdeJacobians* jacobians, Vector initial,
-                             Vector parameters, Vector times,
-                             const OdePolicy& policy, Limits limits,
-                             bool withSensitivity) {
+                                    const OdeJacobians* jacobians,
+                                    Vector initial, Vector parameters,
+                                    Vector times, const OdePolicy& policy,
+                                    Limits limits, bool withSensitivity) {
   const Extent q = withSensitivity ? parameters.size() : 0U;
   const Status validation = validateCommon(function, initial, parameters, times,
                                            policy, limits, withSensitivity, q);
@@ -677,8 +715,8 @@ Result<IntegrationOutput> integrate(const OdeFunction& function,
   }
 
   const Index n = initial.size();
-  const Index maxEvaluations = std::min(policy.iteration.max_evaluations,
-                                        limits.evaluations);
+  const Index maxEvaluations =
+      std::min(policy.iteration.max_evaluations, limits.evaluations);
   Engine engine{function, jacobians, parameters, policy, n, q, maxEvaluations};
   std::vector<Scalar> state(n);
   for (Index i = 0U; i < n; ++i) {
@@ -723,9 +761,9 @@ Result<IntegrationOutput> integrate(const OdeFunction& function,
         goto finish;
       }
       const Wide remaining = static_cast<Wide>(target) - time;
-      const Scalar step = static_cast<Scalar>(std::min(
-          {static_cast<Wide>(proposedStep),
-           static_cast<Wide>(policy.max_step), remaining}));
+      const Scalar step = static_cast<Scalar>(
+          std::min({static_cast<Wide>(proposedStep),
+                    static_cast<Wide>(policy.max_step), remaining}));
       if (!(step > 0.0) || static_cast<Scalar>(time + step) == time) {
         return Result<IntegrationOutput>::failure(
             ErrorCode::NoConvergence,
@@ -738,20 +776,19 @@ Result<IntegrationOutput> integrate(const OdeFunction& function,
             "ODE subdivision would fall below minimum step");
       }
       ++attempts;
-      Step trial = policy.method == OdeMethod::dormand_prince_54
-                       ? dopriStep(engine, time, step, state, sensitivity, q)
-                       : backwardStep(engine, time, step, state, sensitivity, q);
+      Step trial =
+          policy.method == OdeMethod::dormand_prince_54
+              ? dopriStep(engine, time, step, state, sensitivity, q)
+              : backwardStep(engine, time, step, state, sensitivity, q);
       if (!trial.status.ok()) {
         return failure<IntegrationOutput>(trial.status);
       }
       const bool rejectedTrial = trial.rejected || trial.error > 1.0L;
-      const Index exponent = policy.method == OdeMethod::dormand_prince_54
-                                 ? 5U
-                                 : 2U;
+      const Index exponent =
+          policy.method == OdeMethod::dormand_prince_54 ? 5U : 2U;
       Wide multiplier = trial.error == 0.0L
                             ? 5.0L
-                            : 0.9L * std::pow(trial.error,
-                                              -1.0L / exponent);
+                            : 0.9L * std::pow(trial.error, -1.0L / exponent);
       multiplier = std::clamp(multiplier, 0.2L, 5.0L);
       if (rejectedTrial) {
         multiplier = std::min(multiplier, 0.9L);
@@ -794,7 +831,8 @@ finish:
     if (!withSensitivity) {
       return Result<IntegrationOutput>::success(
           {{std::move(completed), std::move(states), accepted, rejected,
-            attempts, termination}, std::nullopt});
+            attempts, termination},
+           std::nullopt});
     }
     const std::array<Extent, 3> shapeExtents{completedTimes, n, q};
     auto shape = TensorShape::create(shapeExtents);
@@ -802,8 +840,8 @@ finish:
       return Result<IntegrationOutput>::failure(
           shape.status().code(), std::string(shape.status().message()));
     }
-    auto tensor = Tensor::create(shape.value(), 0.0,
-                                 TensorLimits(limits.elements));
+    auto tensor =
+        Tensor::create(shape.value(), 0.0, TensorLimits(limits.elements));
     if (!tensor) {
       return Result<IntegrationOutput>::failure(
           tensor.status().code(), std::string(tensor.status().message()));
@@ -817,11 +855,12 @@ finish:
       }
     }
     return Result<IntegrationOutput>::success(
-        {{std::move(completed), std::move(states), accepted, rejected,
-          attempts, termination}, std::move(tensor).value()});
+        {{std::move(completed), std::move(states), accepted, rejected, attempts,
+          termination},
+         std::move(tensor).value()});
   } catch (const std::bad_alloc&) {
-    return Result<IntegrationOutput>::failure(
-        ErrorCode::ResourceLimit, "ODE result allocation failed");
+    return Result<IntegrationOutput>::failure(ErrorCode::ResourceLimit,
+                                              "ODE result allocation failed");
   } catch (const std::length_error&) {
     return Result<IntegrationOutput>::failure(
         ErrorCode::ResourceLimit, "ODE result extent is unsupported");
@@ -835,16 +874,14 @@ Result<Trajectory> odeIntegrate(const OdeFunction& function, Vector initial,
                                 Limits limits) {
   try {
     const Vector empty;
-    const Vector& parameters = policy.parameters.has_value()
-                                   ? *policy.parameters
-                                   : empty;
+    const Vector& parameters =
+        policy.parameters.has_value() ? *policy.parameters : empty;
     auto output = integrate(function, nullptr, std::move(initial), parameters,
                             std::move(times), policy, limits, false);
     if (!output) {
       return failure<Trajectory>(output.status());
     }
-    return Result<Trajectory>::success(
-        std::move(output).value().trajectory);
+    return Result<Trajectory>::success(std::move(output).value().trajectory);
   } catch (const std::bad_alloc&) {
     return Result<Trajectory>::failure(ErrorCode::ResourceLimit,
                                        "ODE integration allocation failed");
@@ -876,7 +913,8 @@ odeSensitivity(const OdeFunction& function, const OdeJacobians& jacobians,
     return Result<SensitivityTrajectory>::success(
         {std::move(trajectory.times), std::move(trajectory.states),
          std::move(*output.sensitivities), trajectory.accepted_steps,
-         trajectory.rejected_steps, trajectory.attempts, trajectory.termination});
+         trajectory.rejected_steps, trajectory.attempts,
+         trajectory.termination});
   } catch (const std::bad_alloc&) {
     return Result<SensitivityTrajectory>::failure(
         ErrorCode::ResourceLimit, "ODE sensitivity allocation failed");

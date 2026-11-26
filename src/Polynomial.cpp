@@ -6,7 +6,9 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/Polynomial.hpp>
 #include <vss/math/Result.hpp>
@@ -57,8 +59,8 @@ Extended subtract(Extended left, Extended right) noexcept {
 
 Extended multiply(Extended left, Extended right) noexcept {
   int shift = 0;
-  const long double fraction = std::frexp(left.fraction * right.fraction,
-                                          &shift);
+  const long double fraction =
+      std::frexp(left.fraction * right.fraction, &shift);
   return {fraction, left.exponent + right.exponent + shift};
 }
 
@@ -74,14 +76,12 @@ bool toScalar(Extended value, Scalar& result) noexcept {
     result = 0.0;
     return true;
   }
-  constexpr long long maxExponent =
-      std::numeric_limits<Scalar>::max_exponent;
+  constexpr long long maxExponent = std::numeric_limits<Scalar>::max_exponent;
   if (value.exponent > maxExponent) {
     return false;
   }
-  if (value.exponent <
-      std::numeric_limits<Scalar>::min_exponent -
-          std::numeric_limits<Scalar>::digits - 2) {
+  if (value.exponent < std::numeric_limits<Scalar>::min_exponent -
+                           std::numeric_limits<Scalar>::digits - 2) {
     result = std::copysign(0.0, static_cast<Scalar>(value.fraction));
     return true;
   }
@@ -96,9 +96,8 @@ Status validateBasis(const BasisSpec& basis) {
     return Status::failure(ErrorCode::NonFiniteInput,
                            "polynomial affine parameters must be finite");
   }
-  if (basis.scale == 0.0 ||
-      (basis.kind != BasisKind::power &&
-       basis.kind != BasisKind::chebyshev_first)) {
+  if (basis.scale == 0.0 || (basis.kind != BasisKind::power &&
+                             basis.kind != BasisKind::chebyshev_first)) {
     return Status::failure(ErrorCode::InvalidDomain,
                            "polynomial basis or affine scale is invalid");
   }
@@ -109,8 +108,7 @@ Extended normalized(Scalar x, const BasisSpec& basis) noexcept {
   const Extended difference =
       subtract(extended(static_cast<long double>(x)),
                extended(static_cast<long double>(basis.origin)));
-  return divide(difference,
-                extended(static_cast<long double>(basis.scale)));
+  return divide(difference, extended(static_cast<long double>(basis.scale)));
 }
 
 bool checkedMultiply(Extent left, Extent right, Extent& product) noexcept {
@@ -142,7 +140,7 @@ Result<Scalar> nonFiniteResult() {
 } // namespace
 
 Result<Matrix> basisMatrix(ConstVectorView x, Index degree,
-                          const BasisSpec& basis, Limits limits) {
+                           const BasisSpec& basis, Limits limits) {
   const Status basisStatus = validateBasis(basis);
   if (!basisStatus.ok()) {
     return Result<Matrix>::failure(basisStatus.code(),
@@ -152,8 +150,7 @@ Result<Matrix> basisMatrix(ConstVectorView x, Index degree,
     if (!std::isfinite(x.at(row))) {
       return Result<Matrix>::failure(
           ErrorCode::NonFiniteInput,
-          "polynomial coordinate is non-finite at row " +
-              std::to_string(row));
+          "polynomial coordinate is non-finite at row " + std::to_string(row));
     }
   }
   if (degree == std::numeric_limits<Index>::max()) {
@@ -251,11 +248,11 @@ Result<Scalar> evaluatePolynomial(ConstVectorView coefficients, Scalar x,
   if (basis.kind == BasisKind::power) {
     value = extended(static_cast<long double>(coefficients.at(highest)));
     for (Index index = highest; index > 0U; --index) {
-      value = add(multiply(value, t),
-                  extended(static_cast<long double>(coefficients.at(index - 1U))));
+      value =
+          add(multiply(value, t),
+              extended(static_cast<long double>(coefficients.at(index - 1U))));
     }
-  } else if (t.exponent == 1 &&
-             (t.fraction == 0.5L || t.fraction == -0.5L)) {
+  } else if (t.exponent == 1 && (t.fraction == 0.5L || t.fraction == -0.5L)) {
     Scalar scale = 0.0;
     for (Index index = 0U; index <= highest; ++index) {
       scale = std::max(scale, std::abs(coefficients.at(index)));
@@ -289,10 +286,10 @@ Result<Scalar> evaluatePolynomial(ConstVectorView coefficients, Scalar x,
       afterNext = next;
       next = current;
     }
-    value = subtract(
-        add(extended(static_cast<long double>(coefficients.at(0U))),
-            multiply(t, next)),
-        afterNext);
+    value =
+        subtract(add(extended(static_cast<long double>(coefficients.at(0U))),
+                     multiply(t, next)),
+                 afterNext);
   }
 
   Scalar result = 0.0;

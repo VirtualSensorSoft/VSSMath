@@ -16,8 +16,10 @@ Vector vector(std::initializer_list<Scalar> values) {
 }
 
 IterPolicy policy(Index evaluations = 100'000U, Index iterations = 128U) {
-  return {.abs = 1.0e-12, .rel = 1.0e-12,
-          .max_iterations = iterations, .max_evaluations = evaluations,
+  return {.abs = 1.0e-12,
+          .rel = 1.0e-12,
+          .max_iterations = iterations,
+          .max_evaluations = evaluations,
           .bracket = std::nullopt};
 }
 
@@ -31,7 +33,8 @@ void adaptiveCases() {
     return Result<Scalar>::success(x * x);
   };
   const Limits resources{100'000U, 4U * 1024U * 1024U, 100'000U};
-  const auto result = quadratureAdaptive(square, {0.0, 1.0}, policy(), resources);
+  const auto result =
+      quadratureAdaptive(square, {0.0, 1.0}, policy(), resources);
   VSS_CHECK(result && result.value().termination == Termination::converged);
   near(result.value().value, 1.0 / 3.0);
   VSS_CHECK(result.value().evaluations == 15U);
@@ -40,24 +43,26 @@ void adaptiveCases() {
     return Result<Scalar>::success(std::exp(x));
   };
   near(quadratureAdaptive(exponential, {0.0, 1.0}, policy(), resources)
-           .value().value,
+           .value()
+           .value,
        std::exp(1.0) - 1.0);
 
   const UnaryFunction kink = [](Scalar x) {
     return Result<Scalar>::success(std::abs(x - 0.3));
   };
-  const auto subdivided = quadratureAdaptive(kink, {0.0, 1.0}, policy(),
-                                             resources);
+  const auto subdivided =
+      quadratureAdaptive(kink, {0.0, 1.0}, policy(), resources);
   VSS_CHECK(subdivided && subdivided.value().panels > 1U);
   near(subdivided.value().value, 0.29);
 
-  const auto reversed = quadratureAdaptive(square, {1.0, 0.0}, policy(),
-                                            resources);
+  const auto reversed =
+      quadratureAdaptive(square, {1.0, 0.0}, policy(), resources);
   VSS_CHECK(reversed);
   near(reversed.value().value, -1.0 / 3.0);
   const auto zero = quadratureAdaptive(square, {2.0, 2.0}, policy(), resources);
   VSS_CHECK(zero && zero.value().value == 0.0 &&
-            !std::signbit(zero.value().value) && zero.value().evaluations == 0U);
+            !std::signbit(zero.value().value) &&
+            zero.value().evaluations == 0U);
 }
 
 void adaptiveFailuresAndCaps() {
@@ -70,17 +75,22 @@ void adaptiveFailuresAndCaps() {
   const UnaryFunction kink = [](Scalar x) {
     return Result<Scalar>::success(std::abs(x - 0.3));
   };
-  const auto cap = quadratureAdaptive(kink, {0.0, 1.0}, policy(1000U, 0U),
-                                      resources);
+  const auto cap =
+      quadratureAdaptive(kink, {0.0, 1.0}, policy(1000U, 0U), resources);
   VSS_CHECK(cap && cap.value().termination == Termination::cap);
-  const auto bracket = quadratureAdaptive(
-      f, {0.0, 1.0}, {.abs = 1.0e-6, .rel = 1.0e-6,
-                      .max_iterations = 2U, .max_evaluations = 100U,
-                      .bracket = Interval{0.0, 1.0}}, resources);
+  const auto bracket = quadratureAdaptive(f, {0.0, 1.0},
+                                          {.abs = 1.0e-6,
+                                           .rel = 1.0e-6,
+                                           .max_iterations = 2U,
+                                           .max_evaluations = 100U,
+                                           .bracket = Interval{0.0, 1.0}},
+                                          resources);
   VSS_CHECK(!bracket && bracket.status().code() == ErrorCode::InvalidDomain);
   const auto error = quadratureAdaptive(
-      [](Scalar) { return Result<Scalar>::failure(ErrorCode::CallbackFailure,
-                                                  "callback error"); },
+      [](Scalar) {
+        return Result<Scalar>::failure(ErrorCode::CallbackFailure,
+                                       "callback error");
+      },
       {0.0, 1.0}, policy(), resources);
   VSS_CHECK(!error && error.status().code() == ErrorCode::CallbackFailure);
 }

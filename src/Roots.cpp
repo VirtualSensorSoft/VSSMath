@@ -36,8 +36,9 @@ Result<Scalar> sample(const UnaryFunction& function, Scalar x,
                                      std::string(result.status().message()));
     }
     if (!std::isfinite(result.value())) {
-      return Result<Scalar>::failure(ErrorCode::NonFiniteInput,
-                                     "root callback returned a non-finite value");
+      return Result<Scalar>::failure(
+          ErrorCode::NonFiniteInput,
+          "root callback returned a non-finite value");
     }
     return result;
   } catch (...) {
@@ -52,11 +53,15 @@ Result<RootResult> scalarFailure(const Status& status) {
 }
 
 RootResult rootResult(Scalar x, Scalar fx, std::optional<Interval> bracket,
-                      Index functionEvaluations,
-                      Index derivativeEvaluations, Index iterations,
-                      Termination termination) {
-  return {x, fx, bracket, functionEvaluations, derivativeEvaluations,
-          iterations, termination};
+                      Index functionEvaluations, Index derivativeEvaluations,
+                      Index iterations, Termination termination) {
+  return {x,
+          fx,
+          bracket,
+          functionEvaluations,
+          derivativeEvaluations,
+          iterations,
+          termination};
 }
 
 Wide widthTolerance(Scalar lower, Scalar upper,
@@ -74,9 +79,8 @@ bool widthConverged(Scalar lower, Scalar upper,
 }
 
 Scalar midpoint(Scalar lower, Scalar upper) noexcept {
-  return static_cast<Scalar>((static_cast<Wide>(lower) +
-                              static_cast<Wide>(upper)) /
-                             2.0L);
+  return static_cast<Scalar>(
+      (static_cast<Wide>(lower) + static_cast<Wide>(upper)) / 2.0L);
 }
 
 Scalar bestEndpoint(Scalar lower, Scalar fLower, Scalar upper,
@@ -89,11 +93,12 @@ Scalar bestEndpoint(Scalar lower, Scalar fLower, Scalar upper,
 }
 
 Result<RootResult> bracketedRoot(const UnaryFunction& function,
-                                Interval bracket, const IterPolicy& policy,
-                                bool useBrent) {
+                                 Interval bracket, const IterPolicy& policy,
+                                 bool useBrent) {
   if (!validTolerance(policy)) {
-    return Result<RootResult>::failure(ErrorCode::InvalidTolerance,
-                                       "root tolerances must be finite and non-negative");
+    return Result<RootResult>::failure(
+        ErrorCode::InvalidTolerance,
+        "root tolerances must be finite and non-negative");
   }
   if (!std::isfinite(bracket.lower) || !std::isfinite(bracket.upper)) {
     return Result<RootResult>::failure(ErrorCode::NonFiniteInput,
@@ -109,30 +114,30 @@ Result<RootResult> bracketedRoot(const UnaryFunction& function,
   }
 
   Index evaluations = 0U;
-  auto lowerResult = sample(function, bracket.lower, evaluations,
-                            policy.max_evaluations);
+  auto lowerResult =
+      sample(function, bracket.lower, evaluations, policy.max_evaluations);
   if (!lowerResult) {
     return scalarFailure(lowerResult.status());
   }
   Scalar lower = bracket.lower;
   Scalar fLower = lowerResult.value();
   if (fLower == 0.0) {
-    return Result<RootResult>::success(rootResult(
-        lower, fLower, Interval{lower, lower}, evaluations, 0U, 0U,
-        Termination::converged));
+    return Result<RootResult>::success(
+        rootResult(lower, fLower, Interval{lower, lower}, evaluations, 0U, 0U,
+                   Termination::converged));
   }
 
-  auto upperResult = sample(function, bracket.upper, evaluations,
-                            policy.max_evaluations);
+  auto upperResult =
+      sample(function, bracket.upper, evaluations, policy.max_evaluations);
   if (!upperResult) {
     return scalarFailure(upperResult.status());
   }
   Scalar upper = bracket.upper;
   Scalar fUpper = upperResult.value();
   if (fUpper == 0.0) {
-    return Result<RootResult>::success(rootResult(
-        upper, fUpper, Interval{upper, upper}, evaluations, 0U, 0U,
-        Termination::converged));
+    return Result<RootResult>::success(
+        rootResult(upper, fUpper, Interval{upper, upper}, evaluations, 0U, 0U,
+                   Termination::converged));
   }
   if (!opposite(fLower, fUpper)) {
     return Result<RootResult>::failure(ErrorCode::InvalidDomain,
@@ -152,14 +157,14 @@ Result<RootResult> bracketedRoot(const UnaryFunction& function,
     const Scalar candidate = bestEndpoint(lower, fLower, upper, fUpper);
     const Scalar residual = candidate == lower ? fLower : fUpper;
     if (widthConverged(lower, upper, policy)) {
-      return Result<RootResult>::success(rootResult(
-          candidate, residual, Interval{lower, upper}, evaluations, 0U,
-          iterations, Termination::converged));
+      return Result<RootResult>::success(
+          rootResult(candidate, residual, Interval{lower, upper}, evaluations,
+                     0U, iterations, Termination::converged));
     }
     if (iterations >= policy.max_iterations) {
-      return Result<RootResult>::success(rootResult(
-          candidate, residual, Interval{lower, upper}, evaluations, 0U,
-          iterations, Termination::cap));
+      return Result<RootResult>::success(
+          rootResult(candidate, residual, Interval{lower, upper}, evaluations,
+                     0U, iterations, Termination::cap));
     }
     if (std::nextafter(lower, upper) == upper) {
       return Result<RootResult>::failure(
@@ -184,8 +189,8 @@ Result<RootResult> bracketedRoot(const UnaryFunction& function,
                    wc * wfa * wfb / ((wfc - wfa) * (wfc - wfb));
       } else if (fb != fa) {
         proposal = static_cast<Wide>(b) - static_cast<Wide>(fb) *
-                                               (static_cast<Wide>(b) - a) /
-                                               (static_cast<Wide>(fb) - fa);
+                                              (static_cast<Wide>(b) - a) /
+                                              (static_cast<Wide>(fb) - fa);
       }
       const Wide midpointGuard =
           (3.0L * static_cast<Wide>(a) + static_cast<Wide>(b)) / 4.0L;
@@ -196,8 +201,8 @@ Result<RootResult> bracketedRoot(const UnaryFunction& function,
                                         : std::abs(static_cast<Wide>(c) - d);
       const Wide distance = std::abs(proposal - static_cast<Wide>(b));
       if (std::isfinite(proposal) && proposal > lowGuard &&
-          proposal < highGuard && previousDistance >
-              widthTolerance(lower, upper, policy) &&
+          proposal < highGuard &&
+          previousDistance > widthTolerance(lower, upper, policy) &&
           distance < previousDistance / 2.0L &&
           proposal >= static_cast<Wide>(lower) &&
           proposal <= static_cast<Wide>(upper)) {
@@ -209,17 +214,17 @@ Result<RootResult> bracketedRoot(const UnaryFunction& function,
       }
     }
 
-    auto trialResult = sample(function, trial, evaluations,
-                              policy.max_evaluations);
+    auto trialResult =
+        sample(function, trial, evaluations, policy.max_evaluations);
     if (!trialResult) {
       return scalarFailure(trialResult.status());
     }
     const Scalar fTrial = trialResult.value();
     ++iterations;
     if (fTrial == 0.0) {
-      return Result<RootResult>::success(rootResult(
-          trial, fTrial, Interval{trial, trial}, evaluations, 0U, iterations,
-          Termination::converged));
+      return Result<RootResult>::success(
+          rootResult(trial, fTrial, Interval{trial, trial}, evaluations, 0U,
+                     iterations, Termination::converged));
     }
     d = c;
     c = b;
@@ -246,8 +251,7 @@ Result<RootResult> bracketedRoot(const UnaryFunction& function,
 } // namespace
 
 Result<RootResult> rootBisection(const UnaryFunction& function,
-                                 Interval bracket,
-                                 const IterPolicy& policy) {
+                                 Interval bracket, const IterPolicy& policy) {
   return bracketedRoot(function, bracket, policy, false);
 }
 
@@ -260,8 +264,9 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
                               const UnaryFunction& derivative, Scalar initial,
                               const IterPolicy& policy) {
   if (!validTolerance(policy)) {
-    return Result<RootResult>::failure(ErrorCode::InvalidTolerance,
-                                       "root tolerances must be finite and non-negative");
+    return Result<RootResult>::failure(
+        ErrorCode::InvalidTolerance,
+        "root tolerances must be finite and non-negative");
   }
   if (!std::isfinite(initial)) {
     return Result<RootResult>::failure(ErrorCode::NonFiniteInput,
@@ -287,8 +292,9 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
     }
     if (!(bracket.lower < bracket.upper) || initial < bracket.lower ||
         initial > bracket.upper) {
-      return Result<RootResult>::failure(ErrorCode::InvalidDomain,
-                                         "Newton bracket or initial point is invalid");
+      return Result<RootResult>::failure(
+          ErrorCode::InvalidDomain,
+          "Newton bracket or initial point is invalid");
     }
     lower = bracket.lower;
     upper = bracket.upper;
@@ -298,9 +304,9 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
     }
     fLower = lo.value();
     if (fLower == 0.0) {
-      return Result<RootResult>::success(rootResult(
-          lower, fLower, Interval{lower, lower}, evaluations, 0U, 0U,
-          Termination::converged));
+      return Result<RootResult>::success(
+          rootResult(lower, fLower, Interval{lower, lower}, evaluations, 0U, 0U,
+                     Termination::converged));
     }
     auto hi = sample(function, upper, evaluations, policy.max_evaluations);
     if (!hi) {
@@ -308,9 +314,9 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
     }
     fUpper = hi.value();
     if (fUpper == 0.0) {
-      return Result<RootResult>::success(rootResult(
-          upper, fUpper, Interval{upper, upper}, evaluations, 0U, 0U,
-          Termination::converged));
+      return Result<RootResult>::success(
+          rootResult(upper, fUpper, Interval{upper, upper}, evaluations, 0U, 0U,
+                     Termination::converged));
     }
     if (!opposite(fLower, fUpper)) {
       return Result<RootResult>::failure(ErrorCode::InvalidDomain,
@@ -324,8 +330,8 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
   } else if (bracketed && x == upper) {
     fx = fUpper;
   } else {
-    auto initialResult = sample(function, x, evaluations,
-                                policy.max_evaluations);
+    auto initialResult =
+        sample(function, x, evaluations, policy.max_evaluations);
     if (!initialResult) {
       return scalarFailure(initialResult.status());
     }
@@ -339,16 +345,19 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
                    std::abs(static_cast<Wide>(initialResidual));
   };
   if (fx == 0.0 || (!bracketed && residualConverged(fx))) {
-    return Result<RootResult>::success(rootResult(
-        x, fx, bracketed ? std::optional<Interval>{Interval{lower, upper}}
-                         : std::nullopt,
-        evaluations, derivativeEvaluations, iterations, Termination::converged));
+    return Result<RootResult>::success(
+        rootResult(x, fx,
+                   bracketed ? std::optional<Interval>{Interval{lower, upper}}
+                             : std::nullopt,
+                   evaluations, derivativeEvaluations, iterations,
+                   Termination::converged));
   }
 
   while (iterations < policy.max_iterations) {
     if (evaluations >= policy.max_evaluations - derivativeEvaluations) {
-      return Result<RootResult>::failure(ErrorCode::ResourceLimit,
-                                         "Newton derivative evaluation limit reached");
+      return Result<RootResult>::failure(
+          ErrorCode::ResourceLimit,
+          "Newton derivative evaluation limit reached");
     }
     ++derivativeEvaluations;
     Result<Scalar> derivativeResult = Result<Scalar>::failure(
@@ -375,8 +384,8 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
       }
       midpointStep = true;
     } else {
-      const Wide proposed = static_cast<Wide>(x) -
-                            static_cast<Wide>(fx) / slope;
+      const Wide proposed =
+          static_cast<Wide>(x) - static_cast<Wide>(fx) / slope;
       if (!std::isfinite(proposed) ||
           std::abs(proposed) > std::numeric_limits<Scalar>::max()) {
         return Result<RootResult>::failure(ErrorCode::NonFiniteResult,
@@ -404,11 +413,11 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
             evaluations, derivativeEvaluations, iterations,
             Termination::converged));
       }
-      return Result<RootResult>::failure(ErrorCode::NoConvergence,
-                                         "Newton has no distinct admissible trial");
+      return Result<RootResult>::failure(
+          ErrorCode::NoConvergence, "Newton has no distinct admissible trial");
     }
-    auto trialResult = sample(function, trial, evaluations,
-                              policy.max_evaluations);
+    auto trialResult =
+        sample(function, trial, evaluations, policy.max_evaluations);
     if (!trialResult) {
       return scalarFailure(trialResult.status());
     }
@@ -432,22 +441,24 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
     fx = trialValue;
     if (bracketed && widthConverged(lower, upper, policy)) {
       const Scalar best = bestEndpoint(lower, fLower, upper, fUpper);
-      return Result<RootResult>::success(rootResult(
-          best, best == lower ? fLower : fUpper, Interval{lower, upper},
-          evaluations, derivativeEvaluations, iterations,
-          Termination::converged));
+      return Result<RootResult>::success(
+          rootResult(best, best == lower ? fLower : fUpper,
+                     Interval{lower, upper}, evaluations, derivativeEvaluations,
+                     iterations, Termination::converged));
     }
     if (!bracketed && (fx == 0.0 || residualConverged(fx))) {
-      return Result<RootResult>::success(rootResult(
-          x, fx, bracketed ? std::optional<Interval>{Interval{lower, upper}}
-                           : std::nullopt,
-          evaluations, derivativeEvaluations, iterations,
-          Termination::converged));
+      return Result<RootResult>::success(
+          rootResult(x, fx,
+                     bracketed ? std::optional<Interval>{Interval{lower, upper}}
+                               : std::nullopt,
+                     evaluations, derivativeEvaluations, iterations,
+                     Termination::converged));
     }
   }
   return Result<RootResult>::success(rootResult(
-      x, fx, bracketed ? std::optional<Interval>{Interval{lower, upper}}
-                       : std::nullopt,
+      x, fx,
+      bracketed ? std::optional<Interval>{Interval{lower, upper}}
+                : std::nullopt,
       evaluations, derivativeEvaluations, iterations, Termination::cap));
 }
 
@@ -508,10 +519,9 @@ Result<Matrix> jacobianSample(const JacobianFunction& function,
     auto result = function(point);
     if (!result) {
       return Result<Matrix>::failure(result.status().code(),
-                                    std::string(result.status().message()));
+                                     std::string(result.status().message()));
     }
-    if (result.value().rows() != extent ||
-        result.value().columns() != extent) {
+    if (result.value().rows() != extent || result.value().columns() != extent) {
       return Result<Matrix>::failure(ErrorCode::DimensionMismatch,
                                      "vector Jacobian has the wrong shape");
     }
@@ -565,8 +575,7 @@ Result<VectorRoot> findVectorRoot(const VectorFunction& function,
     return Result<VectorRoot>::failure(ErrorCode::CallbackFailure,
                                        "vector root callback is empty");
   }
-  if (n > limits.elements ||
-      n > limits.bytes / (sizeof(Scalar) * 4U)) {
+  if (n > limits.elements || n > limits.bytes / (sizeof(Scalar) * 4U)) {
     return Result<VectorRoot>::failure(ErrorCode::ResourceLimit,
                                        "vector root input/work exceeds limits");
   }
@@ -575,17 +584,16 @@ Result<VectorRoot> findVectorRoot(const VectorFunction& function,
                                        "vector root matrix extent overflows");
   }
   if (n > std::numeric_limits<Index>::max() / 4U) {
-    return Result<VectorRoot>::failure(ErrorCode::SizeOverflow,
-                                       "vector root workspace extent overflows");
+    return Result<VectorRoot>::failure(
+        ErrorCode::SizeOverflow, "vector root workspace extent overflows");
   }
   const Index square = n * n;
   if (square > (std::numeric_limits<Index>::max() - 8U * n) / 8U) {
-    return Result<VectorRoot>::failure(ErrorCode::SizeOverflow,
-                                       "vector root workspace extent overflows");
+    return Result<VectorRoot>::failure(
+        ErrorCode::SizeOverflow, "vector root workspace extent overflows");
   }
   const Index elements = 8U * square + 8U * n;
-  if (elements > limits.elements ||
-      elements > limits.bytes / sizeof(Scalar)) {
+  if (elements > limits.elements || elements > limits.bytes / sizeof(Scalar)) {
     return Result<VectorRoot>::failure(ErrorCode::ResourceLimit,
                                        "vector root workspace exceeds limits");
   }
@@ -604,19 +612,20 @@ Result<VectorRoot> findVectorRoot(const VectorFunction& function,
   Wide initialNorm = norm2(residual.value().view());
   if (!std::isfinite(initialNorm) ||
       initialNorm > std::numeric_limits<Scalar>::max()) {
-    return Result<VectorRoot>::failure(ErrorCode::NonFiniteResult,
-                                       "initial residual norm is not representable");
+    return Result<VectorRoot>::failure(
+        ErrorCode::NonFiniteResult,
+        "initial residual norm is not representable");
   }
   Wide currentNorm = initialNorm;
   const auto converged = [&](Wide value) {
     return value <= static_cast<Wide>(policy.abs) +
-                          static_cast<Wide>(policy.rel) * initialNorm;
+                        static_cast<Wide>(policy.rel) * initialNorm;
   };
   if (converged(currentNorm)) {
     return Result<VectorRoot>::success(
         {std::move(point), static_cast<Scalar>(currentNorm),
-         functionEvaluations,
-         jacobianEvaluations, iterations, Termination::converged});
+         functionEvaluations, jacobianEvaluations, iterations,
+         Termination::converged});
   }
   while (iterations < policy.max_iterations) {
     auto jac = jacobianSample(jacobian, point.view(), evaluations,
@@ -645,18 +654,19 @@ Result<VectorRoot> findVectorRoot(const VectorFunction& function,
       rhs.at(i) = -residual.value().at(i);
     }
     linear::FactorizationOptions options{};
-    options.rankTolerance = {
-        0.0, 64.0 * std::numeric_limits<Scalar>::epsilon() *
-                 static_cast<Scalar>(std::max<Index>(1U, n))};
+    options.rankTolerance = {0.0,
+                             64.0 * std::numeric_limits<Scalar>::epsilon() *
+                                 static_cast<Scalar>(std::max<Index>(1U, n))};
     options.conditionLimit = std::numeric_limits<Scalar>::max();
     auto factor = linear::factorizeQR(scaled.view(), options);
     if (!factor || factor.value().rank() != n) {
-      return Result<VectorRoot>::failure(ErrorCode::RankDeficient,
-                                         "vector root Jacobian is rank deficient");
+      return Result<VectorRoot>::failure(
+          ErrorCode::RankDeficient, "vector root Jacobian is rank deficient");
     }
     auto direction = factor.value().leastSquares(
-        rhs.view(), {.illConditionedPolicy =
-                         linear::IllConditionedSolvePolicy::AllowWithDiagnostic});
+        rhs.view(),
+        {.illConditionedPolicy =
+             linear::IllConditionedSolvePolicy::AllowWithDiagnostic});
     if (!direction) {
       return vectorFailure(direction.status());
     }
@@ -670,8 +680,9 @@ Result<VectorRoot> findVectorRoot(const VectorFunction& function,
       bool distinct = false;
       bool finite = true;
       for (Index i = 0U; i < n; ++i) {
-        const Wide candidate = static_cast<Wide>(point.at(i)) + fraction *
-            static_cast<Wide>(direction.value().solution().at(i)) /
+        const Wide candidate =
+            static_cast<Wide>(point.at(i)) +
+            fraction * static_cast<Wide>(direction.value().solution().at(i)) /
                 scaledColumnNorms[i];
         if (!std::isfinite(candidate) ||
             std::abs(candidate) > std::numeric_limits<Scalar>::max()) {
@@ -684,9 +695,9 @@ Result<VectorRoot> findVectorRoot(const VectorFunction& function,
       if (!finite || !distinct) {
         continue;
       }
-      auto trialResidual = vectorSample(function, trial.view(), evaluations,
-                                        functionEvaluations, maximumEvaluations,
-                                        n);
+      auto trialResidual =
+          vectorSample(function, trial.view(), evaluations, functionEvaluations,
+                       maximumEvaluations, n);
       if (!trialResidual) {
         return vectorFailure(trialResidual.status());
       }
@@ -694,7 +705,8 @@ Result<VectorRoot> findVectorRoot(const VectorFunction& function,
       const Wide reduction = 1.0L - 1.0e-4L * fraction;
       if (trialNorm <= currentNorm &&
           (currentNorm == 0.0L ||
-           (trialNorm / currentNorm) * (trialNorm / currentNorm) <= reduction)) {
+           (trialNorm / currentNorm) * (trialNorm / currentNorm) <=
+               reduction)) {
         accepted = true;
         acceptedPoint = std::move(trial);
         acceptedResidual = std::move(trialResidual).value();
@@ -713,13 +725,12 @@ Result<VectorRoot> findVectorRoot(const VectorFunction& function,
     if (converged(currentNorm)) {
       return Result<VectorRoot>::success(
           {std::move(point), static_cast<Scalar>(currentNorm),
-           functionEvaluations,
-           jacobianEvaluations, iterations, Termination::converged});
+           functionEvaluations, jacobianEvaluations, iterations,
+           Termination::converged});
     }
   }
   return Result<VectorRoot>::success(
-      {std::move(point), static_cast<Scalar>(currentNorm),
-       functionEvaluations,
+      {std::move(point), static_cast<Scalar>(currentNorm), functionEvaluations,
        jacobianEvaluations, iterations, Termination::cap});
 }
 

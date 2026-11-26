@@ -73,16 +73,16 @@ void dimensionsLimitsAndErrors() {
   const auto constants = basisMatrix(empty.view(), 0U, {}, generous);
   VSS_CHECK(constants && constants.value().columns() == 1U);
   const Vector x = vector({1.0});
-  fail(basisMatrix(x.view(), 2U, {}, {.elements = 2U, .bytes = 1024U,
-                                     .evaluations = 0U}),
+  fail(basisMatrix(x.view(), 2U, {},
+                   {.elements = 2U, .bytes = 1024U, .evaluations = 0U}),
        ErrorCode::ResourceLimit);
-  fail(basisMatrix(x.view(), 1U, {}, {.elements = 8U, .bytes = 8U,
-                                     .evaluations = 0U}),
+  fail(basisMatrix(x.view(), 1U, {},
+                   {.elements = 8U, .bytes = 8U, .evaluations = 0U}),
        ErrorCode::ResourceLimit);
   fail(basisMatrix(x.view(), 1U, {.scale = 0.0}, generous),
        ErrorCode::InvalidDomain);
-  fail(basisMatrix(x.view(), 1U,
-                   {static_cast<BasisKind>(255U), 0.0, 1.0}, generous),
+  fail(basisMatrix(x.view(), 1U, {static_cast<BasisKind>(255U), 0.0, 1.0},
+                   generous),
        ErrorCode::InvalidDomain);
   const Vector nonfinite = vector({std::numeric_limits<Scalar>::infinity()});
   fail(basisMatrix(nonfinite.view(), 0U, {}, generous),
@@ -90,8 +90,8 @@ void dimensionsLimitsAndErrors() {
   const Vector no_coefficients;
   fail(evaluatePolynomial(no_coefficients.view(), 0.0, {}),
        ErrorCode::InsufficientSamples);
-  const Vector huge = vector({std::numeric_limits<Scalar>::max(),
-                              std::numeric_limits<Scalar>::max()});
+  const Vector huge = vector(
+      {std::numeric_limits<Scalar>::max(), std::numeric_limits<Scalar>::max()});
   fail(evaluatePolynomial(huge.view(), 1.0, {}), ErrorCode::NonFiniteResult);
 }
 
@@ -105,8 +105,8 @@ void scaledAffineDifferenceAndCancellation() {
 
   const BasisSpec chebyshev{BasisKind::chebyshev_first, 0.0, 1.0};
   const Vector cancellation = vector({1.0, 0.0, 1.0});
-  const auto value = evaluatePolynomial(cancellation.view(), maximum,
-                                        chebyshev);
+  const auto value =
+      evaluatePolynomial(cancellation.view(), maximum, chebyshev);
   fail(value, ErrorCode::NonFiniteResult);
 }
 

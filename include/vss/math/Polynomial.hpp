@@ -16,9 +16,9 @@ enum class BasisKind : unsigned char { power, chebyshev_first };
 /// @details Every basis operation uses t=(x-origin)/scale. A negative scale is
 ///          valid and reverses the coordinate orientation.
 struct BasisSpec final {
-  BasisKind kind{BasisKind::power};
-  Scalar origin{0.0};
-  Scalar scale{1.0};
+  BasisKind kind{BasisKind::power}; ///< Unnormalized basis family.
+  Scalar origin{0.0};               ///< Origin used by t=(x-origin)/scale.
+  Scalar scale{1.0}; ///< Nonzero scale; a negative value reverses orientation.
 };
 
 /// @brief Builds rows of an unnormalized power or first-kind Chebyshev basis.
@@ -35,8 +35,7 @@ struct BasisSpec final {
 /// @retval ErrorCode::NonFiniteResult A required basis element is not finite in
 ///         Scalar representation.
 [[nodiscard]] Result<Matrix> basisMatrix(ConstVectorView x, Index degree,
-                                         const BasisSpec& basis,
-                                         Limits limits);
+                                         const BasisSpec& basis, Limits limits);
 
 /// @brief Evaluates coefficients in ascending basis order using a stable
 ///        recurrence.

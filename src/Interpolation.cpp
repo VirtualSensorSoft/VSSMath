@@ -135,8 +135,9 @@ Result<Scalar> interpolate(ConstVectorView nodes, ConstVectorView values,
   }
   if (policy.maximum_gap.has_value() &&
       (!std::isfinite(*policy.maximum_gap) || *policy.maximum_gap <= 0.0)) {
-    return invalidScalar(ErrorCode::InvalidTolerance,
-                         "maximum interpolation gap must be finite and positive");
+    return invalidScalar(
+        ErrorCode::InvalidTolerance,
+        "maximum interpolation gap must be finite and positive");
   }
 
   Index lower = 0U;
@@ -227,8 +228,8 @@ Result<Spline> makeSpline(ConstVectorView nodes, ConstVectorView values,
     std::vector<Wide> solution(n, 0.0L);
     std::vector<Wide> widths(n - 1U, 0.0L);
     for (Index i = 0U; i + 1U < n; ++i) {
-      widths[i] = static_cast<Wide>(nodes.at(i + 1U)) -
-                  static_cast<Wide>(nodes.at(i));
+      widths[i] =
+          static_cast<Wide>(nodes.at(i + 1U)) - static_cast<Wide>(nodes.at(i));
     }
 
     if (policy.boundary == SplineBoundary::natural) {
@@ -242,8 +243,7 @@ Result<Spline> makeSpline(ConstVectorView nodes, ConstVectorView values,
             (static_cast<Wide>(values.at(i)) - values.at(i - 1U)) /
             widths[i - 1U];
         const Wide nextSlope =
-            (static_cast<Wide>(values.at(i + 1U)) - values.at(i)) /
-            widths[i];
+            (static_cast<Wide>(values.at(i + 1U)) - values.at(i)) / widths[i];
         rhs[i] = 6.0L * (nextSlope - previousSlope);
       }
     } else {
@@ -267,8 +267,7 @@ Result<Spline> makeSpline(ConstVectorView nodes, ConstVectorView values,
             (static_cast<Wide>(values.at(i)) - values.at(i - 1U)) /
             widths[i - 1U];
         const Wide nextSlope =
-            (static_cast<Wide>(values.at(i + 1U)) - values.at(i)) /
-            widths[i];
+            (static_cast<Wide>(values.at(i + 1U)) - values.at(i)) / widths[i];
         rhs[i] = 6.0L * (nextSlope - previousSlope);
       }
     }
@@ -305,10 +304,11 @@ Result<Spline> makeSpline(ConstVectorView nodes, ConstVectorView values,
       const Wide lhs = lower[i] * solution[i == 0U ? 0U : i - 1U] +
                        diagonal[i] * solution[i] +
                        upper[i] * solution[i + 1U < n ? i + 1U : i];
-      const Wide scale = std::abs(lower[i] * solution[i == 0U ? 0U : i - 1U]) +
-                         std::abs(diagonal[i] * solution[i]) +
-                         std::abs(upper[i] * solution[i + 1U < n ? i + 1U : i]) +
-                         std::abs(rhs[i]);
+      const Wide scale =
+          std::abs(lower[i] * solution[i == 0U ? 0U : i - 1U]) +
+          std::abs(diagonal[i] * solution[i]) +
+          std::abs(upper[i] * solution[i + 1U < n ? i + 1U : i]) +
+          std::abs(rhs[i]);
       if (!std::isfinite(lhs) ||
           std::abs(lhs - rhs[i]) > residualTolerance * scale) {
         return Result<Spline>::failure(ErrorCode::NoConvergence,
@@ -421,16 +421,15 @@ Result<Scalar> evaluate(const Spline& spline, Scalar x,
     } else {
       row = low - 1U;
       u = (static_cast<Wide>(x) - spline.nodes.at(row)) /
-          (static_cast<Wide>(spline.nodes.at(row + 1U)) -
-           spline.nodes.at(row));
+          (static_cast<Wide>(spline.nodes.at(row + 1U)) - spline.nodes.at(row));
     }
   }
 
   const Wide y = polynomial(spline.coefficients, row, u);
   Wide result = y;
   if ((before || after) && extrapolation == Extrapolation::linear) {
-    const Wide h = static_cast<Wide>(spline.nodes.at(row + 1U)) -
-                   spline.nodes.at(row);
+    const Wide h =
+        static_cast<Wide>(spline.nodes.at(row + 1U)) - spline.nodes.at(row);
     const Wide derivativeU =
         static_cast<Wide>(spline.coefficients.at(row, 1U)) +
         2.0L * spline.coefficients.at(row, 2U) * u +

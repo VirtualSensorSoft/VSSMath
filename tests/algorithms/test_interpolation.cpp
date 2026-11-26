@@ -18,8 +18,9 @@ Vector vector(std::initializer_list<Scalar> values) {
 }
 
 void near(Scalar actual, Scalar expected, Scalar tolerance = 1.0e-10) {
-  VSS_CHECK(std::abs(actual - expected) <= tolerance +
-            1.0e-10 * std::max(std::abs(actual), std::abs(expected)));
+  VSS_CHECK(std::abs(actual - expected) <=
+            tolerance +
+                1.0e-10 * std::max(std::abs(actual), std::abs(expected)));
 }
 
 void fail(const auto& result, ErrorCode expected) {
@@ -42,7 +43,8 @@ void linearInterpolationAndGap() {
   fail(interpolate(wideNodes.view(), wideValues.view(), 1.0, maxGap),
        ErrorCode::InvalidDomain);
   const InterpolateSpec noGap{Extrapolation::reject, 2.0};
-  near(interpolate(wideNodes.view(), wideValues.view(), 1.0, noGap).value(), 2.0);
+  near(interpolate(wideNodes.view(), wideValues.view(), 1.0, noGap).value(),
+       2.0);
   const Scalar maximum = std::numeric_limits<Scalar>::max();
   const Vector extremeValues = vector({-maximum, maximum});
   near(interpolate(wideNodes.view(), extremeValues.view(), 1.0, {}).value(),
@@ -55,11 +57,17 @@ void extrapolationAndValidation() {
   fail(interpolate(nodes.view(), values.view(), -1.0, {}),
        ErrorCode::InvalidDomain);
   near(interpolate(nodes.view(), values.view(), -1.0,
-                   {Extrapolation::hold, std::nullopt}).value(), 2.0);
+                   {Extrapolation::hold, std::nullopt})
+           .value(),
+       2.0);
   near(interpolate(nodes.view(), values.view(), -1.0,
-                   {Extrapolation::linear, std::nullopt}).value(), 0.0);
+                   {Extrapolation::linear, std::nullopt})
+           .value(),
+       0.0);
   near(interpolate(nodes.view(), values.view(), 2.0,
-                   {Extrapolation::linear, std::nullopt}).value(), 6.0);
+                   {Extrapolation::linear, std::nullopt})
+           .value(),
+       6.0);
 
   const Vector one = vector({1.0});
   fail(interpolate(one.view(), one.view(), 1.0, {}),
@@ -97,8 +105,8 @@ void naturalAndClampedSplines() {
 
   const Vector squareValues = vector({0.0, 1.0, 4.0});
   const SplineSpec clamped{SplineBoundary::clamped, 0.0, 4.0};
-  const auto cubic = makeSpline(nodes.view(), squareValues.view(), clamped,
-                                generous);
+  const auto cubic =
+      makeSpline(nodes.view(), squareValues.view(), clamped, generous);
   VSS_CHECK(cubic);
   near(evaluate(cubic.value(), 0.5, Extrapolation::reject).value(), 0.25);
   near(evaluate(cubic.value(), 1.5, Extrapolation::reject).value(), 2.25);
@@ -107,8 +115,8 @@ void naturalAndClampedSplines() {
   const Vector twoNodes = vector({0.0, 1.0});
   const Vector cube = vector({0.0, 1.0});
   const SplineSpec cubeClamped{SplineBoundary::clamped, 0.0, 3.0};
-  const auto hermite = makeSpline(twoNodes.view(), cube.view(), cubeClamped,
-                                  generous);
+  const auto hermite =
+      makeSpline(twoNodes.view(), cube.view(), cubeClamped, generous);
   VSS_CHECK(hermite);
   near(evaluate(hermite.value(), 0.5, Extrapolation::reject).value(), 0.125);
 }
@@ -119,13 +127,15 @@ void splineErrorsAndCallerValidation() {
   fail(makeSpline(nodes.view(), values.view(),
                   {SplineBoundary::clamped, std::nullopt, 1.0}, generous),
        ErrorCode::InvalidDomain);
-  fail(makeSpline(nodes.view(), values.view(),
-                  {static_cast<SplineBoundary>(255U), std::nullopt,
-                   std::nullopt}, generous),
+  fail(makeSpline(
+           nodes.view(), values.view(),
+           {static_cast<SplineBoundary>(255U), std::nullopt, std::nullopt},
+           generous),
        ErrorCode::InvalidDomain);
   fail(makeSpline(nodes.view(), values.view(),
                   {SplineBoundary::clamped,
-                   std::numeric_limits<Scalar>::infinity(), 1.0}, generous),
+                   std::numeric_limits<Scalar>::infinity(), 1.0},
+                  generous),
        ErrorCode::NonFiniteInput);
   fail(makeSpline(nodes.view(), values.view(), {},
                   {.elements = 2U, .bytes = 4096U, .evaluations = 0U}),
@@ -134,8 +144,8 @@ void splineErrorsAndCallerValidation() {
   VSS_CHECK(spline);
   fail(evaluate(spline.value(), -1.0, Extrapolation::reject),
        ErrorCode::InvalidDomain);
-  fail(evaluate(spline.value(), 0.5,
-                static_cast<Extrapolation>(255U)), ErrorCode::InvalidDomain);
+  fail(evaluate(spline.value(), 0.5, static_cast<Extrapolation>(255U)),
+       ErrorCode::InvalidDomain);
   Spline malformed{nodes, Matrix(2U, 4U)};
   fail(evaluate(malformed, 0.5, Extrapolation::reject),
        ErrorCode::DimensionMismatch);

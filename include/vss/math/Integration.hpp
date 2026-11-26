@@ -11,11 +11,12 @@ namespace vss::math {
 
 /// @brief Owned integral estimate and its embedded-rule error estimate.
 struct IntegralResult final {
-  Scalar value{};
-  Scalar error_estimate{};
-  Index evaluations{};
-  Index panels{};
-  Termination termination{Termination::converged};
+  Scalar value{}; ///< Estimated integral over the requested oriented interval.
+  Scalar error_estimate{}; ///< Embedded absolute error estimate.
+  Index evaluations{};     ///< Number of callback evaluations used.
+  Index panels{};          ///< Number of accepted quadrature panels.
+  Termination termination{
+      Termination::converged}; ///< Convergence or stop reason.
 };
 
 /// @brief Selects the composite rule for a sampled one-dimensional integral.

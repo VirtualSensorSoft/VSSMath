@@ -16,8 +16,9 @@ enum class Extrapolation : unsigned char { reject, hold, linear };
 
 /// @brief Policies for scalar piecewise-linear interpolation.
 struct InterpolateSpec final {
-  Extrapolation extrapolation{Extrapolation::reject};
-  std::optional<Scalar> maximum_gap{};
+  Extrapolation extrapolation{Extrapolation::reject}; ///< Out-of-range policy.
+  std::optional<Scalar>
+      maximum_gap{}; ///< Reject interpolation across wider gaps.
 };
 
 /// @brief Selects natural or endpoint-slope cubic-spline boundary conditions.
@@ -25,17 +26,21 @@ enum class SplineBoundary : unsigned char { natural, clamped };
 
 /// @brief Boundary conditions used to construct a cubic spline.
 struct SplineSpec final {
-  SplineBoundary boundary{SplineBoundary::natural};
-  std::optional<Scalar> left_derivative{};
-  std::optional<Scalar> right_derivative{};
+  SplineBoundary boundary{
+      SplineBoundary::natural}; ///< Endpoint constraint type.
+  std::optional<Scalar>
+      left_derivative{}; ///< Left slope required when clamped.
+  std::optional<Scalar>
+      right_derivative{}; ///< Right slope required when clamped.
 };
 
 /// @brief Owned, piecewise cubic with local normalized-coordinate coefficients.
 /// @details `coefficients` has one row per adjacent node pair and four columns
 ///          in increasing powers of u=(x-nodes[i])/(nodes[i+1]-nodes[i]).
 struct Spline final {
-  Vector nodes;
-  Matrix coefficients;
+  Vector nodes; ///< Strictly increasing interpolation knots.
+  Matrix
+      coefficients; ///< Four normalized-coordinate coefficients per interval.
 };
 
 /// @brief Interpolates a scalar value on a finite, strictly increasing grid.
