@@ -1,4 +1,5 @@
 #include "Test.hpp"
+#include "vss/math/Core.hpp"
 
 #include <cmath>
 #include <limits>
@@ -14,7 +15,18 @@ using namespace vss::math;
 using namespace vss::math::probability;
 
 ProbabilityPolicy policy() {
-  return {{1.0e-12, 1.0e-12, 4096U, 100000U, std::nullopt}, 100000U, 1.0e-10};
+  return {.iteration = {.abs = 1.0e-12,
+                        .rel = 1.0e-12,
+                        .max_iterations = 4096U,
+                        .max_evaluations = 100000U,
+                        .bracket = std::nullopt},
+          .max_draws = 100000U,
+          .abs_log_error = 1.0e-10};
+}
+
+Scalar logProbabilityOrNaN(const ObservationLikelihood& likelihood) {
+  return likelihood.log_probability.value_or(
+      std::numeric_limits<Scalar>::quiet_NaN());
 }
 
 void mixedObservationKindsHaveTheSpecifiedLikelihood() {
@@ -24,54 +36,79 @@ void mixedObservationKindsHaveTheSpecifiedLikelihood() {
     return;
   }
 
-  const auto exact = nonidealObservationLogProbability(
-      normalLaw.value(), {ObservationKind::exact, 0.0, std::nullopt, false},
-      policy());
+  const auto exact =
+      nonidealObservationLogProbability(normalLaw.value(),
+                                        {.kind = ObservationKind::exact,
+                                         .value = 0.0,
+                                         .support = std::nullopt,
+                                         .omit_unavailable = false},
+                                        policy());
   const auto interval = nonidealObservationLogProbability(
       normalLaw.value(),
-      {ObservationKind::interval, std::nullopt,
-       IntervalSupport{0.0, 1.0, true, true}, false},
+      {.kind = ObservationKind::interval,
+       .value = std::nullopt,
+       .support = IntervalSupport{.lower = 0.0,
+                                  .upper = 1.0,
+                                  .include_lower = true,
+                                  .include_upper = true},
+       .omit_unavailable = false},
       policy());
   const auto below = nonidealObservationLogProbability(
       normalLaw.value(),
-      {ObservationKind::below_threshold, std::nullopt,
-       IntervalSupport{-std::numeric_limits<Scalar>::infinity(), 0.0, false,
-                       true},
-       false},
+      {.kind = ObservationKind::below_threshold,
+       .value = std::nullopt,
+       .support =
+           IntervalSupport{.lower = -std::numeric_limits<Scalar>::infinity(),
+                           .upper = 0.0,
+                           .include_lower = false,
+                           .include_upper = true},
+       .omit_unavailable = false},
       policy());
   const auto above = nonidealObservationLogProbability(
       normalLaw.value(),
-      {ObservationKind::above_threshold, std::nullopt,
-       IntervalSupport{0.0, std::numeric_limits<Scalar>::infinity(), false,
-                       true},
-       false},
+      {.kind = ObservationKind::above_threshold,
+       .value = std::nullopt,
+       .support =
+           IntervalSupport{.lower = 0.0,
+                           .upper = std::numeric_limits<Scalar>::infinity(),
+                           .include_lower = false,
+                           .include_upper = true},
+       .omit_unavailable = false},
       policy());
   const auto quantized = nonidealObservationLogProbability(
       normalLaw.value(),
-      {ObservationKind::quantized, std::nullopt,
-       IntervalSupport{0.0, 1.0, true, false}, false},
+      {.kind = ObservationKind::quantized,
+       .value = std::nullopt,
+       .support = IntervalSupport{.lower = 0.0,
+                                  .upper = 1.0,
+                                  .include_lower = true,
+                                  .include_upper = false},
+       .omit_unavailable = false},
       policy());
-  const auto unavailable = nonidealObservationLogProbability(
-      normalLaw.value(),
-      {ObservationKind::unavailable, std::nullopt, std::nullopt, true},
-      policy());
+  const auto unavailable =
+      nonidealObservationLogProbability(normalLaw.value(),
+                                        {.kind = ObservationKind::unavailable,
+                                         .value = std::nullopt,
+                                         .support = std::nullopt,
+                                         .omit_unavailable = true},
+                                        policy());
   VSS_CHECK(exact && interval && below && above && quantized && unavailable);
   if (exact && interval && below && above && quantized && unavailable) {
     VSS_CHECK(exact.value().log_probability.has_value());
-    VSS_CHECK(std::abs(*exact.value().log_probability +
-                       0.5 * std::log(2.0 * std::numbers::pi)) < 2.0e-12);
+    VSS_CHECK(std::abs(logProbabilityOrNaN(exact.value()) +
+                       (0.5 * std::log(2.0 * std::numbers::pi))) < 2.0e-12);
     VSS_CHECK(interval.value().log_probability.has_value());
-    VSS_CHECK(std::abs(*interval.value().log_probability -
+    VSS_CHECK(std::abs(logProbabilityOrNaN(interval.value()) -
                        std::log(std::erf(1.0 / std::sqrt(2.0)) / 2.0)) <
               2.0e-10);
     VSS_CHECK(below.value().log_probability.has_value());
-    VSS_CHECK(std::abs(*below.value().log_probability - std::log(0.5)) <
+    VSS_CHECK(std::abs(logProbabilityOrNaN(below.value()) - std::log(0.5)) <
               2.0e-12);
     VSS_CHECK(above.value().log_probability.has_value());
-    VSS_CHECK(std::abs(*above.value().log_probability - std::log(0.5)) <
+    VSS_CHECK(std::abs(logProbabilityOrNaN(above.value()) - std::log(0.5)) <
               2.0e-12);
     VSS_CHECK(quantized.value().log_probability.has_value());
-    VSS_CHECK(std::abs(*quantized.value().log_probability -
+    VSS_CHECK(std::abs(logProbabilityOrNaN(quantized.value()) -
                        std::log(std::erf(1.0 / std::sqrt(2.0)) / 2.0)) <
               2.0e-10);
     VSS_CHECK(!unavailable.value().log_probability.has_value());
@@ -80,52 +117,79 @@ void mixedObservationKindsHaveTheSpecifiedLikelihood() {
   const auto coin = bernoulli(0.25);
   VSS_CHECK(coin.hasValue());
   if (coin) {
-    const auto exactAtom = nonidealObservationLogProbability(
-        coin.value(), {ObservationKind::exact, 1.0, std::nullopt, false},
-        policy());
+    const auto exactAtom =
+        nonidealObservationLogProbability(coin.value(),
+                                          {.kind = ObservationKind::exact,
+                                           .value = 1.0,
+                                           .support = std::nullopt,
+                                           .omit_unavailable = false},
+                                          policy());
     const auto inclusiveBelow = nonidealObservationLogProbability(
         coin.value(),
-        {ObservationKind::below_threshold, std::nullopt,
-         IntervalSupport{-std::numeric_limits<Scalar>::infinity(), 0.0, true,
-                         true},
-         false},
+        {.kind = ObservationKind::below_threshold,
+         .value = std::nullopt,
+         .support =
+             IntervalSupport{.lower = -std::numeric_limits<Scalar>::infinity(),
+                             .upper = 0.0,
+                             .include_lower = true,
+                             .include_upper = true},
+         .omit_unavailable = false},
         policy());
     const auto exclusiveAbove = nonidealObservationLogProbability(
         coin.value(),
-        {ObservationKind::above_threshold, std::nullopt,
-         IntervalSupport{0.0, std::numeric_limits<Scalar>::infinity(), false,
-                         false},
-         false},
+        {.kind = ObservationKind::above_threshold,
+         .value = std::nullopt,
+         .support =
+             IntervalSupport{.lower = 0.0,
+                             .upper = std::numeric_limits<Scalar>::infinity(),
+                             .include_lower = false,
+                             .include_upper = false},
+         .omit_unavailable = false},
         policy());
     const auto allValues = nonidealObservationLogProbability(
         coin.value(),
-        {ObservationKind::interval, std::nullopt,
-         IntervalSupport{0.0, 1.0, true, true}, false},
+        {.kind = ObservationKind::interval,
+         .value = std::nullopt,
+         .support = IntervalSupport{.lower = 0.0,
+                                    .upper = 1.0,
+                                    .include_lower = true,
+                                    .include_upper = true},
+         .omit_unavailable = false},
         policy());
     const auto noAtoms = nonidealObservationLogProbability(
         coin.value(),
-        {ObservationKind::interval, std::nullopt,
-         IntervalSupport{0.0, 1.0, false, false}, false},
+        {.kind = ObservationKind::interval,
+         .value = std::nullopt,
+         .support = IntervalSupport{.lower = 0.0,
+                                    .upper = 1.0,
+                                    .include_lower = false,
+                                    .include_upper = false},
+         .omit_unavailable = false},
         policy());
     const auto quantizedAtom = nonidealObservationLogProbability(
         coin.value(),
-        {ObservationKind::quantized, std::nullopt,
-         IntervalSupport{0.5, 1.5, true, false}, false},
+        {.kind = ObservationKind::quantized,
+         .value = std::nullopt,
+         .support = IntervalSupport{.lower = 0.5,
+                                    .upper = 1.5,
+                                    .include_lower = true,
+                                    .include_upper = false},
+         .omit_unavailable = false},
         policy());
     VSS_CHECK(exactAtom && inclusiveBelow && exclusiveAbove && allValues &&
               noAtoms && quantizedAtom);
     if (exactAtom && inclusiveBelow && exclusiveAbove && allValues && noAtoms &&
         quantizedAtom) {
-      VSS_CHECK(std::abs(*exactAtom.value().log_probability - std::log(0.25)) <
-                1.0e-14);
-      VSS_CHECK(std::abs(*inclusiveBelow.value().log_probability -
-                         std::log(0.75)) < 1.0e-14);
-      VSS_CHECK(std::abs(*exclusiveAbove.value().log_probability -
+      VSS_CHECK(std::abs(logProbabilityOrNaN(exactAtom.value()) -
                          std::log(0.25)) < 1.0e-14);
-      VSS_CHECK(*allValues.value().log_probability == 0.0);
-      VSS_CHECK(std::isinf(*noAtoms.value().log_probability) &&
-                *noAtoms.value().log_probability < 0.0);
-      VSS_CHECK(std::abs(*quantizedAtom.value().log_probability -
+      VSS_CHECK(std::abs(logProbabilityOrNaN(inclusiveBelow.value()) -
+                         std::log(0.75)) < 1.0e-14);
+      VSS_CHECK(std::abs(logProbabilityOrNaN(exclusiveAbove.value()) -
+                         std::log(0.25)) < 1.0e-14);
+      VSS_CHECK(logProbabilityOrNaN(allValues.value()) == 0.0);
+      VSS_CHECK(std::isinf(logProbabilityOrNaN(noAtoms.value())) &&
+                logProbabilityOrNaN(noAtoms.value()) < 0.0);
+      VSS_CHECK(std::abs(logProbabilityOrNaN(quantizedAtom.value()) -
                          std::log(0.25)) < 1.0e-14);
     }
   }
@@ -139,13 +203,21 @@ void contradictoryAndUnapprovedUnavailableEventsFail() {
   }
   const auto contradictory = nonidealObservationLogProbability(
       law.value(),
-      {ObservationKind::exact, 0.0, IntervalSupport{0.0, 1.0, true, true},
-       false},
+      {.kind = ObservationKind::exact,
+       .value = 0.0,
+       .support = IntervalSupport{.lower = 0.0,
+                                  .upper = 1.0,
+                                  .include_lower = true,
+                                  .include_upper = true},
+       .omit_unavailable = false},
       policy());
-  const auto unavailable = nonidealObservationLogProbability(
-      law.value(),
-      {ObservationKind::unavailable, std::nullopt, std::nullopt, false},
-      policy());
+  const auto unavailable =
+      nonidealObservationLogProbability(law.value(),
+                                        {.kind = ObservationKind::unavailable,
+                                         .value = std::nullopt,
+                                         .support = std::nullopt,
+                                         .omit_unavailable = false},
+                                        policy());
   VSS_CHECK(!contradictory);
   VSS_CHECK(contradictory.status().code() == ErrorCode::InvalidDomain);
   VSS_CHECK(!unavailable);
@@ -153,9 +225,11 @@ void contradictoryAndUnapprovedUnavailableEventsFail() {
 }
 } // namespace
 
-int main() {
+int main() try {
   mixedObservationKindsHaveTheSpecifiedLikelihood();
   contradictoryAndUnapprovedUnavailableEventsFail();
+} catch (...) {
+  return 1;
 }
 
 // VSS-MATH-TRACEABILITY: C103 CASE-C103.nonideal-observation-events

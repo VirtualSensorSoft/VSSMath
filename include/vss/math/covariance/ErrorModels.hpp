@@ -30,15 +30,15 @@ using ErrorCovarianceEvaluator =
 ///          to be absent.
 struct ErrorCovarianceSpec final {
   /// @brief Optional evaluator selected instead of the block representation.
-  ErrorCovarianceEvaluator evaluate{};
+  ErrorCovarianceEvaluator evaluate;
   /// @brief Optional nonnegative independent output variances.
-  std::optional<ConstVectorView> diagonal{};
+  std::optional<ConstVectorView> diagonal;
   /// @brief Optional loading matrix mapping concatenated source coordinates.
-  std::optional<ConstMatrixView> loading{};
+  std::optional<ConstMatrixView> loading;
   /// @brief Source covariance blocks partitioning loading columns.
-  std::span<const SourceBlock> sources{};
+  std::span<const SourceBlock> sources;
   /// @brief Declared cross-covariance blocks between source identities.
-  std::span<const SourceCrossBlock> cross{};
+  std::span<const SourceCrossBlock> cross;
   /// @brief Explicit completeness rule for source dependence.
   DependencePolicy dependence{DependencePolicy::exact_joint};
 };

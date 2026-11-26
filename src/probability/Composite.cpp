@@ -1,8 +1,12 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/probability/Composite.hpp>
+#include <vss/math/probability/Distribution.hpp>
 
 namespace vss::math::probability {
 namespace {

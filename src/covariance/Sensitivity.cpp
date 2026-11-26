@@ -1,11 +1,23 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/ProbabilityPolicy.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/Budget.hpp>
 #include <vss/math/covariance/Sensitivity.hpp>
+#include <vss/math/differentiation/FiniteDifference.hpp>
+#include <vss/math/probability/Distribution.hpp>
 
 namespace vss::math::covariance {
 namespace {
@@ -141,10 +153,10 @@ sensitivityIndices(const differentiation::VectorFunction& function,
   Index evaluations = 0U;
 
   for (Index replicate = 0U; replicate < spec.replicates; ++replicate) {
-    std::fill(outputMean.begin(), outputMean.end(), 0.0L);
-    std::fill(outputM2.begin(), outputM2.end(), 0.0L);
-    std::fill(firstSquares.begin(), firstSquares.end(), 0.0L);
-    std::fill(totalSquares.begin(), totalSquares.end(), 0.0L);
+    std::ranges::fill(outputMean, 0.0L);
+    std::ranges::fill(outputM2, 0.0L);
+    std::ranges::fill(firstSquares, 0.0L);
+    std::ranges::fill(totalSquares, 0.0L);
     Index pooledCount = 0U;
     for (Index row = 0U; row < spec.draws; ++row) {
       for (Index input = 0U; input < dimension; ++input) {
@@ -175,8 +187,8 @@ sensitivityIndices(const differentiation::VectorFunction& function,
             outputB.status().code(), std::string(outputB.status().message()));
       }
       for (Index output = 0U; output < spec.output_dimension; ++output) {
-        const long double values[] = {outputA.value().at(output),
-                                      outputB.value().at(output)};
+        const std::array<long double, 2U> values{outputA.value().at(output),
+                                                 outputB.value().at(output)};
         Index coordinateCount = pooledCount;
         for (const long double value : values) {
           ++coordinateCount;
@@ -201,7 +213,7 @@ sensitivityIndices(const differentiation::VectorFunction& function,
               std::string(outputHybrid.status().message()));
         }
         for (Index output = 0U; output < spec.output_dimension; ++output) {
-          const Index flat = output * dimension + input;
+          const Index flat = (output * dimension) + input;
           const long double differenceA =
               static_cast<long double>(outputA.value().at(output)) -
               outputHybrid.value().at(output);
@@ -222,9 +234,9 @@ sensitivityIndices(const differentiation::VectorFunction& function,
             "sensitivity output variance is zero or invalid");
       }
       for (Index input = 0U; input < dimension; ++input) {
-        const Index flat = output * dimension + input;
+        const Index flat = (output * dimension) + input;
         const long double first =
-            1.0L - firstSquares[flat] / spec.draws / (2.0L * variance);
+            1.0L - (firstSquares[flat] / spec.draws / (2.0L * variance));
         const long double total =
             totalSquares[flat] / spec.draws / (2.0L * variance);
         const long double firstDelta = first - firstMean[flat];
@@ -250,7 +262,7 @@ sensitivityIndices(const differentiation::VectorFunction& function,
   Matrix errors(errorRows, dimension);
   for (Index output = 0U; output < spec.output_dimension; ++output) {
     for (Index input = 0U; input < dimension; ++input) {
-      const Index flat = output * dimension + input;
+      const Index flat = (output * dimension) + input;
       const long double firstError =
           std::sqrt(firstM2[flat] / (spec.replicates - 1U) / spec.replicates);
       const long double totalError =
@@ -280,7 +292,9 @@ sensitivityIndices(const differentiation::VectorFunction& function,
     }
   }
   return Result<SensitivityResult>::success(
-      {std::move(firstResult), std::move(totalResult), std::move(errors)});
+      {.first_order = std::move(firstResult),
+       .total_order = std::move(totalResult),
+       .monte_carlo_error = std::move(errors)});
 }
 
 Result<UncertaintyBudget>

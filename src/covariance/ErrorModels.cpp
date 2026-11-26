@@ -1,9 +1,21 @@
+#include "vss/math/covariance/Conditioning.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/Budget.hpp>
 #include <vss/math/covariance/ErrorModels.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/linear/SymmetricEigen.hpp>
 
 namespace vss::math::covariance {
@@ -58,14 +70,21 @@ Result<Index> preflight(Index dimension, Limits limits) {
 }
 
 linear::SymmetricEigenOptions eigenOptions(SolvePolicy policy) {
-  return {{policy.rank_abs, policy.rank_rel},
-          {policy.iteration.abs, policy.iteration.rel},
-          std::min<Index>(policy.iteration.max_iterations, 1024U)};
+  return {.rankTolerance = {.absolute = policy.rank_abs,
+                            .relative = policy.rank_rel},
+          .symmetryTolerance = {.absolute = policy.iteration.abs,
+                                .relative = policy.iteration.rel},
+          .maximumSweeps =
+              std::min<Index>(policy.iteration.max_iterations, 1024U)};
 }
 
 SolvePolicy constructionPolicy() {
   SolvePolicy policy{};
-  policy.iteration = {1.0e-12, 1.0e-12, 64U, 0U, std::nullopt};
+  policy.iteration = {.abs = 1.0e-12,
+                      .rel = 1.0e-12,
+                      .max_iterations = 64U,
+                      .max_evaluations = 0U,
+                      .bracket = std::nullopt};
   policy.rank_abs = 0.0;
   policy.rank_rel = 1.0e-12;
   policy.reciprocal_condition_floor = 1.0e-10;
@@ -93,8 +112,11 @@ Result<CovarianceResult> classify(Matrix covariance, SolvePolicy policy,
   const Index dimension = covariance.rows();
   if (dimension == 0U) {
     return Result<CovarianceResult>::success(
-        {std::move(covariance), CovarianceKind::semidefinite_singular, 0U, 0.0,
-         std::nullopt});
+        {.covariance = std::move(covariance),
+         .classification = CovarianceKind::semidefinite_singular,
+         .rank = 0U,
+         .cutoff = 0.0,
+         .reciprocal_condition = std::nullopt});
   }
   const auto eigen =
       linear::decomposeSymmetricEigen(covariance.view(), eigenOptions(policy));
@@ -127,7 +149,11 @@ Result<CovarianceResult> classify(Matrix covariance, SolvePolicy policy,
     }
   }
   return Result<CovarianceResult>::success(
-      {std::move(covariance), kind, rank, cutoff, reciprocal});
+      {.covariance = std::move(covariance),
+       .classification = kind,
+       .rank = rank,
+       .cutoff = cutoff,
+       .reciprocal_condition = reciprocal});
 }
 
 Result<Matrix> callEvaluator(const ErrorCovarianceEvaluator& evaluator,
@@ -246,8 +272,9 @@ assembleErrorCovariance(const ErrorCovarianceSpec& spec, ConstVectorView state,
       return fail<CovarianceResult>(ErrorCode::ResourceLimit,
                                     "error covariance exceeds storage limits");
     }
-    const Limits budgetLimits{limits.elements - reservedElements,
-                              limits.bytes - reservedBytes, limits.evaluations};
+    const Limits budgetLimits{.elements = limits.elements - reservedElements,
+                              .bytes = limits.bytes - reservedBytes,
+                              .evaluations = limits.evaluations};
     auto budget = uncertaintyContributionBudget(
         *spec.loading, spec.sources, spec.cross, spec.dependence, budgetLimits);
     if (!budget) {
@@ -328,14 +355,15 @@ subtractKnownErrorCovariance(ConstMatrixView observed,
 
   const Index dimension = observed.rows();
   Matrix difference(dimension, dimension, 0.0);
-  for (Index row = 0U; row < dimension; ++row) {
-    for (Index column = row; column < dimension; ++column) {
+  for (Index firstIndex = 0U; firstIndex < dimension; ++firstIndex) {
+    for (Index secondIndex = firstIndex; secondIndex < dimension;
+         ++secondIndex) {
       const long double upper =
-          static_cast<long double>(observed.at(row, column)) -
-          knownError.at(row, column);
+          static_cast<long double>(observed.at(firstIndex, secondIndex)) -
+          knownError.at(firstIndex, secondIndex);
       const long double lower =
-          static_cast<long double>(observed.at(column, row)) -
-          knownError.at(column, row);
+          static_cast<long double>(observed.at(secondIndex, firstIndex)) -
+          knownError.at(secondIndex, firstIndex);
       const long double symmetric = 0.5L * (upper + lower);
       if (!std::isfinite(symmetric) ||
           std::abs(symmetric) > std::numeric_limits<Scalar>::max()) {
@@ -343,8 +371,8 @@ subtractKnownErrorCovariance(ConstMatrixView observed,
             ErrorCode::NonFiniteResult,
             "signed covariance difference is out of range");
       }
-      difference.at(row, column) = static_cast<Scalar>(symmetric);
-      difference.at(column, row) = static_cast<Scalar>(symmetric);
+      difference.at(firstIndex, secondIndex) = static_cast<Scalar>(symmetric);
+      difference.at(secondIndex, firstIndex) = static_cast<Scalar>(symmetric);
     }
   }
   return classify(std::move(difference), policy, false);
