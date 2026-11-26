@@ -770,9 +770,10 @@ void monteCarloPushforward() {
   VSS_CHECK(result.value().quantiles.at(0U, 1U) == 4.0);
   VSS_CHECK(result.value().quantiles.at(0U, 2U) == 2.0);
   VSS_CHECK(result.value().monte_carlo_error.at(0U) == 2.0);
-  VSS_CHECK(result.value().central_moments.has_value());
-  if (result.value().central_moments.has_value()) {
-    const auto central = result.value().central_moments->terms.view();
+  const auto centralMoments = result.value().central_moments;
+  VSS_CHECK(centralMoments.has_value());
+  if (centralMoments.has_value()) {
+    const auto central = centralMoments->terms.view();
     VSS_CHECK(central.size() == 3U);
     VSS_CHECK(central[0U].values.view().at(0U) == 4.0);
     VSS_CHECK(central[1U].values.view().at(0U) == 0.0);
