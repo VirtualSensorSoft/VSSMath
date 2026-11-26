@@ -1,13 +1,21 @@
 #include <algorithm>
 #include <cmath>
+#include <complex>
+#include <cstddef>
 #include <initializer_list>
 #include <limits>
 #include <numeric>
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Tolerance.hpp>
 #include <vss/math/linear/Complex.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::linear {
 namespace {
@@ -64,7 +72,8 @@ bool workspaceAllowed(Extent elements, std::size_t copies,
                       Limits limits) noexcept;
 
 Result<ComplexMatrix> makeMatrix(Extent rows, Extent columns,
-                                 std::vector<Complex>&& values, Limits limits) {
+                                 const std::vector<Complex>& values,
+                                 Limits limits) {
   Extent count = 0U;
   if (!checkedProduct(rows, columns, count)) {
     return fail<ComplexMatrix>(ErrorCode::SizeOverflow,
@@ -475,8 +484,8 @@ bool realJacobiSvd(RealDense& b, Index rows, Index columns, RealDense& right,
         const long double tau = (bb - aa) / (2.0L * ab);
         const long double t =
             std::copysign(1.0L / (std::abs(tau) + std::hypot(1.0L, tau)), tau);
-        const Scalar c = static_cast<Scalar>(1.0L / std::sqrt(1.0L + t * t));
-        const Scalar s = static_cast<Scalar>(t * c);
+        const auto c = static_cast<Scalar>(1.0L / std::sqrt(1.0L + t * t));
+        const auto s = static_cast<Scalar>(t * c);
         for (Index i = 0U; i < rows; ++i) {
           const Scalar x = b[i * columns + p];
           const Scalar y = b[i * columns + q];
@@ -522,7 +531,7 @@ Result<TallSvd> tallSvd(ComplexMatrixView input, SolvePolicy policy,
                          "complex SVD workspace exceeds limits");
   }
   Dense b = copyDense(input);
-  Scalar scale = maxComponent(b);
+  const Scalar scale = maxComponent(b);
   if (scale != 0.0) {
     for (Complex& z : b) {
       z /= scale;
@@ -727,7 +736,7 @@ Result<ComplexEigen> eigenImpl(ComplexMatrixView matrix,
                               "Hermitian eigensolver workspace exceeds limits");
   }
   Dense original = copyDense(matrix);
-  Scalar scale = maxComponent(original);
+  const Scalar scale = maxComponent(original);
   Dense h(nn, Complex{});
   Dense defect(nn, Complex{});
   for (Index i = 0U; i < n; ++i) {
@@ -1057,7 +1066,7 @@ Result<ComplexMatrix> multiply(ComplexMatrixView a, ComplexMatrixView b,
       output[row * b.columns + column] = {real, imaginary};
     }
   }
-  return makeMatrix(a.rows, b.columns, std::move(output), limits);
+  return makeMatrix(a.rows, b.columns, output, limits);
 }
 
 Result<ComplexMatrix> conjugateTranspose(ComplexMatrixView matrix,
@@ -1085,7 +1094,7 @@ Result<ComplexMatrix> conjugateTranspose(ComplexMatrixView matrix,
       output[column * matrix.rows + row] = std::conj(at(matrix, row, column));
     }
   }
-  return makeMatrix(matrix.columns, matrix.rows, std::move(output), limits);
+  return makeMatrix(matrix.columns, matrix.rows, output, limits);
 }
 
 Result<ComplexEigen> eigenHermitian(ComplexMatrixView matrix,
@@ -1218,7 +1227,7 @@ Result<ComplexSVD> factorComplexSVD(ComplexMatrixView matrix,
       reconstruction[i * n + j] = value;
     }
   }
-  Dense source = copyDense(matrix);
+  const Dense source = copyDense(matrix);
   const Scalar normalizedResidual =
       normalizedDifference(source, reconstruction);
   Dense gramLeft(k * k, Complex{});
@@ -1311,7 +1320,7 @@ Result<ComplexMatrix> solveComplex(ComplexMatrixView a, ComplexMatrixView b,
             "right-hand side is outside the supported range");
       }
     }
-    return makeMatrix(n, rhs, std::move(zero), limits);
+    return makeMatrix(n, rhs, zero, limits);
   }
   for (Complex& value : lu) {
     value /= scale;
@@ -1409,8 +1418,7 @@ Result<ComplexMatrix> solveComplex(ComplexMatrixView a, ComplexMatrixView b,
     }
     const auto& svd = decomposition.value();
     Dense result(n * rhs, Complex{});
-    const Scalar largest =
-        svd.singular.size() == 0U ? 0.0 : svd.singular.at(0U);
+    const Scalar largest = svd.singular.empty() ? 0.0 : svd.singular.at(0U);
     const long double threshold =
         std::max(static_cast<long double>(policy.rank_abs),
                  static_cast<long double>(policy.rank_rel) * largest);
@@ -1455,7 +1463,7 @@ Result<ComplexMatrix> solveComplex(ComplexMatrixView a, ComplexMatrixView b,
             "right-hand side is outside the supported range");
       }
     }
-    return makeMatrix(n, rhs, std::move(result), limits);
+    return makeMatrix(n, rhs, result, limits);
   }
   for (Index row = n; row-- > 0U;) {
     for (Index column = 0U; column < rhs; ++column) {
@@ -1514,7 +1522,7 @@ Result<ComplexMatrix> solveComplex(ComplexMatrixView a, ComplexMatrixView b,
     return fail<ComplexMatrix>(ErrorCode::NoConvergence,
                                "complex solve residual exceeds policy");
   }
-  return makeMatrix(n, rhs, std::move(solution), limits);
+  return makeMatrix(n, rhs, solution, limits);
 }
 
 } // namespace vss::math::linear
