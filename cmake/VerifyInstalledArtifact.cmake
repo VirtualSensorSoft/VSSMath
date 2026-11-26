@@ -150,6 +150,7 @@ set(vss_expected_files
   include/vss/math/VectorView.hpp
   include/vss/math/covariance/Conditioning.hpp
   include/vss/math/covariance/Diagnostics.hpp
+  include/vss/math/covariance/ErrorModels.hpp
   include/vss/math/covariance/PropagationResult.hpp
   include/vss/math/covariance/Budget.hpp
   include/vss/math/covariance/Propagation.hpp
