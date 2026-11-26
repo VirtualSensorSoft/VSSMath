@@ -112,12 +112,14 @@ function(vss_probe_reject_foreign_target_origin case_name include_path library_p
 endfunction()
 
 set(vss_expected_files
+  include/vss/math/AffineMaps.hpp
   include/vss/math/Array.hpp
   include/vss/math/Core.hpp
   include/vss/math/Error.hpp
   include/vss/math/FirstMoment.hpp
   include/vss/math/FourthMoment.hpp
   include/vss/math/Functions.hpp
+  include/vss/math/Geometry.hpp
   include/vss/math/Integration.hpp
   include/vss/math/Interpolation.hpp
   include/vss/math/Limits.hpp
@@ -168,6 +170,7 @@ set(vss_expected_files
   include/vss/math/ProbabilityPolicy.hpp
   include/vss/math/statistics/Descriptive.hpp
   include/vss/math/statistics/Bootstrap.hpp
+  include/vss/math/statistics/Circular.hpp
   include/vss/math/statistics/Cumulants.hpp
   include/vss/math/statistics/Dependence.hpp
   include/vss/math/statistics/Diagnostics.hpp

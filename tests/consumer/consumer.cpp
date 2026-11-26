@@ -9,10 +9,12 @@
 #include <sstream>
 #include <string>
 #include <type_traits>
+#include <vss/math/AffineMaps.hpp>
 #include <vss/math/Array.hpp>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/FirstMoment.hpp>
+#include <vss/math/Geometry.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
 #include <vss/math/MultivariateMoments.hpp>
@@ -42,6 +44,7 @@
 #include <vss/math/probability/Composite.hpp>
 #include <vss/math/probability/MomentBounds.hpp>
 #include <vss/math/probability/SamplingDesign.hpp>
+#include <vss/math/statistics/Circular.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Dependence.hpp>
 #include <vss/math/statistics/Descriptive.hpp>
@@ -749,6 +752,87 @@ bool verifyInstalledU06StatisticsContracts() {
                  "installed streaming or rolling quantile APIs failed");
 }
 
+bool verifyInstalledGeometryAndAffineContracts() {
+  using namespace vss::math;
+
+  constexpr Limits ample{256U, 16384U, 0U};
+  constexpr Tolerance tolerance{1.0e-12, 1.0e-12};
+  Matrix rotation(2U, 2U, 0.0);
+  rotation.at(0U, 1U) = -1.0;
+  rotation.at(1U, 0U) = 1.0;
+  const Vector point{std::array{2.0, 0.0}};
+  const auto turned =
+      rotationTransform(point.view(), rotation.view(), tolerance, ample);
+  const auto normalized = normalizeVectorDerivatives(point.view(), ample);
+  const auto wrapped = wrappedAngularResidual(5.0, 355.0, 360.0);
+  if (!require(turned.hasValue() && turned.value().at(1U) == 2.0 &&
+                   normalized.hasValue() && wrapped.hasValue() &&
+                   wrapped.value() == 10.0,
+               "installed rotation, normalization or angle API failed")) {
+    return false;
+  }
+
+  Matrix identity(3U, 3U, 0.0);
+  for (Extent i = 0U; i < 3U; ++i) {
+    identity.at(i, i) = 1.0;
+  }
+  Matrix pointRows(1U, 3U, 0.0);
+  pointRows.at(0U, 0U) = 1.0;
+  const Vector translation{std::array{1.0, 2.0, 3.0}};
+  const auto moved = rigidTransform(pointRows.view(), identity.view(),
+                                    translation.view(), tolerance, ample);
+  const auto jacobian = rigidResidualJacobian(
+      Vector{std::array{1.0, 0.0, 0.0}}.view(), identity.view(), ample);
+  Matrix covariance(2U, 2U, 0.0);
+  covariance.at(0U, 0U) = 4.0;
+  covariance.at(1U, 1U) = 9.0;
+  Matrix coordinateMap(1U, 2U, 1.0);
+  const auto mappedCovariance =
+      localCoordinateCovariance(coordinateMap.view(), covariance.view(), ample);
+  if (!require(moved.hasValue() && moved.value().at(0U, 2U) == 3.0 &&
+                   jacobian.hasValue() && jacobian.value().columns() == 6U &&
+                   mappedCovariance.hasValue() &&
+                   mappedCovariance.value().at(0U, 0U) == 13.0,
+               "installed rigid-transform or local covariance API failed")) {
+    return false;
+  }
+
+  const std::array<Extent, 1U> inputShape{2U};
+  const auto tensorShape = TensorShape::create(inputShape);
+  auto tensor = Tensor::create(tensorShape.value(), 0.0, TensorLimits(16U));
+  tensor.value().data()[0U] = 1.0;
+  tensor.value().data()[1U] = 2.0;
+  Matrix affine(1U, 2U);
+  affine.at(0U, 0U) = 1.0;
+  affine.at(0U, 1U) = 2.0;
+  const Vector offset{std::array{3.0}};
+  const std::array<Extent, 1U> outputShape{1U};
+  const auto mapped = applyAffine(tensor.value(), affine.view(), offset.view(),
+                                  outputShape, ample);
+  const WeightSpec unit{.rule = WeightRule::unweighted,
+                        .rowWeights = std::nullopt,
+                        .componentWeights = std::nullopt,
+                        .frequencyCounts = {}};
+  const std::array<Scalar, 2U> angles{0.0, 90.0};
+  const auto circular = circularStatistics(
+      ConstVectorView::create(angles, 2U).value(), unit, 360.0, ample);
+  MomentEstimate emptyMoments{};
+  const MomentRequest secondOrder{.orders = 0x02U,
+                                  .representation =
+                                      statistics::MomentRepresentation::dense,
+                                  .selected = {},
+                                  .contraction = std::nullopt};
+  Matrix scalarLinear(1U, 1U, 1.0);
+  const auto emptyTransform = transformMoments(
+      emptyMoments, scalarLinear.view(), offset.view(), secondOrder, ample);
+  return require(mapped.hasValue() && mapped.value().data()[0U] == 8.0 &&
+                     circular.hasValue() && circular.value().direction &&
+                     std::abs(*circular.value().direction - 45.0) < 1.0e-12 &&
+                     !emptyTransform.hasValue() &&
+                     emptyTransform.status().code() == ErrorCode::InvalidDomain,
+                 "installed affine or circular/moment API failed");
+}
+
 } // namespace
 
 int main() {
@@ -768,6 +852,9 @@ int main() {
     return 1;
   }
   if (!verifyInstalledU06StatisticsContracts()) {
+    return 1;
+  }
+  if (!verifyInstalledGeometryAndAffineContracts()) {
     return 1;
   }
 
