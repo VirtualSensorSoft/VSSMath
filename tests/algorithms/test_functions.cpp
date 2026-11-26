@@ -1,10 +1,15 @@
 #include "Test.hpp"
 
 #include <cmath>
+#include <exception>
+#include <initializer_list>
+#include <iostream>
 #include <limits>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Functions.hpp>
+#include <vss/math/Vector.hpp>
 
 namespace {
 using namespace vss::math;

@@ -3,16 +3,25 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
+#include <exception>
+#include <initializer_list>
+#include <iostream>
+#include <numbers>
+#include <optional>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/ODE.hpp>
-#include <vss/math/TensorLimits.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/linear/Iterative.hpp>
 
 namespace {
 
 using namespace vss::math;
+
+constexpr Index largeBufferBytes = Index{32U} * 1024U * 1024U;
 
 Vector vector(std::initializer_list<Scalar> values) {
   return Vector(std::vector<Scalar>(values));
@@ -47,11 +56,11 @@ void explicitIntegration() {
   };
   const auto trajectory =
       odeIntegrate(exponential, vector({1.0}), vector({0.0, 0.5, 1.0}),
-                   policy(), {100'000U, 32U * 1024U * 1024U, 100'000U});
+                   policy(), {100'000U, largeBufferBytes, 100'000U});
   VSS_CHECK(trajectory &&
             trajectory.value().termination == Termination::converged);
   VSS_CHECK(trajectory.value().states.rows() == 3U);
-  near(trajectory.value().states.at(2U, 0U), std::exp(1.0));
+  near(trajectory.value().states.at(2U, 0U), std::numbers::e);
   VSS_CHECK(trajectory.value().accepted_steps > 0U);
 
   Index calls = 0U;
@@ -87,7 +96,7 @@ void sensitivityAndValidation() {
           }};
   const auto sensitivity = odeSensitivity(
       f, jacobians, vector({1.0}), vector({2.0}), vector({0.0, 0.5, 1.0}),
-      policy(), {100'000U, 32U * 1024U * 1024U, 100'000U});
+      policy(), {100'000U, largeBufferBytes, 100'000U});
   VSS_CHECK(sensitivity &&
             sensitivity.value().sensitivities.shape().rank() == 3U);
   near(sensitivity.value().states.at(2U, 0U), std::exp(2.0));
@@ -112,7 +121,7 @@ void implicitConstantFlow() {
   const auto trajectory =
       odeIntegrate(constant, vector({0.0}), vector({0.0, 1.0}),
                    policy(OdeMethod::backward_euler),
-                   {100'000U, 32U * 1024U * 1024U, 100'000U});
+                   {100'000U, largeBufferBytes, 100'000U});
   VSS_CHECK(trajectory &&
             trajectory.value().termination == Termination::converged);
   near(trajectory.value().states.at(1U, 0U), 1.0, 1.0e-8);
@@ -133,7 +142,7 @@ void implicitConstantFlow() {
   const auto sensitivity =
       odeSensitivity(parameterFlow, jacobians, vector({0.0}), vector({2.0}),
                      vector({0.0, 1.0}), policy(OdeMethod::backward_euler),
-                     {100'000U, 32U * 1024U * 1024U, 100'000U});
+                     {100'000U, largeBufferBytes, 100'000U});
   VSS_CHECK(sensitivity);
   near(sensitivity.value().states.at(1U, 0U), 2.0, 1.0e-8);
   const std::array<Index, 3> index{1U, 0U, 0U};
@@ -158,7 +167,7 @@ void callbackAndCapBehavior() {
   oneAttempt.max_step = 0.01;
   const auto capped =
       odeIntegrate(counted, vector({0.0}), vector({0.0, 1.0}), oneAttempt,
-                   {100'000U, 32U * 1024U * 1024U, 100'000U});
+                   {100'000U, largeBufferBytes, 100'000U});
   VSS_CHECK(capped && capped.value().termination == Termination::cap &&
             capped.value().attempts == 1U && capped.value().times.size() == 1U);
 }
