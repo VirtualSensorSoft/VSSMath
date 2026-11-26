@@ -58,6 +58,15 @@ vss_math_add_algorithm_test(test_full_qr
 vss_math_add_algorithm_test(test_covariance
                              algorithms/test_covariance.cpp
                              math.covariance)
+vss_math_add_algorithm_test(test_error_models
+                             algorithms/test_error_models.cpp
+                             math.error_models)
+vss_math_add_algorithm_test(test_sensitivity
+                             algorithms/test_sensitivity.cpp
+                             math.sensitivity)
+set_tests_properties(math.sensitivity PROPERTIES
+                     LABELS "ci-once-per-full;ci-extended"
+                     ENVIRONMENT "VSS_MATH_FULL_SENSITIVITY_ACCEPTANCE=1")
 vss_math_add_algorithm_test(test_propagation
                              algorithms/test_propagation.cpp
                              math.propagation)
@@ -166,6 +175,9 @@ vss_math_add_algorithm_test(test_distributions
 vss_math_add_algorithm_test(test_composite
                              algorithms/test_composite.cpp
                              math.probability.composite)
+vss_math_add_algorithm_test(test_nonideal_observations
+                             algorithms/test_nonideal_observations.cpp
+                             math.probability.nonideal_observations)
 vss_math_add_algorithm_test(test_moment_bounds
                              algorithms/test_moment_bounds.cpp
                              math.probability.moment_bounds)

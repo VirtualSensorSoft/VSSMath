@@ -12,6 +12,7 @@ EXPECTED_SHARED = {
     "math.qualified_baseline_staging_policy",
     "math.algorithm_qualification_policy",
     "math.algorithm_comparison",
+    "math.sensitivity",
 }
 
 

@@ -66,6 +66,8 @@ add_library(vss_math STATIC
   src/covariance/Covariance.cpp
   src/covariance/Propagation.cpp
   src/covariance/Budget.cpp
+  src/covariance/ErrorModels.cpp
+  src/covariance/Sensitivity.cpp
   src/covariance/Conditioning.cpp
   src/covariance/Structured.cpp
   src/covariance/Diagnostics.cpp
@@ -76,6 +78,7 @@ add_library(vss_math STATIC
   src/differentiation/ForwardAD.cpp
   src/probability/ChiSquare.cpp
   src/probability/Distribution.cpp
+  src/probability/Composite.cpp
   src/probability/SamplingDesign.cpp
   src/probability/MomentBounds.cpp
   src/probability/Likelihood.cpp
