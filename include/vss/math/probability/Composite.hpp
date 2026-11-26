@@ -40,9 +40,9 @@ struct ObservationEvent final {
   /// Event category that determines which optional payload is valid.
   ObservationKind kind{ObservationKind::exact};
   /// Exact measured value; present only when kind is `exact`.
-  std::optional<Scalar> value{};
+  std::optional<Scalar> value;
   /// Reported support or bin; present only for interval-like event kinds.
-  std::optional<IntervalSupport> support{};
+  std::optional<IntervalSupport> support;
   /// Whether an unavailable event contributes no likelihood term.
   bool omit_unavailable{false};
 };
@@ -53,7 +53,7 @@ struct ObservationEvent final {
 ///          event and is distinct from omission.
 struct ObservationLikelihood final {
   /// Log density/mass, interval probability, or empty for an omitted event.
-  std::optional<Scalar> log_probability{};
+  std::optional<Scalar> log_probability;
 };
 
 /// @brief Return the log density or mass of a normalized mixture at x.
