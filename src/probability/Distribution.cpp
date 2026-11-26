@@ -1,4 +1,5 @@
 #include "DistributionInternal.hpp"
+#include "vss/math/TensorElementwise.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,10 +12,12 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <new>
 #include <numbers>
 #include <numeric>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,6 +28,7 @@
 #include <vss/math/ProbabilityPolicy.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/linear/Iterative.hpp>
 #include <vss/math/probability/Composite.hpp>
 #include <vss/math/probability/Distribution.hpp>
 #include <vss/math/probability/LogTailPair.hpp>
@@ -33,7 +37,8 @@
 namespace vss::math::probability {
 namespace {
 constexpr std::size_t distributionWorkspaceElements = 1'000'000U;
-constexpr std::size_t distributionWorkspaceBytes = 64U * 1024U * 1024U;
+constexpr std::size_t distributionWorkspaceBytes =
+    static_cast<std::size_t>(64U) * 1024U * 1024U;
 } // namespace
 
 struct Distribution::State final {
@@ -413,44 +418,70 @@ detail::DistributionEngine::snapshot(const Distribution& law, Limits limits) {
       return false;
     }
     const std::size_t added = count * width;
-    if (added > limits.bytes - std::min(bytes, limits.bytes))
+    if (added > limits.bytes - std::min(bytes, limits.bytes)) {
       return false;
+    }
     elements += count;
     bytes += added;
     return true;
   };
-  const auto copy = [&](const auto& self,
-                        const std::shared_ptr<const Distribution::State>& state,
-                        Index depth) -> Result<DistributionSnapshot> {
-    if (!state || depth > 32U || !reserve(1U, sizeof(DistributionSnapshot)) ||
-        !reserve(state->parameters.size(), sizeof(Scalar)) ||
-        !reserve(state->weights.size(), sizeof(Scalar)) ||
-        !reserve(state->atoms.size(), sizeof(Scalar)) ||
-        !reserve(state->masses.size(), sizeof(Scalar)) ||
-        !reserve(state->components.size(), sizeof(DistributionSnapshot))) {
+  try {
+    struct PendingNode final {
+      std::shared_ptr<const Distribution::State> state;
+      DistributionSnapshot* destination;
+      Index depth;
+      Index nextChild;
+    };
+    const auto initialize =
+        [&](const std::shared_ptr<const Distribution::State>& state,
+            DistributionSnapshot& destination, Index depth) {
+          if (!state || depth > 32U ||
+              !reserve(1U, sizeof(DistributionSnapshot)) ||
+              !reserve(state->parameters.size(), sizeof(Scalar)) ||
+              !reserve(state->weights.size(), sizeof(Scalar)) ||
+              !reserve(state->atoms.size(), sizeof(Scalar)) ||
+              !reserve(state->masses.size(), sizeof(Scalar)) ||
+              !reserve(state->components.size(),
+                       sizeof(DistributionSnapshot))) {
+            return false;
+          }
+          destination.family = state->family;
+          destination.measure = state->measure;
+          destination.parameters = state->parameters;
+          destination.integer_parameter = state->integerParameter;
+          destination.weights = state->weights;
+          destination.atoms = state->atoms;
+          destination.masses = state->masses;
+          destination.components.reserve(state->components.size());
+          return true;
+        };
+
+    DistributionSnapshot result;
+    if (!initialize(law.state_, result, 1U)) {
       return Result<DistributionSnapshot>::failure(
           ErrorCode::ResourceLimit,
           "distribution snapshot exceeds its depth or storage budget");
     }
-    DistributionSnapshot result;
-    result.family = state->family;
-    result.measure = state->measure;
-    result.parameters = state->parameters;
-    result.integer_parameter = state->integerParameter;
-    result.weights = state->weights;
-    result.atoms = state->atoms;
-    result.masses = state->masses;
-    result.components.reserve(state->components.size());
-    for (const auto& child : state->components) {
-      auto nested = self(self, child, depth + 1U);
-      if (!nested)
-        return nested;
-      result.components.push_back(std::move(nested).value());
+    std::vector<PendingNode> pending;
+    pending.push_back({law.state_, &result, 1U, 0U});
+    while (!pending.empty()) {
+      PendingNode& node = pending.back();
+      if (node.nextChild == node.state->components.size()) {
+        pending.pop_back();
+        continue;
+      }
+      const auto child = node.state->components[node.nextChild];
+      ++node.nextChild;
+      node.destination->components.emplace_back();
+      DistributionSnapshot& childCopy = node.destination->components.back();
+      if (!initialize(child, childCopy, node.depth + 1U)) {
+        return Result<DistributionSnapshot>::failure(
+            ErrorCode::ResourceLimit,
+            "distribution snapshot exceeds its depth or storage budget");
+      }
+      pending.push_back({child, &childCopy, node.depth + 1U, 0U});
     }
     return Result<DistributionSnapshot>::success(std::move(result));
-  };
-  try {
-    return copy(copy, law.state_, 1U);
   } catch (const std::bad_alloc&) {
     return Result<DistributionSnapshot>::failure(
         ErrorCode::ResourceLimit, "distribution snapshot allocation failed");
@@ -2277,10 +2308,12 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
         std::shared_ptr<const Distribution::State> normalState;
         std::shared_ptr<const Distribution::State> uniformState;
         for (const auto& component : state.components) {
-          if (component->family == Family::normal)
+          if (component->family == Family::normal) {
             normalState = component;
-          if (component->family == Family::uniform)
+          }
+          if (component->family == Family::uniform) {
             uniformState = component;
+          }
         }
         if (normalState && uniformState) {
           const Scalar mean = normalState->parameters[0];
@@ -2336,8 +2369,9 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
         std::shared_ptr<const Distribution::State> poissonState;
         std::shared_ptr<const Distribution::State> truncatedState;
         for (const auto& component : state.components) {
-          if (component->family == Family::poisson)
+          if (component->family == Family::poisson) {
             poissonState = component;
+          }
           if (component->family == Family::truncated &&
               component->measure == Measure::real_density) {
             truncatedState = component;
@@ -2348,8 +2382,9 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
           const Scalar upper = truncatedState->parameters[1];
           const Scalar rate = poissonState->parameters[0];
           const Distribution base(truncatedState);
-          if (rate == 0.0)
+          if (rate == 0.0) {
             return evaluate(base, x, policy);
+          }
           if (x < lower) {
             return Result<TailValues>::success({0.0,
                                                 negativeInfinity,
@@ -2388,9 +2423,10 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
                   "Poisson and bounded convolution exceeds evaluation limit");
             }
             auto value = evaluate(base, x - static_cast<Scalar>(k), policy);
-            if (!value)
+            if (!value) {
               return Result<TailValues>::failure(
                   value.status().code(), std::string(value.status().message()));
+            }
             logCdf =
                 logAddExp(logCdf, logMass + value.value().log_tails.log_cdf);
             logSurvival = logAddExp(
@@ -2404,21 +2440,23 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
               logMass += std::log(rate) - std::log(static_cast<Scalar>(k + 1U));
             }
           }
-          Distribution poissonLaw(poissonState);
+          Distribution const poissonLaw(poissonState);
           auto omittedCounts =
               evaluate(poissonLaw, static_cast<Scalar>(maximumCount), policy);
-          if (!omittedCounts)
+          if (!omittedCounts) {
             return Result<TailValues>::failure(
                 omittedCounts.status().code(),
                 std::string(omittedCounts.status().message()));
+          }
           logSurvival = logAddExp(logSurvival,
                                   omittedCounts.value().log_tails.log_survival);
           return finiteTailValues(logDensitySum, {logCdf, logSurvival}, true);
         }
         std::shared_ptr<const Distribution::State> gammaOuterState;
         for (const auto& component : state.components) {
-          if (component->family == Family::gamma)
+          if (component->family == Family::gamma) {
             gammaOuterState = component;
+          }
           if (component->family == Family::truncated &&
               component->measure == Measure::real_density) {
             truncatedState = component;
@@ -2470,15 +2508,17 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
                   width * static_cast<Scalar>(power) *
                   std::pow(coordinate, static_cast<Scalar>(power - 1U));
               auto baseValue = evaluate(base, x - v, policy);
-              if (!baseValue)
+              if (!baseValue) {
                 return Result<Scalar>::failure(
                     baseValue.status().code(),
                     std::string(baseValue.status().message()));
+              }
               auto gammaValue = evaluate(gammaLaw, v, policy);
-              if (!gammaValue)
+              if (!gammaValue) {
                 return Result<Scalar>::failure(
                     gammaValue.status().code(),
                     std::string(gammaValue.status().message()));
+              }
               if (baseValue.value().log_density_or_mass == negativeInfinity ||
                   gammaValue.value().log_density_or_mass == negativeInfinity) {
                 return Result<Scalar>::success(0.0);
@@ -2498,10 +2538,11 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
             };
             auto integral = quadratureAdaptive(densityKernel, {0.0, 1.0},
                                                innerPolicy, innerLimits);
-            if (!integral)
+            if (!integral) {
               return Result<TailValues>::failure(
                   integral.status().code(),
                   std::string(integral.status().message()));
+            }
             if (integral.value().termination != Termination::converged) {
               return Result<TailValues>::failure(
                   ErrorCode::NoConvergence,
@@ -2528,15 +2569,17 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
                   width * static_cast<Scalar>(power) *
                   std::pow(coordinate, static_cast<Scalar>(power - 1U));
               auto baseValue = evaluate(base, t, policy);
-              if (!baseValue)
+              if (!baseValue) {
                 return Result<Scalar>::failure(
                     baseValue.status().code(),
                     std::string(baseValue.status().message()));
+              }
               auto gammaValue = evaluate(gammaLaw, x - t, policy);
-              if (!gammaValue)
+              if (!gammaValue) {
                 return Result<Scalar>::failure(
                     gammaValue.status().code(),
                     std::string(gammaValue.status().message()));
+              }
               const long double value =
                   static_cast<long double>(baseValue.value().density_or_mass) *
                   gammaValue.value().cdf * jacobian;
@@ -2550,10 +2593,11 @@ Result<TailValues> DistributionEngine::evaluate(const Distribution& law,
             };
             auto integral = quadratureAdaptive(cdfKernel, {0.0, 1.0},
                                                innerPolicy, innerLimits);
-            if (!integral)
+            if (!integral) {
               return Result<TailValues>::failure(
                   integral.status().code(),
                   std::string(integral.status().message()));
+            }
             if (integral.value().termination != Termination::converged) {
               return Result<TailValues>::failure(
                   ErrorCode::NoConvergence,
