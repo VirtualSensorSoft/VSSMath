@@ -64,6 +64,8 @@ add_library(vss_math STATIC
   src/TensorOperations.cpp
   src/TensorElementwise.cpp
   src/covariance/Covariance.cpp
+  src/covariance/Propagation.cpp
+  src/covariance/Budget.cpp
   src/covariance/Conditioning.cpp
   src/covariance/Structured.cpp
   src/covariance/Diagnostics.cpp

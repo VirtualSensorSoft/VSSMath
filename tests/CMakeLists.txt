@@ -58,6 +58,9 @@ vss_math_add_algorithm_test(test_full_qr
 vss_math_add_algorithm_test(test_covariance
                              algorithms/test_covariance.cpp
                              math.covariance)
+vss_math_add_algorithm_test(test_propagation
+                             algorithms/test_propagation.cpp
+                             math.propagation)
 vss_math_add_algorithm_test(test_sparse algorithms/test_sparse.cpp math.sparse)
 vss_math_add_algorithm_test(test_structured algorithms/test_structured.cpp
                              math.structured)

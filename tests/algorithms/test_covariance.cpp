@@ -238,6 +238,19 @@ void linearPropagation() {
   VSS_CHECK(twoRows.value().at(0U, 1U) == twoRows.value().at(1U, 0U));
 }
 
+void retainedPropagationContract() {
+  const Matrix jacobian = matrix({{1.0, 2.0}, {0.0, 1.0}});
+  const Matrix covariance = matrix({{4.0, 1.0}, {1.0, 9.0}});
+  const auto result = vss::math::covariance::propagateCovariance(
+      jacobian.view(), covariance.view());
+  VSS_CHECK(result.hasValue());
+  checkMatrixNear(result.value(), matrix({{44.0, 19.0}, {19.0, 9.0}}));
+
+  checkFailure(vss::math::covariance::propagateCovariance(
+                   matrix({{1.0, 2.0, 3.0}}).view(), covariance.view()),
+               ErrorCode::DimensionMismatch);
+}
+
 void zeroVariancePsd() {
   const auto diagnostics = vss::math::covariance::analyzeCovariance(
       matrix({{1.0, 0.0}, {0.0, 0.0}}).view());
@@ -596,6 +609,7 @@ int main() { // NOLINT(bugprone-exception-escape)
   correlationRoundTrip();
   whiteningAndMahalanobis();
   linearPropagation();
+  retainedPropagationContract();
   zeroVariancePsd();
   indefiniteDiagnostics();
   symmetryBoundary();
