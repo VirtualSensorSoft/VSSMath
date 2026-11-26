@@ -1,6 +1,5 @@
 #include "Test.hpp"
 
-#include <cmath>
 #include <limits>
 #include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>

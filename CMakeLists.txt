@@ -37,6 +37,9 @@ add_library(vss_math STATIC
   src/Interpolation.cpp
   src/Roots.cpp
   src/Integration.cpp
+  src/Geometry.cpp
+  src/AffineMaps.cpp
+  src/statistics/Circular.cpp
   src/ODE.cpp
   src/Functions.cpp
   src/ScientificExtras.cpp
