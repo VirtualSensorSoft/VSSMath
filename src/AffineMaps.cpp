@@ -56,6 +56,9 @@ Result<Scalar> sourceValue(const statistics::MomentTerm& term,
                            std::span<const Index> tuple, Extent dimension) {
   const auto values = term.values.view();
   const Index order = term.order;
+  if (order == 0U || order > 4U)
+    return fail<Scalar>(ErrorCode::InvalidDomain,
+                        "moment order is outside the supported range");
   if (tuple.size() != order)
     return fail<Scalar>(ErrorCode::DimensionMismatch,
                         "moment tuple rank mismatch");
@@ -115,9 +118,15 @@ Result<Scalar> sourceValue(const statistics::MomentTerm& term,
   }
   if (term.layout == statistics::MomentRepresentation::packed) {
     std::array<Index, 4U> sorted{};
-    std::copy(tuple.begin(), tuple.end(), sorted.begin());
-    std::sort(sorted.begin(),
-              sorted.begin() + static_cast<std::ptrdiff_t>(order));
+    for (Index i = 0; i < order; ++i) {
+      const Index value = tuple[i];
+      Index position = i;
+      while (position > 0U && sorted[position - 1U] > value) {
+        sorted[position] = sorted[position - 1U];
+        --position;
+      }
+      sorted[position] = value;
+    }
     Extent rank = 0, minimum = 0;
     for (Index axis = 0; axis < order; ++axis) {
       const Extent coordinate = sorted[axis], remaining = order - axis - 1U;

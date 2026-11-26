@@ -424,6 +424,39 @@ void centralMomentAffineTransform() {
   VSS_CHECK(projected && projected.value().population_mean->at(0U) == 5.5);
   VSS_CHECK(projected.value().terms.view()[1U].values.at(0U) == 5.0);
 
+  // Packed symmetric covariance input exercises both tuple orderings while
+  // applying a non-diagonal affine map. The source stores [C00, C01, C11]
+  // = [2, 3, 5]; A=[[1,1],[1,-1]] gives [13, -3, 1].
+  std::array<statistics::MomentTerm, 1U> packedTerms{
+      statistics::MomentTerm{.order = 2U,
+                             .layout = MomentRepresentation::packed,
+                             .flattened_tuples = {},
+                             .values = vector({2.0, 3.0, 5.0})}};
+  const auto packedTermArray = Array<MomentTerm>::copy(packedTerms, limits);
+  const std::array<Extent, 1U> packedDimensions{2U};
+  const auto packedShape = Array<Index>::copy(packedDimensions, limits);
+  MomentEstimate packedSource{.observation_shape = packedShape.value(),
+                              .terms = packedTermArray.value(),
+                              .diagnostics = source.diagnostics,
+                              .population_mean = vector({0.0, 0.0})};
+  Matrix mixing(2U, 2U);
+  mixing.at(0U, 0U) = 1.0;
+  mixing.at(0U, 1U) = 1.0;
+  mixing.at(1U, 0U) = 1.0;
+  mixing.at(1U, 1U) = -1.0;
+  Vector zeroShift(2U, 0.0);
+  const MomentRequest packedRequest{.orders = 0x02U,
+                                    .representation =
+                                        MomentRepresentation::packed,
+                                    .selected = {},
+                                    .contraction = std::nullopt};
+  const auto transformedPacked = transformMoments(
+      packedSource, mixing.view(), zeroShift.view(), packedRequest, limits);
+  VSS_CHECK(transformedPacked);
+  const auto packedValues = transformedPacked.value().terms.view()[0U].values;
+  VSS_CHECK(packedValues.at(0U) == 13.0 && packedValues.at(1U) == -3.0 &&
+            packedValues.at(2U) == 1.0);
+
   // Rectangular, non-diagonal map with a direct four-point population
   // reference: X=(0,0), (1,1), (2,0), (3,1), A=[[1,2],[0,-1]], b=[3,-2].
   // Outputs are (3,-2), (6,-3), (5,-2), (8,-3). Their means are [5.5,-2.5],
