@@ -1,5 +1,6 @@
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -32,6 +33,7 @@
 #include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/covariance/Structured.hpp>
 #include <vss/math/covariance/UncertaintySummary.hpp>
+#include <vss/math/linear/Complex.hpp>
 #include <vss/math/linear/Decomposition.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
 #include <vss/math/linear/Iterative.hpp>
@@ -837,6 +839,28 @@ bool verifyInstalledGeometryAndAffineContracts() {
 
 int main() {
   using namespace vss::math;
+
+  {
+    const std::array<Complex, 4U> values{
+        {{2.0, 0.0}, {0.0, 1.0}, {0.0, -1.0}, {2.0, 0.0}}};
+    const linear::ComplexMatrixView matrix{values, 2U, 2U, 2U, 1U};
+    constexpr Limits limits{256U, 32768U, 0U};
+    SolvePolicy policy{};
+    policy.iteration.abs = 1.0e-12;
+    policy.iteration.rel = 1.0e-12;
+    policy.iteration.max_iterations = 64U;
+    policy.rank_rel = 1.0e-12;
+    const auto product = linear::multiply(matrix, matrix, limits);
+    const auto adjoint = linear::conjugateTranspose(matrix, limits);
+    const auto solution = linear::solveComplex(matrix, matrix, policy, limits);
+    const auto eigen = linear::eigenHermitian(matrix, policy, limits);
+    const auto svd = linear::factorComplexSVD(matrix, policy, limits);
+    if (!require(product.hasValue() && adjoint.hasValue() &&
+                     solution.hasValue() && eigen.hasValue() && svd.hasValue(),
+                 "installed complex linear algebra API failed")) {
+      return 1;
+    }
+  }
 
   if (!verifyRobustOrderStatisticContracts() ||
       !verifyPopulationCovarianceContracts() || !verifyCorrelationContracts()) {

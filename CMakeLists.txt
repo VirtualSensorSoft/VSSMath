@@ -120,6 +120,7 @@ add_library(vss_math STATIC
   src/linear/LU.cpp
   src/linear/QR.cpp
   src/linear/SymmetricEigen.cpp
+  src/linear/Complex.cpp
   src/linear/TriangularSolve.cpp
   src/Tolerance.cpp
   src/ThirdMoment.cpp
