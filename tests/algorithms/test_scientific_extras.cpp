@@ -234,7 +234,7 @@ void probabilityLogIntegrals() {
       beta.value(), {0.0, 1.0, true, true}, probabilityPolicy());
   VSS_CHECK(betaEntropy &&
             std::abs(betaEntropy.value() + 1.392235154560808) < 2.0e-9);
-  for (const auto [shapeA, shapeB, reference] :
+  for (const auto& [shapeA, shapeB, reference] :
        {std::tuple{0.25, 0.25, 0.0906099299139882}, std::tuple{0.5, 0.5, 1.0},
         std::tuple{0.75, 0.75, 1.3609727753754666},
         std::tuple{0.25, 2.0, 1.6591886316127282}}) {
@@ -251,8 +251,9 @@ void probabilityLogIntegrals() {
         probabilityPolicy());
     VSS_CHECK(entropy && std::abs(entropy.value() - reference) < 2.0e-9);
   }
-  for (const auto [degrees, reference] : {std::pair{3.0, 0.645460961341382},
-                                          std::pair{5.0, 0.1247691941236102}}) {
+  for (const auto& [degrees, reference] :
+       {std::pair{3.0, 0.645460961341382},
+        std::pair{5.0, 0.1247691941236102}}) {
     const auto student = probability::studentT(degrees, 0.0, 1.0);
     VSS_CHECK(student);
     const auto studentNormal = numericalKLDivergence(
@@ -277,7 +278,7 @@ void probabilityLogIntegrals() {
                             deepProbabilityPolicy());
   VSS_CHECK(barelyFiniteKl && std::isfinite(barelyFiniteKl.value()));
   VSS_CHECK(std::abs(barelyFiniteKl.value() - 1048575.4586595736) < 0.01);
-  for (const auto [degrees, reference] :
+  for (const auto& [degrees, reference] :
        {std::pair{0.5, 0.49917928622267915},
         std::pair{1.0, 0.25924453248886237},
         std::pair{2.0, 0.11722851713864935},
