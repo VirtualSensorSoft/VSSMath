@@ -18,7 +18,7 @@ enum class Extrapolation : unsigned char { reject, hold, linear };
 struct InterpolateSpec final {
   Extrapolation extrapolation{Extrapolation::reject}; ///< Out-of-range policy.
   std::optional<Scalar>
-      maximum_gap{}; ///< Reject interpolation across wider gaps.
+      maximum_gap; ///< Reject interpolation across wider gaps.
 };
 
 /// @brief Selects natural or endpoint-slope cubic-spline boundary conditions.
@@ -27,11 +27,10 @@ enum class SplineBoundary : unsigned char { natural, clamped };
 /// @brief Boundary conditions used to construct a cubic spline.
 struct SplineSpec final {
   SplineBoundary boundary{
-      SplineBoundary::natural}; ///< Endpoint constraint type.
+      SplineBoundary::natural};          ///< Endpoint constraint type.
+  std::optional<Scalar> left_derivative; ///< Left slope required when clamped.
   std::optional<Scalar>
-      left_derivative{}; ///< Left slope required when clamped.
-  std::optional<Scalar>
-      right_derivative{}; ///< Right slope required when clamped.
+      right_derivative; ///< Right slope required when clamped.
 };
 
 /// @brief Owned, piecewise cubic with local normalized-coordinate coefficients.

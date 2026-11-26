@@ -1,16 +1,21 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <new>
 #include <queue>
-#include <stdexcept>
 #include <string>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Integration.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/TensorElementwise.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/linear/Iterative.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math {
 namespace {
@@ -99,7 +104,7 @@ Result<Panel> evaluatePanel(const UnaryFunction& function, Scalar lower,
   const Wide b = static_cast<Wide>(upper);
   const Wide centerWide = a + (b - a) / 2.0L;
   const Wide halfWide = (b - a) / 2.0L;
-  const Scalar center = static_cast<Scalar>(centerWide);
+  const auto center = static_cast<Scalar>(centerWide);
   auto centerValue = callbackValue(function, center, evaluations, maximum);
   if (!centerValue) {
     return Result<Panel>::failure(centerValue.status().code(),
@@ -110,10 +115,11 @@ Result<Panel> evaluatePanel(const UnaryFunction& function, Scalar lower,
   values[14] = centerValue.value();
   Index slot = 0U;
   for (int node = 6; node >= 0; --node) {
-    const Wide offset = halfWide * kronrodNodes[static_cast<std::size_t>(node)];
-    const Scalar left = static_cast<Scalar>(centerWide - offset);
-    const Scalar right = static_cast<Scalar>(centerWide + offset);
-    if (!(left > lower && left < center && right > center && right < upper) ||
+    const Wide offset =
+        halfWide * kronrodNodes.at(static_cast<std::size_t>(node));
+    const auto left = static_cast<Scalar>(centerWide - offset);
+    const auto right = static_cast<Scalar>(centerWide + offset);
+    if (left <= lower || left >= center || right <= center || right >= upper ||
         left == right) {
       return Result<Panel>::failure(
           ErrorCode::NoConvergence,
@@ -129,8 +135,8 @@ Result<Panel> evaluatePanel(const UnaryFunction& function, Scalar lower,
       return Result<Panel>::failure(rightValue.status().code(),
                                     std::string(rightValue.status().message()));
     }
-    values[slot++] = leftValue.value();
-    values[slot++] = rightValue.value();
+    values.at(slot++) = leftValue.value();
+    values.at(slot++) = rightValue.value();
   }
 
   Wide kronrod = 0.0L;
@@ -143,15 +149,15 @@ Result<Panel> evaluatePanel(const UnaryFunction& function, Scalar lower,
     const std::size_t left = i * 2U;
     const std::size_t right = left + 1U;
     const std::size_t node = 6U - i;
-    const Wide pair = static_cast<Wide>(values[left]) + values[right];
-    compensatedAdd(static_cast<Wide>(kronrodWeights[node]) * pair, kronrod,
+    const Wide pair = static_cast<Wide>(values.at(left)) + values.at(right);
+    compensatedAdd(static_cast<Wide>(kronrodWeights.at(node)) * pair, kronrod,
                    kronrodCorrection);
-    compensatedAdd(static_cast<Wide>(kronrodWeights[node]) *
-                       (std::abs(static_cast<Wide>(values[left])) +
-                        std::abs(static_cast<Wide>(values[right]))),
+    compensatedAdd(static_cast<Wide>(kronrodWeights.at(node)) *
+                       (std::abs(static_cast<Wide>(values.at(left))) +
+                        std::abs(static_cast<Wide>(values.at(right)))),
                    absolute, absoluteCorrection);
     if (node == 1U || node == 3U || node == 5U) {
-      compensatedAdd(static_cast<Wide>(gaussWeights[node]) * pair, gauss,
+      compensatedAdd(static_cast<Wide>(gaussWeights.at(node)) * pair, gauss,
                      gaussCorrection);
     }
   }
@@ -169,9 +175,9 @@ Result<Panel> evaluatePanel(const UnaryFunction& function, Scalar lower,
   for (std::size_t i = 0U; i < 7U; ++i) {
     const std::size_t node = 6U - i;
     compensatedAdd(
-        static_cast<Wide>(kronrodWeights[node]) *
-            (std::abs(static_cast<Wide>(values[i * 2U]) - mean) +
-             std::abs(static_cast<Wide>(values[i * 2U + 1U]) - mean)),
+        static_cast<Wide>(kronrodWeights.at(node)) *
+            (std::abs(static_cast<Wide>(values.at(i * 2U)) - mean) +
+             std::abs(static_cast<Wide>(values.at(i * 2U + 1U)) - mean)),
         variation, variationCorrection);
   }
   compensatedAdd(static_cast<Wide>(kronrodWeights[7]) *
@@ -295,7 +301,7 @@ Result<IntegralResult> quadratureAdaptive(const UnaryFunction& function,
     const Panel parent = panels.top();
     panels.pop();
     const Scalar middle = intervalMidpoint(parent.lower, parent.upper);
-    if (!(middle > parent.lower && middle < parent.upper)) {
+    if (middle <= parent.lower || middle >= parent.upper) {
       return Result<IntegralResult>::failure(
           ErrorCode::NoConvergence, "quadrature interval cannot be split");
     }

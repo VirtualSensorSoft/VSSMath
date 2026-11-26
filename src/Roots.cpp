@@ -1,12 +1,24 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
 #include <vss/math/Roots.hpp>
+#include <vss/math/TensorElementwise.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
+#include <vss/math/linear/Iterative.hpp>
+#include <vss/math/linear/LinearSolve.hpp>
 #include <vss/math/linear/QR.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math {
 namespace {
@@ -30,7 +42,7 @@ Result<Scalar> sample(const UnaryFunction& function, Scalar x,
   }
   ++evaluations;
   try {
-    const Result<Scalar> result = function(x);
+    Result<Scalar> result = function(x);
     if (!result) {
       return Result<Scalar>::failure(result.status().code(),
                                      std::string(result.status().message()));
@@ -206,7 +218,7 @@ Result<RootResult> bracketedRoot(const UnaryFunction& function,
           distance < previousDistance / 2.0L &&
           proposal >= static_cast<Wide>(lower) &&
           proposal <= static_cast<Wide>(upper)) {
-        const Scalar converted = static_cast<Scalar>(proposal);
+        const auto converted = static_cast<Scalar>(proposal);
         if (converted > lower && converted < upper) {
           trial = converted;
           bisection = false;
@@ -280,7 +292,7 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
   Scalar upper = 0.0;
   Scalar fLower = 0.0;
   Scalar fUpper = 0.0;
-  bool bracketed = policy.bracket.has_value();
+  const bool bracketed = policy.bracket.has_value();
   Index evaluations = 0U;
   Index derivativeEvaluations = 0U;
   Index iterations = 0U;
@@ -405,7 +417,7 @@ Result<RootResult> rootNewton(const UnaryFunction& function,
     if (midpointStep) {
       trial = midpoint(lower, upper);
     }
-    if (trial == x || (bracketed && !(trial > lower && trial < upper))) {
+    if (trial == x || (bracketed && (trial <= lower || trial >= upper))) {
       if (bracketed && widthConverged(lower, upper, policy)) {
         const Scalar best = bestEndpoint(lower, fLower, upper, fUpper);
         return Result<RootResult>::success(rootResult(

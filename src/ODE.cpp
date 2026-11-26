@@ -1,18 +1,30 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
 #include <vss/math/ODE.hpp>
 #include <vss/math/Result.hpp>
+#include <vss/math/Tensor.hpp>
 #include <vss/math/TensorLimits.hpp>
 #include <vss/math/TensorShape.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 #include <vss/math/linear/FactorizationOptions.hpp>
+#include <vss/math/linear/Iterative.hpp>
+#include <vss/math/linear/LinearSolve.hpp>
 #include <vss/math/linear/QR.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math {
 namespace {
@@ -27,40 +39,45 @@ struct Step final {
   Wide error{0.0L};
 };
 
-struct Engine final {
-  const OdeFunction& function;
-  const OdeJacobians* jacobians;
-  const Vector& parameters;
-  const OdePolicy& policy;
-  Index stateSize;
-  Index parameterSize;
-  Index budget;
-  Index evaluations{0U};
+class Engine final {
+public:
+  Engine(const OdeFunction& function, const OdeJacobians* jacobians,
+         Vector parameters, const OdePolicy& policy, Index stateSize,
+         Index budget)
+      : function_(&function), jacobians_(jacobians),
+        parameters_(std::move(parameters)), policy_(&policy),
+        stateSize_(stateSize), budget_(budget) {}
+
+  [[nodiscard]] const OdeJacobians* jacobians() const noexcept {
+    return jacobians_;
+  }
+
+  [[nodiscard]] const OdePolicy& policy() const noexcept { return *policy_; }
 
   Result<std::vector<Scalar>> derivative(Scalar time,
                                          const std::vector<Scalar>& state) {
-    if (evaluations >= budget) {
+    if (evaluations_ >= budget_) {
       return Result<std::vector<Scalar>>::failure(
           ErrorCode::ResourceLimit, "ODE callback evaluation budget exhausted");
     }
-    ++evaluations;
-    Vector stateValue(stateSize);
-    for (Index i = 0U; i < stateSize; ++i) {
+    ++evaluations_;
+    Vector stateValue(stateSize_);
+    for (Index i = 0U; i < stateSize_; ++i) {
       stateValue.at(i) = state[i];
     }
     try {
-      auto result = function(time, stateValue.view(), parameters.view());
+      auto result = (*function_)(time, stateValue.view(), parameters_.view());
       if (!result) {
         return Result<std::vector<Scalar>>::failure(
             result.status().code(), std::string(result.status().message()));
       }
-      if (result.value().size() != stateSize) {
+      if (result.value().size() != stateSize_) {
         return Result<std::vector<Scalar>>::failure(
             ErrorCode::DimensionMismatch,
             "ODE derivative callback returned the wrong extent");
       }
-      std::vector<Scalar> values(stateSize);
-      for (Index i = 0U; i < stateSize; ++i) {
+      std::vector<Scalar> values(stateSize_);
+      for (Index i = 0U; i < stateSize_; ++i) {
         values[i] = result.value().at(i);
         if (!std::isfinite(values[i])) {
           return Result<std::vector<Scalar>>::failure(
@@ -82,17 +99,17 @@ struct Engine final {
       return Result<Matrix>::failure(ErrorCode::CallbackFailure,
                                      "required ODE Jacobian callback is empty");
     }
-    if (evaluations >= budget) {
+    if (evaluations_ >= budget_) {
       return Result<Matrix>::failure(
           ErrorCode::ResourceLimit, "ODE callback evaluation budget exhausted");
     }
-    ++evaluations;
-    Vector stateValue(stateSize);
-    for (Index i = 0U; i < stateSize; ++i) {
+    ++evaluations_;
+    Vector stateValue(stateSize_);
+    for (Index i = 0U; i < stateSize_; ++i) {
       stateValue.at(i) = state[i];
     }
     try {
-      auto result = callback(time, stateValue.view(), parameters.view());
+      auto result = callback(time, stateValue.view(), parameters_.view());
       if (!result) {
         return Result<Matrix>::failure(result.status().code(),
                                        std::string(result.status().message()));
@@ -117,6 +134,15 @@ struct Engine final {
                                      "ODE Jacobian callback threw");
     }
   }
+
+private:
+  const OdeFunction* function_;
+  const OdeJacobians* jacobians_;
+  Vector parameters_;
+  const OdePolicy* policy_;
+  Index stateSize_;
+  Index budget_;
+  Index evaluations_{0U};
 };
 
 bool toScalar(Wide value, Scalar& result) noexcept {
@@ -288,7 +314,8 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
     for (Index i = 0U; i < n; ++i) {
       Wide value = state[i];
       for (Index previous = 0U; previous < stage; ++previous) {
-        value += static_cast<Wide>(step) * a[stage][previous] * k[previous][i];
+        value += static_cast<Wide>(step) * a.at(stage).at(previous) *
+                 k.at(previous).at(i);
       }
       if (!toScalar(value, yStage[i])) {
         return {Status::success(), true, {}, {}, 0.0L};
@@ -297,14 +324,15 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
     for (Index i = 0U; i < sensitivity.size(); ++i) {
       Wide value = sensitivity[i];
       for (Index previous = 0U; previous < stage; ++previous) {
-        value += static_cast<Wide>(step) * a[stage][previous] * sk[previous][i];
+        value += static_cast<Wide>(step) * a.at(stage).at(previous) *
+                 sk.at(previous).at(i);
       }
       if (!toScalar(value, sStage[i])) {
         return {Status::success(), true, {}, {}, 0.0L};
       }
     }
     const Wide stageTimeWide =
-        static_cast<Wide>(time) + static_cast<Wide>(step) * c[stage];
+        static_cast<Wide>(time) + static_cast<Wide>(step) * c.at(stage);
     Scalar stageTime = 0.0;
     if (!toScalar(stageTimeWide, stageTime)) {
       return {Status::success(), true, {}, {}, 0.0L};
@@ -318,10 +346,10 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
               {},
               0.0L};
     }
-    k[stage] = std::move(derivative).value();
+    k.at(stage) = std::move(derivative).value();
     if (q > 0U) {
       auto jy =
-          engine.jacobian(engine.jacobians->state, stageTime, yStage, n, n);
+          engine.jacobian(engine.jacobians()->state, stageTime, yStage, n, n);
       if (!jy) {
         return {Status::failure(jy.status().code(),
                                 std::string(jy.status().message())),
@@ -330,8 +358,8 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
                 {},
                 0.0L};
       }
-      auto jp = engine.jacobian(engine.jacobians->parameters, stageTime, yStage,
-                                n, q);
+      auto jp = engine.jacobian(engine.jacobians()->parameters, stageTime,
+                                yStage, n, q);
       if (!jp) {
         return {Status::failure(jp.status().code(),
                                 std::string(jp.status().message())),
@@ -340,7 +368,7 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
                 {},
                 0.0L};
       }
-      sk[stage].assign(n * q, 0.0);
+      sk.at(stage).assign(n * q, 0.0);
       for (Index i = 0U; i < n; ++i) {
         for (Index j = 0U; j < q; ++j) {
           Wide value = jp.value().at(i, j);
@@ -348,7 +376,7 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
             value += static_cast<Wide>(jy.value().at(i, kIndex)) *
                      sStage[kIndex * q + j];
           }
-          if (!toScalar(value, sk[stage][i * q + j])) {
+          if (!toScalar(value, sk.at(stage)[i * q + j])) {
             return {Status::success(), true, {}, {}, 0.0L};
           }
         }
@@ -362,22 +390,24 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
     Wide fifthValue = state[i];
     Wide fourthValue = state[i];
     for (Index stage = 0U; stage < 7U; ++stage) {
-      fifthValue += static_cast<Wide>(step) * fifth[stage] * k[stage][i];
-      fourthValue += static_cast<Wide>(step) * fourth[stage] * k[stage][i];
+      fifthValue += static_cast<Wide>(step) * fifth.at(stage) * k.at(stage)[i];
+      fourthValue +=
+          static_cast<Wide>(step) * fourth.at(stage) * k.at(stage)[i];
     }
     if (!toScalar(fifthValue, candidate[i])) {
       return {Status::success(), true, {}, {}, 0.0L};
     }
-    error =
-        std::max(error, componentError(fifthValue - fourthValue, state[i],
-                                       candidate[i], engine.policy.iteration));
+    error = std::max(error,
+                     componentError(fifthValue - fourthValue, state[i],
+                                    candidate[i], engine.policy().iteration));
   }
   for (Index i = 0U; i < sensitivity.size(); ++i) {
     Wide fifthValue = sensitivity[i];
     Wide fourthValue = sensitivity[i];
     for (Index stage = 0U; stage < 7U; ++stage) {
-      fifthValue += static_cast<Wide>(step) * fifth[stage] * sk[stage][i];
-      fourthValue += static_cast<Wide>(step) * fourth[stage] * sk[stage][i];
+      fifthValue += static_cast<Wide>(step) * fifth.at(stage) * sk.at(stage)[i];
+      fourthValue +=
+          static_cast<Wide>(step) * fourth.at(stage) * sk.at(stage)[i];
     }
     if (!toScalar(fifthValue, candidateSensitivity[i])) {
       return {Status::success(), true, {}, {}, 0.0L};
@@ -385,7 +415,7 @@ Step dopriStep(Engine& engine, Scalar time, Scalar step,
     error =
         std::max(error, componentError(fifthValue - fourthValue, sensitivity[i],
                                        candidateSensitivity[i],
-                                       engine.policy.iteration));
+                                       engine.policy().iteration));
   }
   return {Status::success(), error > 1.0L, std::move(candidate),
           std::move(candidateSensitivity), error};
@@ -408,8 +438,7 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
   Matrix jy(n, n, 0.0);
   bool converged = false;
   for (Index update = 0U; update <= 12U; ++update) {
-    auto derivative =
-        engine.derivative(static_cast<Scalar>(time + step), candidate);
+    auto derivative = engine.derivative(time + step, candidate);
     if (!derivative) {
       return {Status::failure(derivative.status().code(),
                               std::string(derivative.status().message())),
@@ -425,14 +454,16 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
         return {Status::success(), true, {}, {}};
       }
       const Wide denominator =
-          static_cast<Wide>(engine.policy.iteration.abs) +
-          static_cast<Wide>(engine.policy.iteration.rel) *
+          static_cast<Wide>(engine.policy().iteration.abs) +
+          static_cast<Wide>(engine.policy().iteration.rel) *
               std::max(std::abs(static_cast<Wide>(candidate[i])),
                        std::abs(static_cast<Wide>(oldState[i])));
-      const Wide component =
-          denominator == 0.0L
-              ? (g == 0.0L ? 0.0L : std::numeric_limits<Wide>::infinity())
-              : std::abs(g) / denominator;
+      Wide component = 0.0L;
+      if (denominator == 0.0L) {
+        component = g == 0.0L ? 0.0L : std::numeric_limits<Wide>::infinity();
+      } else {
+        component = std::abs(g) / denominator;
+      }
       norm = std::max(norm, component);
     }
     if (norm <= 0.01L) {
@@ -443,10 +474,9 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
       return {Status::success(), true, {}, {}};
     }
 
-    if (engine.jacobians != nullptr && q > 0U) {
-      auto stateJacobian =
-          engine.jacobian(engine.jacobians->state,
-                          static_cast<Scalar>(time + step), candidate, n, n);
+    if (engine.jacobians() != nullptr && q > 0U) {
+      auto stateJacobian = engine.jacobian(engine.jacobians()->state,
+                                           time + step, candidate, n, n);
       if (!stateJacobian) {
         return {Status::failure(stateJacobian.status().code(),
                                 std::string(stateJacobian.status().message())),
@@ -463,7 +493,8 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
             std::sqrt(std::numeric_limits<Scalar>::epsilon()) *
                 std::max(1.0L, std::abs(static_cast<Wide>(original)));
         Scalar perturbed = 0.0;
-        bool forward = toScalar(proposed, perturbed) && perturbed != original;
+        const bool forward =
+            toScalar(proposed, perturbed) && perturbed != original;
         if (!forward) {
           const Wide backward =
               static_cast<Wide>(original) -
@@ -474,8 +505,7 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
           }
         }
         candidate[column] = perturbed;
-        auto shifted =
-            engine.derivative(static_cast<Scalar>(time + step), candidate);
+        auto shifted = engine.derivative(time + step, candidate);
         candidate[column] = original;
         if (!shifted) {
           return {Status::failure(shifted.status().code(),
@@ -537,8 +567,7 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
       if (!representable || trial == candidate) {
         continue;
       }
-      auto trialDerivative =
-          engine.derivative(static_cast<Scalar>(time + step), trial);
+      auto trialDerivative = engine.derivative(time + step, trial);
       if (!trialDerivative) {
         return {
             Status::failure(trialDerivative.status().code(),
@@ -552,15 +581,17 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
         const Wide g = static_cast<Wide>(trial[i]) - oldState[i] -
                        static_cast<Wide>(step) * trialDerivative.value()[i];
         const Wide denominator =
-            static_cast<Wide>(engine.policy.iteration.abs) +
-            static_cast<Wide>(engine.policy.iteration.rel) *
+            static_cast<Wide>(engine.policy().iteration.abs) +
+            static_cast<Wide>(engine.policy().iteration.rel) *
                 std::max(std::abs(static_cast<Wide>(trial[i])),
                          std::abs(static_cast<Wide>(oldState[i])));
-        trialNorm = std::max(
-            trialNorm,
-            denominator == 0.0L
-                ? (g == 0.0L ? 0.0L : std::numeric_limits<Wide>::infinity())
-                : std::abs(g) / denominator);
+        Wide component = 0.0L;
+        if (denominator == 0.0L) {
+          component = g == 0.0L ? 0.0L : std::numeric_limits<Wide>::infinity();
+        } else {
+          component = std::abs(g) / denominator;
+        }
+        trialNorm = std::max(trialNorm, component);
       }
       if (trialNorm < norm) {
         candidate = std::move(trial);
@@ -578,9 +609,8 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
 
   std::vector<Scalar> newSensitivity(oldSensitivity.size());
   if (q > 0U) {
-    auto stateJacobian =
-        engine.jacobian(engine.jacobians->state,
-                        static_cast<Scalar>(time + step), candidate, n, n);
+    auto stateJacobian = engine.jacobian(engine.jacobians()->state, time + step,
+                                         candidate, n, n);
     if (!stateJacobian) {
       return {Status::failure(stateJacobian.status().code(),
                               std::string(stateJacobian.status().message())),
@@ -588,9 +618,8 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
               {},
               {}};
     }
-    auto parameterJacobian =
-        engine.jacobian(engine.jacobians->parameters,
-                        static_cast<Scalar>(time + step), candidate, n, q);
+    auto parameterJacobian = engine.jacobian(engine.jacobians()->parameters,
+                                             time + step, candidate, n, q);
     if (!parameterJacobian) {
       return {
           Status::failure(parameterJacobian.status().code(),
@@ -618,7 +647,7 @@ BackwardStep backwardEulerSubstep(Engine& engine, Scalar time, Scalar step,
     for (Index column = 0U; column < q; ++column) {
       Vector rhs(n);
       for (Index i = 0U; i < n; ++i) {
-        Wide value =
+        const Wide value =
             oldSensitivity[i * q + column] +
             static_cast<Wide>(step) * parameterJacobian.value().at(i, column);
         if (!toScalar(value, rhs.at(i))) {
@@ -672,14 +701,14 @@ Step backwardStep(Engine& engine, Scalar time, Scalar step,
     error = std::max(
         error,
         componentError(static_cast<Wide>(halfTwo.state[i]) - full.state[i],
-                       state[i], halfTwo.state[i], engine.policy.iteration));
+                       state[i], halfTwo.state[i], engine.policy().iteration));
   }
   for (Index i = 0U; i < sensitivity.size(); ++i) {
     error = std::max(error,
                      componentError(static_cast<Wide>(halfTwo.sensitivity[i]) -
                                         full.sensitivity[i],
                                     sensitivity[i], halfTwo.sensitivity[i],
-                                    engine.policy.iteration));
+                                    engine.policy().iteration));
   }
   return {Status::success(), error > 1.0L, std::move(halfTwo.state),
           std::move(halfTwo.sensitivity), error};
@@ -708,7 +737,7 @@ Result<IntegrationOutput> integrate(const OdeFunction& function,
     return failure<IntegrationOutput>(validation);
   }
   if (withSensitivity && q > 0U &&
-      (!jacobians || !jacobians->state || !jacobians->parameters)) {
+      (jacobians == nullptr || !jacobians->state || !jacobians->parameters)) {
     return Result<IntegrationOutput>::failure(
         ErrorCode::CallbackFailure,
         "positive ODE sensitivity requires both Jacobian callbacks");
@@ -717,7 +746,8 @@ Result<IntegrationOutput> integrate(const OdeFunction& function,
   const Index n = initial.size();
   const Index maxEvaluations =
       std::min(policy.iteration.max_evaluations, limits.evaluations);
-  Engine engine{function, jacobians, parameters, policy, n, q, maxEvaluations};
+  Engine engine{function, jacobians, std::move(parameters),
+                policy,   n,         maxEvaluations};
   std::vector<Scalar> state(n);
   for (Index i = 0U; i < n; ++i) {
     state[i] = initial.at(i);
@@ -764,7 +794,7 @@ Result<IntegrationOutput> integrate(const OdeFunction& function,
       const Scalar step = static_cast<Scalar>(
           std::min({static_cast<Wide>(proposedStep),
                     static_cast<Wide>(policy.max_step), remaining}));
-      if (!(step > 0.0) || static_cast<Scalar>(time + step) == time) {
+      if (!(step > 0.0) || time + step == time) {
         return Result<IntegrationOutput>::failure(
             ErrorCode::NoConvergence,
             "ODE step cannot advance the representable clock");
@@ -802,10 +832,10 @@ Result<IntegrationOutput> integrate(const OdeFunction& function,
       } else {
         state = std::move(trial.state);
         sensitivity = std::move(trial.sensitivity);
-        time = finalRemainder ? target : static_cast<Scalar>(time + step);
+        time = finalRemainder ? target : time + step;
         ++accepted;
         if (time == target) {
-          for (Scalar value : state) {
+          for (const Scalar value : state) {
             stateValues.push_back(value);
           }
           sensitivityValues.insert(sensitivityValues.end(), sensitivity.begin(),

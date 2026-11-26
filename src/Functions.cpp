@@ -1,8 +1,14 @@
 #include <cmath>
 #include <new>
 #include <stdexcept>
+#include <utility>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Functions.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
 
 namespace vss::math {
 
@@ -32,9 +38,11 @@ Result<Vector> exponentialSmooth(ConstVectorView values, Scalar alpha,
     Scalar state = initial;
     for (Index i = 0U; i < values.size(); ++i) {
       const Scalar observation = values.at(i);
-      state = alpha == 0.0   ? state
-              : alpha == 1.0 ? observation
-                             : std::lerp(state, observation, alpha);
+      if (alpha == 1.0) {
+        state = observation;
+      } else if (alpha != 0.0) {
+        state = std::lerp(state, observation, alpha);
+      }
       if (!std::isfinite(state)) {
         return Result<Vector>::failure(
             ErrorCode::NonFiniteResult,

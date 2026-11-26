@@ -37,9 +37,9 @@ struct OdePolicy final {
   Scalar max_step{};      ///< Largest proposed step magnitude.
   IterPolicy iteration{}; ///< Tolerances and work limits for integration.
   std::optional<Vector>
-      parameters{}; ///< Parameters supplied to the RHS callback.
+      parameters; ///< Parameters supplied to the RHS callback.
   std::optional<Matrix>
-      initial_sensitivity{}; ///< Initial state-by-parameter Jacobian.
+      initial_sensitivity; ///< Initial state-by-parameter Jacobian.
 };
 
 /// @brief Requested-time state trajectory and step accounting.

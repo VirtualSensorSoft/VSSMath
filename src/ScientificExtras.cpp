@@ -1,13 +1,28 @@
 #include "probability/DistributionInternal.hpp"
+#include "vss/math/Core.hpp"
+#include "vss/math/Limits.hpp"
+#include "vss/math/ProbabilityPolicy.hpp"
+#include "vss/math/Result.hpp"
+#include "vss/math/TensorElementwise.hpp"
+#include "vss/math/linear/FactorizationOptions.hpp"
+#include "vss/math/linear/Iterative.hpp"
+#include "vss/math/linear/LinearSolve.hpp"
+#include "vss/math/linear/SolvePolicy.hpp"
+#include "vss/math/probability/Composite.hpp"
+#include "vss/math/probability/Distribution.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <new>
 #include <numbers>
 #include <numeric>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 #include <vss/math/Error.hpp>
 #include <vss/math/Integration.hpp>
@@ -22,7 +37,8 @@ namespace {
 using Wide = long double;
 constexpr Wide theta13 = 5.371920351148152L;
 constexpr std::size_t probabilityWorkspaceElements = 1'000'000U;
-constexpr std::size_t probabilityWorkspaceBytes = 64U * 1024U * 1024U;
+constexpr std::size_t probabilityWorkspaceBytes =
+    static_cast<std::size_t>(64U) * 1024U * 1024U;
 
 Wide digamma(Wide x) {
   Wide result = 0.0L;
@@ -162,56 +178,62 @@ Result<Matrix> matrixExponential(Matrix matrix, SolvePolicy policy,
       }
     }
     auto a2Result = matrixProduct(b.view(), b.view());
-    if (!a2Result)
+    if (!a2Result) {
       return a2Result;
+    }
     Matrix a2 = std::move(a2Result).value();
     auto a4Result = matrixProduct(a2.view(), a2.view());
-    if (!a4Result)
+    if (!a4Result) {
       return a4Result;
+    }
     Matrix a4 = std::move(a4Result).value();
     auto a6Result = matrixProduct(a4.view(), a2.view());
-    if (!a6Result)
+    if (!a6Result) {
       return a6Result;
+    }
     Matrix a6 = std::move(a6Result).value();
     std::array<Wide, 14> coefficient{};
-    coefficient[0] = 1.0L;
+    coefficient.at(0) = 1.0L;
     for (Index j = 1U; j <= 13U; ++j) {
-      coefficient[j] =
-          coefficient[j - 1U] * (14U - j) / (static_cast<Wide>(j) * (27U - j));
+      coefficient.at(j) = coefficient.at(j - 1U) * (14U - j) /
+                          (static_cast<Wide>(j) * (27U - j));
     }
 
     Matrix uInner(n, n, 0.0);
-    addScaled(uInner, a6.view(), coefficient[13]);
-    addScaled(uInner, a4.view(), coefficient[11]);
-    addScaled(uInner, a2.view(), coefficient[9]);
+    addScaled(uInner, a6.view(), coefficient.at(13));
+    addScaled(uInner, a4.view(), coefficient.at(11));
+    addScaled(uInner, a2.view(), coefficient.at(9));
     auto uHigh = matrixProduct(a6.view(), uInner.view());
-    if (!uHigh)
+    if (!uHigh) {
       return uHigh;
+    }
     Matrix uPolynomial = std::move(uHigh).value();
-    addScaled(uPolynomial, a6.view(), coefficient[7]);
-    addScaled(uPolynomial, a4.view(), coefficient[5]);
-    addScaled(uPolynomial, a2.view(), coefficient[3]);
+    addScaled(uPolynomial, a6.view(), coefficient.at(7));
+    addScaled(uPolynomial, a4.view(), coefficient.at(5));
+    addScaled(uPolynomial, a2.view(), coefficient.at(3));
     for (Index i = 0U; i < n; ++i) {
-      uPolynomial.at(i, i) += static_cast<Scalar>(coefficient[1]);
+      uPolynomial.at(i, i) += static_cast<Scalar>(coefficient.at(1));
     }
     auto uResult = matrixProduct(b.view(), uPolynomial.view());
-    if (!uResult)
+    if (!uResult) {
       return uResult;
+    }
     Matrix u = std::move(uResult).value();
 
     Matrix vInner(n, n, 0.0);
-    addScaled(vInner, a6.view(), coefficient[12]);
-    addScaled(vInner, a4.view(), coefficient[10]);
-    addScaled(vInner, a2.view(), coefficient[8]);
+    addScaled(vInner, a6.view(), coefficient.at(12));
+    addScaled(vInner, a4.view(), coefficient.at(10));
+    addScaled(vInner, a2.view(), coefficient.at(8));
     auto vHigh = matrixProduct(a6.view(), vInner.view());
-    if (!vHigh)
+    if (!vHigh) {
       return vHigh;
+    }
     Matrix v = std::move(vHigh).value();
-    addScaled(v, a6.view(), coefficient[6]);
-    addScaled(v, a4.view(), coefficient[4]);
-    addScaled(v, a2.view(), coefficient[2]);
+    addScaled(v, a6.view(), coefficient.at(6));
+    addScaled(v, a4.view(), coefficient.at(4));
+    addScaled(v, a2.view(), coefficient.at(2));
     for (Index i = 0U; i < n; ++i) {
-      v.at(i, i) += static_cast<Scalar>(coefficient[0]);
+      v.at(i, i) += static_cast<Scalar>(coefficient.at(0));
     }
 
     Matrix denominator(n, n, 0.0);
@@ -247,8 +269,9 @@ Result<Matrix> matrixExponential(Matrix matrix, SolvePolicy policy,
     Matrix result = solved.value().solution();
     for (Index squareIndex = 0U; squareIndex < scaling; ++squareIndex) {
       auto squared = matrixProduct(result.view(), result.view());
-      if (!squared)
+      if (!squared) {
         return squared;
+      }
       result = std::move(squared).value();
     }
     return Result<Matrix>::success(std::move(result));
@@ -291,8 +314,9 @@ Result<Vector> adjustPValues(ConstVectorView pValues, MultiplicityRule rule,
   }
   try {
     Vector adjusted(count);
-    if (count == 0U)
+    if (count == 0U) {
       return Result<Vector>::success(std::move(adjusted));
+    }
     if (rule == MultiplicityRule::bonferroni) {
       for (Index i = 0U; i < count; ++i) {
         adjusted.at(i) = static_cast<Scalar>(
@@ -347,12 +371,14 @@ fullSupportBounds(const probability::Distribution& law,
   }
   auto lower = probability::quantile(law, 0.0, policy);
   auto upper = probability::quantile(law, 1.0, policy);
-  if (!lower)
+  if (!lower) {
     return Result<std::pair<Scalar, Scalar>>::failure(
         lower.status().code(), std::string(lower.status().message()));
-  if (!upper)
+  }
+  if (!upper) {
     return Result<std::pair<Scalar, Scalar>>::failure(
         upper.status().code(), std::string(upper.status().message()));
+  }
   if (law.measure() == probability::Measure::atom_mass ||
       law.measure() == probability::Measure::integer_mass ||
       law.measure() == probability::Measure::joint_atom_mass) {
@@ -372,9 +398,10 @@ fullSupportBounds(const probability::Distribution& law,
   } else {
     if (interval.lower > lower.value() && std::isfinite(interval.lower)) {
       auto atLower = probability::evaluate(law, interval.lower, policy);
-      if (!atLower)
+      if (!atLower) {
         return Result<std::pair<Scalar, Scalar>>::failure(
             atLower.status().code(), std::string(atLower.status().message()));
+      }
       if (atLower.value().cdf > 0.0) {
         return Result<std::pair<Scalar, Scalar>>::failure(
             ErrorCode::InvalidDomain, "interval omits lower-tail support mass");
@@ -382,9 +409,10 @@ fullSupportBounds(const probability::Distribution& law,
     }
     if (interval.upper < upper.value() && std::isfinite(interval.upper)) {
       auto atUpper = probability::evaluate(law, interval.upper, policy);
-      if (!atUpper)
+      if (!atUpper) {
         return Result<std::pair<Scalar, Scalar>>::failure(
             atUpper.status().code(), std::string(atUpper.status().message()));
+      }
       if (atUpper.value().survival > 0.0) {
         return Result<std::pair<Scalar, Scalar>>::failure(
             ErrorCode::InvalidDomain, "interval omits upper-tail support mass");
@@ -396,17 +424,20 @@ fullSupportBounds(const probability::Distribution& law,
 }
 
 Wide logAddWide(Wide left, Wide right) {
-  if (left == -std::numeric_limits<Wide>::infinity())
+  if (left == -std::numeric_limits<Wide>::infinity()) {
     return right;
-  if (right == -std::numeric_limits<Wide>::infinity())
+  }
+  if (right == -std::numeric_limits<Wide>::infinity()) {
     return left;
+  }
   const Wide maximum = std::max(left, right);
   return maximum + std::log1p(std::exp(std::min(left, right) - maximum));
 }
 
 Wide binaryEntropyBound(Wide probability) {
-  if (probability <= 0.0L)
+  if (probability <= 0.0L) {
     return 0.0L;
+  }
   return -probability * std::log(probability) -
          (1.0L - probability) * std::log1p(-probability);
 }
@@ -414,7 +445,7 @@ Wide binaryEntropyBound(Wide probability) {
 Wide poissonOmissionBound(Wide rate, std::size_t lastRetained) {
   const Wide m = static_cast<Wide>(lastRetained + 1U);
   const Wide ratio = rate / (m + 1.0L);
-  if (!(ratio > 0.0L && ratio < 1.0L)) {
+  if (ratio <= 0.0L || ratio >= 1.0L) {
     return std::numeric_limits<Wide>::infinity();
   }
   const Wide logFirst = -rate + m * std::log(rate) - std::lgamma(m + 1.0L);
@@ -432,8 +463,9 @@ Wide poissonOmissionBound(Wide rate, std::size_t lastRetained) {
 }
 
 Wide gammaSpatialEntropyBound(Wide shape, Wide scale, Wide distance) {
-  if (distance <= 0.0L)
+  if (distance <= 0.0L) {
     return std::numeric_limits<Wide>::infinity();
+  }
   const Wide logMaximum = (shape - 1.0L) * std::log(distance) -
                           distance / scale - std::lgamma(shape) -
                           shape * std::log(scale);
@@ -446,8 +478,9 @@ Wide gammaSpatialEntropyBound(Wide shape, Wide scale, Wide distance) {
 }
 
 Wide normalSpatialEntropyBound(Wide standardDeviation, Wide distance) {
-  if (distance <= 0.0L)
+  if (distance <= 0.0L) {
     return std::numeric_limits<Wide>::infinity();
+  }
   const Wide logMaximum =
       -0.5L * (distance / standardDeviation) * (distance / standardDeviation) -
       std::log(standardDeviation) - 0.9189385332046727417803297364056176L;
@@ -536,16 +569,17 @@ Result<IntegralResult> quadratureEntropy31(const UnaryFunction& function,
       return function(coordinate);
     };
     auto centerValue = sample(static_cast<Scalar>(center));
-    if (!centerValue)
+    if (!centerValue) {
       return Result<EntropyPanel>::failure(
           centerValue.status().code(),
           std::string(centerValue.status().message()));
-    values[30] = centerValue.value();
-    Wide kronrodSum = kronrod[15] * values[30];
-    Wide gaussSum = gauss[7] * values[30];
-    Wide absoluteSum = std::abs(kronrod[15] * values[30]);
+    }
+    values.at(30) = centerValue.value();
+    Wide kronrodSum = kronrod.at(15) * values.at(30);
+    Wide gaussSum = gauss.at(7) * values.at(30);
+    Wide absoluteSum = std::abs(kronrod.at(15) * values.at(30));
     for (Index node = 0U; node < 15U; ++node) {
-      const Wide offset = half * nodes[node];
+      const Wide offset = half * nodes.at(node);
       auto left = sample(static_cast<Scalar>(center - offset));
       auto right = sample(static_cast<Scalar>(center + offset));
       if (!left || !right) {
@@ -553,20 +587,21 @@ Result<IntegralResult> quadratureEntropy31(const UnaryFunction& function,
         return Result<EntropyPanel>::failure(status.code(),
                                              std::string(status.message()));
       }
-      values[2U * node] = left.value();
-      values[2U * node + 1U] = right.value();
+      values.at(2U * node) = left.value();
+      values.at(2U * node + 1U) = right.value();
       const Wide pair = static_cast<Wide>(left.value()) + right.value();
-      kronrodSum += kronrod[node] * pair;
+      kronrodSum += kronrod.at(node) * pair;
       absoluteSum +=
-          kronrod[node] * (std::abs(left.value()) + std::abs(right.value()));
-      if (node % 2U == 1U)
-        gaussSum += gauss[node / 2U] * pair;
+          kronrod.at(node) * (std::abs(left.value()) + std::abs(right.value()));
+      if (node % 2U == 1U) {
+        gaussSum += gauss.at(node / 2U) * pair;
+      }
     }
     const Wide mean = 0.5L * kronrodSum;
-    Wide asc = kronrod[15] * std::abs(values[30] - mean);
+    Wide asc = kronrod.at(15) * std::abs(values.at(30) - mean);
     for (Index node = 0U; node < 15U; ++node) {
-      asc += kronrod[node] * (std::abs(values[2U * node] - mean) +
-                              std::abs(values[2U * node + 1U] - mean));
+      asc += kronrod.at(node) * (std::abs(values.at(2U * node) - mean) +
+                                 std::abs(values.at(2U * node + 1U) - mean));
     }
     asc *= half;
     const Wide absolute = absoluteSum * half;
@@ -580,9 +615,10 @@ Result<IntegralResult> quadratureEntropy31(const UnaryFunction& function,
         {lower, upper, kronrodSum * half, error});
   };
   auto initial = evaluate(0.0, 1.0);
-  if (!initial)
+  if (!initial) {
     return Result<IntegralResult>::failure(
         initial.status().code(), std::string(initial.status().message()));
+  }
   std::vector<EntropyPanel> panels{initial.value()};
   const auto totals = [&] {
     std::pair<Wide, Wide> result{};
@@ -607,25 +643,28 @@ Result<IntegralResult> quadratureEntropy31(const UnaryFunction& function,
     const auto selected = std::max_element(
         panels.begin(), panels.end(),
         [](const EntropyPanel& left, const EntropyPanel& right) {
-          if (left.error != right.error)
+          if (left.error != right.error) {
             return left.error < right.error;
+          }
           return left.lower > right.lower;
         });
     const Scalar middle = std::midpoint(selected->lower, selected->upper);
-    if (!(middle > selected->lower && middle < selected->upper)) {
+    if (middle <= selected->lower || middle >= selected->upper) {
       return Result<IntegralResult>::failure(ErrorCode::NoConvergence,
                                              "entropy panel cannot be split");
     }
     const Scalar lower = selected->lower;
     const Scalar upper = selected->upper;
     auto left = evaluate(lower, middle);
-    if (!left)
+    if (!left) {
       return Result<IntegralResult>::failure(
           left.status().code(), std::string(left.status().message()));
+    }
     auto right = evaluate(middle, upper);
-    if (!right)
+    if (!right) {
       return Result<IntegralResult>::failure(
           right.status().code(), std::string(right.status().message()));
+    }
     *selected = left.value();
     panels.push_back(right.value());
     ++work.iterations;
@@ -719,19 +758,20 @@ quadratureEntropyPair31(const Function& function, Wide tolerance,
       return function(coordinate);
     };
     auto centerValue = sample(static_cast<Scalar>(center));
-    if (!centerValue)
+    if (!centerValue) {
       return Result<EntropyPairPanel>::failure(
           centerValue.status().code(),
           std::string(centerValue.status().message()));
-    values[30] = {centerValue.value()[0U], centerValue.value()[1U]};
-    std::array<Wide, 2> kronrodSum{kronrod[15] * values[30][0],
-                                   kronrod[15] * values[30][1]};
-    std::array<Wide, 2> gaussSum{gauss[7] * values[30][0],
-                                 gauss[7] * values[30][1]};
+    }
+    values.at(30) = {centerValue.value()[0U], centerValue.value()[1U]};
+    std::array<Wide, 2> kronrodSum{kronrod.at(15) * values.at(30).at(0),
+                                   kronrod.at(15) * values.at(30).at(1)};
+    std::array<Wide, 2> gaussSum{gauss.at(7) * values.at(30).at(0),
+                                 gauss.at(7) * values.at(30).at(1)};
     std::array<Wide, 2> absoluteSum{std::abs(kronrodSum[0]),
                                     std::abs(kronrodSum[1])};
     for (Index node = 0U; node < 15U; ++node) {
-      const Wide offset = half * nodes[node];
+      const Wide offset = half * nodes.at(node);
       auto left = sample(static_cast<Scalar>(center - offset));
       auto right = sample(static_cast<Scalar>(center + offset));
       if (!left || !right) {
@@ -739,47 +779,50 @@ quadratureEntropyPair31(const Function& function, Wide tolerance,
         return Result<EntropyPairPanel>::failure(status.code(),
                                                  std::string(status.message()));
       }
-      values[2U * node] = {left.value()[0U], left.value()[1U]};
-      values[2U * node + 1U] = {right.value()[0U], right.value()[1U]};
+      values.at(2U * node) = {left.value()[0U], left.value()[1U]};
+      values.at(2U * node + 1U) = {right.value()[0U], right.value()[1U]};
       for (Index component = 0U; component < 2U; ++component) {
-        const Wide pair =
-            values[2U * node][component] + values[2U * node + 1U][component];
-        kronrodSum[component] += kronrod[node] * pair;
-        absoluteSum[component] +=
-            kronrod[node] * (std::abs(values[2U * node][component]) +
-                             std::abs(values[2U * node + 1U][component]));
-        if (node % 2U == 1U)
-          gaussSum[component] += gauss[node / 2U] * pair;
+        const Wide pair = values.at(2U * node).at(component) +
+                          values.at(2U * node + 1U).at(component);
+        kronrodSum.at(component) += kronrod.at(node) * pair;
+        absoluteSum.at(component) +=
+            kronrod.at(node) *
+            (std::abs(values.at(2U * node).at(component)) +
+             std::abs(values.at(2U * node + 1U).at(component)));
+        if (node % 2U == 1U) {
+          gaussSum.at(component) += gauss.at(node / 2U) * pair;
+        }
       }
     }
     std::array<Wide, 2> estimate{};
     std::array<Wide, 2> errors{};
     for (Index component = 0U; component < 2U; ++component) {
-      const Wide mean = 0.5L * kronrodSum[component];
-      Wide asc = kronrod[15] * std::abs(values[30][component] - mean);
+      const Wide mean = 0.5L * kronrodSum.at(component);
+      Wide asc = kronrod.at(15) * std::abs(values.at(30).at(component) - mean);
       for (Index node = 0U; node < 15U; ++node) {
-        asc += kronrod[node] *
-               (std::abs(values[2U * node][component] - mean) +
-                std::abs(values[2U * node + 1U][component] - mean));
+        asc += kronrod.at(node) *
+               (std::abs(values.at(2U * node).at(component) - mean) +
+                std::abs(values.at(2U * node + 1U).at(component) - mean));
       }
       asc *= half;
-      const Wide absolute = absoluteSum[component] * half;
+      const Wide absolute = absoluteSum.at(component) * half;
       Wide error =
-          std::abs((kronrodSum[component] - gaussSum[component]) * half);
+          std::abs((kronrodSum.at(component) - gaussSum.at(component)) * half);
       if (asc != 0.0L && error != 0.0L) {
         error = asc * std::min(1.0L, std::pow(200.0L * error / asc, 1.5L));
       }
-      errors[component] = std::max(
+      errors.at(component) = std::max(
           error, 50.0L * std::numeric_limits<Scalar>::epsilon() * absolute);
-      estimate[component] = kronrodSum[component] * half;
+      estimate.at(component) = kronrodSum.at(component) * half;
     }
     return Result<EntropyPairPanel>::success(
         {lower, upper, estimate[0], errors[0], estimate[1], errors[1]});
   };
   auto initial = evaluate(0.0, 1.0);
-  if (!initial)
+  if (!initial) {
     return Result<EntropyPairEstimate>::failure(
         initial.status().code(), std::string(initial.status().message()));
+  }
   return Result<EntropyPairEstimate>::success(
       {initial.value().value, initial.value().error, initial.value().auxiliary,
        initial.value().auxiliaryError});
@@ -818,9 +861,10 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
   const DistributionSnapshot* innerTruncated = nullptr;
   const DistributionSnapshot* outerLeaf = nullptr;
   for (const auto& child : outer.components) {
-    if (child.family == Family::truncated)
+    if (child.family == Family::truncated) {
       innerTruncated = &child;
-    else if (child.family == Family::gamma || child.family == Family::poisson) {
+    } else if (child.family == Family::gamma ||
+               child.family == Family::poisson) {
       outerLeaf = &child;
     }
   }
@@ -845,10 +889,12 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
   const DistributionSnapshot* normalLaw = nullptr;
   const DistributionSnapshot* uniformLaw = nullptr;
   for (const auto& child : inner.components) {
-    if (child.family == Family::normal)
+    if (child.family == Family::normal) {
       normalLaw = &child;
-    if (child.family == Family::uniform)
+    }
+    if (child.family == Family::uniform) {
       uniformLaw = &child;
+    }
   }
   if (normalLaw == nullptr || uniformLaw == nullptr ||
       normalLaw->parameters.size() < 2U || uniformLaw->parameters.size() < 2U) {
@@ -886,8 +932,8 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
       std::exp(static_cast<Wide>(innerTruncated->parameters[2U]));
   const Wide outerNormalizer =
       std::exp(static_cast<Wide>(root.value().parameters[2U]));
-  if (!(innerNormalizer > 0.0L && innerNormalizer <= 1.0L &&
-        outerNormalizer > 0.0L && outerNormalizer <= 1.0L)) {
+  if (innerNormalizer <= 0.0L || innerNormalizer > 1.0L ||
+      outerNormalizer <= 0.0L || outerNormalizer > 1.0L) {
     return Result<Scalar>::failure(ErrorCode::NonFiniteResult,
                                    "nested truncation normalizer is invalid");
   }
@@ -901,12 +947,15 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
   const Wide outerScale = gammaOuter ? outerLeaf->parameters[1U] : 0.0L;
   const Wide poissonRate = gammaOuter ? 0.0L : outerLeaf->parameters[0U];
   const auto normalUniformDensity = [&](Wide x) {
-    if (x < innerLower || x > innerUpper)
+    if (x < innerLower || x > innerUpper) {
       return 0.0L;
+    }
     const Wide zLower = (x - uniformLower - mean) / deviation;
     const Wide zUpper = (x - uniformUpper - mean) / deviation;
-    const Wide lowerCdf = 0.5L * std::erfc(-zLower / std::sqrt(2.0L));
-    const Wide upperCdf = 0.5L * std::erfc(-zUpper / std::sqrt(2.0L));
+    const Wide lowerCdf =
+        0.5L * std::erfc(-zLower / std::numbers::sqrt2_v<long double>);
+    const Wide upperCdf =
+        0.5L * std::erfc(-zUpper / std::numbers::sqrt2_v<long double>);
     const Wide density = (lowerCdf - upperCdf) / (uniformUpper - uniformLower);
     return std::max(0.0L, density / innerNormalizer);
   };
@@ -915,15 +964,16 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
     if (!gammaOuter) {
       const Wide low = std::max(0.0L, std::ceil(x - innerUpper));
       const Wide high = std::floor(x - innerLower);
-      if (high < low)
+      if (high < low) {
         return Result<Wide>::success(0.0L);
+      }
       if (high - low > 64.0L) {
         return Result<Wide>::failure(ErrorCode::ResourceLimit,
                                      "nested Poisson support exceeds work cap");
       }
       Wide sum = 0.0L;
       Wide correction = 0.0L;
-      for (std::uint64_t k = static_cast<std::uint64_t>(low);
+      for (auto k = static_cast<std::uint64_t>(low);
            static_cast<Wide>(k) <= high; ++k) {
         if (work.evaluations >= policy.iteration.max_evaluations) {
           return Result<Wide>::failure(ErrorCode::ResourceLimit,
@@ -944,8 +994,9 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
     }
     const Wide lower = std::max(0.0L, x - innerUpper);
     const Wide upper = x - innerLower;
-    if (!(upper > lower))
+    if (!(upper > lower)) {
       return Result<Wide>::success(0.0L);
+    }
     const Wide width = upper - lower;
     const Index power =
         lower == 0.0L && outerShape < 2.0L
@@ -975,9 +1026,10 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
     };
     auto integral =
         quadratureEntropy31(kernel, tolerance / 32.0L, policy, work);
-    if (!integral)
+    if (!integral) {
       return Result<Wide>::failure(integral.status().code(),
                                    std::string(integral.status().message()));
+    }
     if (integral.value().termination != Termination::converged) {
       return Result<Wide>::failure(
           ErrorCode::NoConvergence,
@@ -990,8 +1042,8 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
     Wide correction = 0.0L;
     constexpr std::array<Wide, 4> breakpoints{0.0L, 1.0L, 2.0L, 3.0L};
     for (Index segment = 0U; segment + 1U < breakpoints.size(); ++segment) {
-      const Wide segmentLeft = breakpoints[segment];
-      const Wide segmentRight = breakpoints[segment + 1U];
+      const Wide segmentLeft = breakpoints.at(segment);
+      const Wide segmentRight = breakpoints.at(segment + 1U);
       const Index pieces = refined ? 4U : 2U;
       const Wide width = segmentRight - segmentLeft;
       for (Index piece = 0U; piece < pieces; ++piece) {
@@ -1007,12 +1059,14 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
           const Wide jacobian = (right - left) * power *
                                 std::pow(u, static_cast<Wide>(power - 1U));
           auto density = densityAt(left + offset);
-          if (!density)
+          if (!density) {
             return Result<Scalar>::failure(
                 density.status().code(),
                 std::string(density.status().message()));
-          if (density.value() == 0.0L)
+          }
+          if (density.value() == 0.0L) {
             return Result<Scalar>::success(0.0);
+          }
           const Wide value =
               -density.value() * std::log(density.value()) * jacobian;
           if (!std::isfinite(value) ||
@@ -1027,10 +1081,11 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
             tolerance / (16.0L * (breakpoints.size() - 1U) * pieces);
         auto integral =
             quadratureEntropy31(entropyKernel, target, policy, work);
-        if (!integral)
+        if (!integral) {
           return Result<Wide>::failure(
               integral.status().code(),
               std::string(integral.status().message()));
+        }
         if (integral.value().termination != Termination::converged) {
           return Result<Wide>::failure(ErrorCode::NoConvergence,
                                        "nested entropy panel did not converge");
@@ -1044,13 +1099,15 @@ Result<Scalar> nestedConditionedEntropy(const probability::Distribution& law,
     return Result<Wide>::success(sum);
   };
   auto coarse = runMesh(false);
-  if (!coarse)
+  if (!coarse) {
     return Result<Scalar>::failure(coarse.status().code(),
                                    std::string(coarse.status().message()));
+  }
   auto fine = runMesh(true);
-  if (!fine)
+  if (!fine) {
     return Result<Scalar>::failure(fine.status().code(),
                                    std::string(fine.status().message()));
+  }
   const Wide innerBound = gammaOuter ? 3.0L * tolerance / 32.0L : 0.0L;
   if (std::abs(fine.value() - coarse.value()) + innerBound + tolerance / 8.0L >
       tolerance) {
@@ -1101,10 +1158,12 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
   const DistributionSnapshot* beta = nullptr;
   const DistributionSnapshot* gamma = nullptr;
   for (const auto& child : snapshot.value().components) {
-    if (child.family == Family::beta)
+    if (child.family == Family::beta) {
       beta = &child;
-    if (child.family == Family::gamma)
+    }
+    if (child.family == Family::gamma) {
       gamma = &child;
+    }
   }
   if (beta == nullptr || gamma == nullptr || beta->parameters.size() < 2U ||
       gamma->parameters.size() < 2U || beta->parameters[0U] != 1.0 ||
@@ -1144,12 +1203,13 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
           ErrorCode::ResourceLimit,
           "singularity regularization exceeds work profile");
     }
-    Index power = static_cast<Index>(raw);
+    auto const power = static_cast<Index>(raw);
     const Index last = std::min<Index>(32U, 2U * power);
     for (Index candidate = power; candidate <= last; ++candidate) {
       const Wide product = static_cast<Wide>(candidate) * exponent;
-      if (product == std::floor(product))
+      if (product == std::floor(product)) {
         return Result<Index>::success(candidate);
+      }
     }
     const Wide fallback =
         std::max(static_cast<Wide>(power), std::ceil(8.0L / exponent));
@@ -1167,12 +1227,18 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
       regularizationPower(std::min(1.0L, betaShape + gammaShape));
   if (!betaPowerResult || !gammaPowerResult || !originPowerResult ||
       !collisionPowerResult) {
-    const Status& status = !betaPowerResult     ? betaPowerResult.status()
-                           : !gammaPowerResult  ? gammaPowerResult.status()
-                           : !originPowerResult ? originPowerResult.status()
-                                                : collisionPowerResult.status();
-    return Result<Scalar>::failure(status.code(),
-                                   std::string(status.message()));
+    const Status* status = &collisionPowerResult.status();
+    if (!originPowerResult) {
+      status = &originPowerResult.status();
+    }
+    if (!gammaPowerResult) {
+      status = &gammaPowerResult.status();
+    }
+    if (!betaPowerResult) {
+      status = &betaPowerResult.status();
+    }
+    return Result<Scalar>::failure(status->code(),
+                                   std::string(status->message()));
   }
   const Index betaPower = betaPowerResult.value();
   const Index gammaPower = gammaPowerResult.value();
@@ -1191,8 +1257,9 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
     const Wide k = right ? betaShape : gammaShape;
     const Wide j = right ? gammaShape : betaShape;
     const Wide c = std::min(distance, upper);
-    if (!(c > 0.0L))
+    if (!(c > 0.0L)) {
       return Result<BetaGammaDensity>::success({0.0L, 0.0L});
+    }
     const Wide collisionExponent = betaShape + gammaShape - 1.0L;
     const Wide logDensityScale =
         std::log(betaShape) - logGammaShape +
@@ -1210,13 +1277,15 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
     Wide error = 0.0L;
     const auto integrate = [&](Index power,
                                bool logarithmic) -> Result<Scalar> {
-      const Wide ell =
-          logarithmic ? ((upper - c) / c < 0.5L ? std::log1p((upper - c) / c)
-                                                : std::log(upper) - std::log(c))
-                      : 0.0L;
+      Wide ell = 0.0L;
+      if (logarithmic) {
+        const Wide relativeGap = (upper - c) / c;
+        ell = relativeGap < 0.5L ? std::log1p(relativeGap)
+                                 : std::log(upper) - std::log(c);
+      }
       const UnaryFunction kernel = [&](Scalar coordinate) -> Result<Scalar> {
         const Wide u = static_cast<Wide>(coordinate);
-        if (!(u > 0.0L && u < 1.0L)) {
+        if (u <= 0.0L || u >= 1.0L) {
           return Result<Scalar>::failure(
               ErrorCode::NoConvergence,
               "open quadrature node was not preserved");
@@ -1248,9 +1317,10 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
         return Result<Scalar>::success(static_cast<Scalar>(value));
       };
       auto estimate = quadratureEntropy31(kernel, innerTolerance, policy, work);
-      if (!estimate)
+      if (!estimate) {
         return Result<Scalar>::failure(
             estimate.status().code(), std::string(estimate.status().message()));
+      }
       if (estimate.value().termination != Termination::converged) {
         return Result<Scalar>::failure(
             ErrorCode::ResourceLimit,
@@ -1266,15 +1336,17 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
     };
     const Index firstPower = right ? betaPower : gammaPower;
     auto first = integrate(firstPower, false);
-    if (!first)
+    if (!first) {
       return Result<BetaGammaDensity>::failure(
           first.status().code(), std::string(first.status().message()));
+    }
     if (c < upper) {
       auto remainder = integrate(1U, true);
-      if (!remainder)
+      if (!remainder) {
         return Result<BetaGammaDensity>::failure(
             remainder.status().code(),
             std::string(remainder.status().message()));
+      }
     }
     if (!std::isfinite(total) || total < 0.0L) {
       return Result<BetaGammaDensity>::failure(
@@ -1317,7 +1389,10 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
     return Result<Scalar>::failure(ErrorCode::ResourceLimit,
                                    "Beta-Gamma tail plan allocation failed");
   }
-  for (Wide edge = 4.0L; edge < 1.0L + distance; edge *= 2.0L) {
+  for (Index exponent = 2U;
+       std::ldexp(1.0L, static_cast<int>(exponent)) < 1.0L + distance;
+       ++exponent) {
+    const Wide edge = std::ldexp(1.0L, static_cast<int>(exponent));
     if (tailBreaks.size() >= probabilityWorkspaceElements / 2U ||
         tailBreaks.size() * sizeof(Wide) >= probabilityWorkspaceBytes) {
       return Result<Scalar>::failure(
@@ -1372,16 +1447,19 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
       Wide upper;
       Wide jacobian;
     };
-    if (chart.tail)
+    if (chart.tail) {
       return Point{chart.left + chart.width * t, 1.0L, chart.width};
+    }
     const Wide offset =
         chart.width * std::pow(t, static_cast<Wide>(chart.power));
     const Wide jacobian = chart.width * chart.power *
                           std::pow(t, static_cast<Wide>(chart.power - 1U));
-    if (&chart == &charts[0])
+    if (&chart == charts.data()) {
       return Point{1.0L - offset, offset, jacobian};
-    if (&chart == &charts[1])
+    }
+    if (&chart == &charts[1]) {
       return Point{offset, 1.0L - offset, jacobian};
+    }
     return Point{offset, 1.0L, jacobian};
   };
   const auto evaluateChartPanel =
@@ -1395,12 +1473,14 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
         return Result<std::array<Scalar, 2>>::success({0.0, 0.0});
       }
       auto density = densityAt(chart.right, point.distance, point.upper);
-      if (!density)
+      if (!density) {
         return Result<std::array<Scalar, 2>>::failure(
             density.status().code(), std::string(density.status().message()));
+      }
       const Wide f = density.value().value;
-      if (f == 0.0L)
+      if (f == 0.0L) {
         return Result<std::array<Scalar, 2>>::success({0.0, 0.0});
+      }
       const Wide entropy = -f * std::log(f) * point.jacobian * width;
       const Wide lower = std::max(0.0L, f - density.value().error);
       const Wide upper = f + density.value().error;
@@ -1480,13 +1560,15 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
       const Wide left = static_cast<Wide>(piece) / initialPieces;
       const Wide width = 1.0L / initialPieces;
       auto parent = evaluateChartPanel(charts[chartIndex], left, width);
-      if (!parent)
+      if (!parent) {
         return Result<Scalar>::failure(parent.status().code(),
                                        std::string(parent.status().message()));
+      }
       auto cell = splitCell(chartIndex, left, width, parent.value());
-      if (!cell)
+      if (!cell) {
         return Result<Scalar>::failure(cell.status().code(),
                                        std::string(cell.status().message()));
+      }
       cells.push_back(cell.value());
     }
   }
@@ -1535,8 +1617,9 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
     const bool densityQualified =
         densityAllowance + densityPanelError + rounding <= tolerance / 4.0L;
     if (tailError <= tolerance / 8.0L && panelQualified &&
-        refinementQualified && densityQualified)
+        refinementQualified && densityQualified) {
       break;
+    }
     if (cells.size() >= probabilityWorkspaceElements ||
         cells.size() >= probabilityWorkspaceBytes / sizeof(RefinedCell)) {
       return Result<Scalar>::failure(
@@ -1551,8 +1634,9 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
           const Wide secondPriority = second.childLeft.error +
                                       second.childRight.error +
                                       second.discrepancy;
-          if (firstPriority != secondPriority)
+          if (firstPriority != secondPriority) {
             return firstPriority < secondPriority;
+          }
           if (first.chartIndex != second.chartIndex) {
             return first.chartIndex > second.chartIndex;
           }
@@ -1564,15 +1648,17 @@ Result<Scalar> betaGammaEntropy(const probability::Distribution& law,
     const EntropyPairEstimate parentLeft = selected->childLeft;
     const EntropyPairEstimate parentRight = selected->childRight;
     auto refinedLeft = splitCell(chartIndex, left, half, parentLeft);
-    if (!refinedLeft)
+    if (!refinedLeft) {
       return Result<Scalar>::failure(
           refinedLeft.status().code(),
           std::string(refinedLeft.status().message()));
+    }
     auto refinedRight = splitCell(chartIndex, left + half, half, parentRight);
-    if (!refinedRight)
+    if (!refinedRight) {
       return Result<Scalar>::failure(
           refinedRight.status().code(),
           std::string(refinedRight.status().message()));
+    }
     *selected = refinedLeft.value();
     try {
       cells.push_back(refinedRight.value());
@@ -1637,9 +1723,10 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
   const DistributionSnapshot* count = nullptr;
   const DistributionSnapshot* base = nullptr;
   for (const auto& child : snapshot.value().components) {
-    if (child.family == Family::poisson)
+    if (child.family == Family::poisson) {
       count = &child;
-    else if (child.family == Family::normal || child.family == Family::gamma) {
+    } else if (child.family == Family::normal ||
+               child.family == Family::gamma) {
       base = &child;
     }
   }
@@ -1709,8 +1796,9 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
   for (Index attempt = 0U; attempt < 128U && spatialBound() > spatialBudget;
        ++attempt) {
     distance *= 1.2L;
-    if (!std::isfinite(distance))
+    if (!std::isfinite(distance)) {
       break;
+    }
   }
   const Wide spatialError = spatialBound();
   if (!(spatialError <= spatialBudget) ||
@@ -1745,7 +1833,7 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
     retainedCorrection = (next - retainedMass) - adjusted;
     retainedMass = next;
   }
-  if (!(retainedMass > 0.0L && retainedMass <= 1.0L)) {
+  if (retainedMass <= 0.0L || retainedMass > 1.0L) {
     return Result<Scalar>::failure(ErrorCode::NonFiniteResult,
                                    "retained Poisson mass is invalid");
   }
@@ -1760,7 +1848,7 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
     return Result<Scalar>::failure(ErrorCode::ResourceLimit,
                                    "entropy panel plan exceeds workspace");
   }
-  const std::size_t fullCells = static_cast<std::size_t>(rawCellCount);
+  const auto fullCells = static_cast<std::size_t>(rawCellCount);
   if (fullCells == 0U || fullCells > probabilityWorkspaceElements ||
       fullCells > probabilityWorkspaceBytes / (8U * sizeof(Wide))) {
     return Result<Scalar>::failure(ErrorCode::ResourceLimit,
@@ -1775,27 +1863,35 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
     correction = (next - sum) - adjusted;
     sum = next;
   };
-  const auto integrateSegment = [&](Wide cellLeft, Wide segmentLeft,
-                                    Wide segmentRight, Index power,
-                                    Wide target) -> Result<IntegralResult> {
-    const Wide width = segmentRight - segmentLeft;
+  struct SegmentRequest final {
+    Wide cellLeft;
+    Wide start;
+    Wide stop;
+    Index regularizationPower;
+    Wide tolerance;
+  };
+  const auto integrateSegment =
+      [&](SegmentRequest segment) -> Result<IntegralResult> {
+    const Wide width = segment.stop - segment.start;
     if (!(width > 0.0L)) {
       return Result<IntegralResult>::success(
           {0.0, 0.0, 0U, 0U, Termination::converged});
     }
     const UnaryFunction integrand = [&](Scalar coordinate) -> Result<Scalar> {
       const Wide u = coordinate;
-      const Wide offset = width * std::pow(u, static_cast<Wide>(power));
-      const Wide jacobian = width * static_cast<Wide>(power) *
-                            std::pow(u, static_cast<Wide>(power - 1U));
-      const Wide x = segmentLeft + offset;
+      const Wide offset =
+          width * std::pow(u, static_cast<Wide>(segment.regularizationPower));
+      const Wide jacobian =
+          width * static_cast<Wide>(segment.regularizationPower) *
+          std::pow(u, static_cast<Wide>(segment.regularizationPower - 1U));
+      const Wide x = segment.start + offset;
       Wide logDensity = -std::numeric_limits<Wide>::infinity();
       const std::size_t maximumCount =
           gammaBase
               ? std::min(lastCount, static_cast<std::size_t>(std::max<Wide>(
-                                        0.0L, std::floor(cellLeft))))
+                                        0.0L, std::floor(segment.cellLeft))))
               : lastCount;
-      const Index terms = static_cast<Index>(maximumCount + 1U);
+      const auto terms = static_cast<Index>(maximumCount + 1U);
       if (work.evaluations >= policy.iteration.max_evaluations ||
           terms > policy.iteration.max_evaluations - work.evaluations) {
         return Result<Scalar>::failure(ErrorCode::ResourceLimit,
@@ -1806,7 +1902,7 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
         Wide residual = 0.0L;
         Wide logBase = -std::numeric_limits<Wide>::infinity();
         if (gammaBase) {
-          residual = (segmentLeft - static_cast<Wide>(k)) + offset;
+          residual = (segment.start - static_cast<Wide>(k)) + offset;
           if (residual > 0.0L) {
             logBase = (shape - 1.0L) * std::log(residual) - residual / scale -
                       std::lgamma(shape) - shape * std::log(scale);
@@ -1843,9 +1939,11 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
       return Result<IntegralResult>::failure(ErrorCode::ResourceLimit,
                                              "entropy work ledger exhausted");
     }
-    auto result = quadratureEntropy31(integrand, target, policy, work);
-    if (!result)
+    auto result =
+        quadratureEntropy31(integrand, segment.tolerance, policy, work);
+    if (!result) {
       return result;
+    }
     return result;
   };
 
@@ -1855,8 +1953,9 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
     for (std::size_t cell = 0U; cell < fullCells; ++cell) {
       const Wide cellLeft = firstCell + static_cast<Wide>(cell);
       const Wide cellRight = std::min(cellLeft + 1.0L, upper);
-      if (!(cellRight > cellLeft))
+      if (!(cellRight > cellLeft)) {
         continue;
+      }
       const bool singular =
           gammaBase && cell <= lastCount && shape < 2.0L && shape != 1.0L;
       Index power = 1U;
@@ -1866,18 +1965,20 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
       const Wide width = cellRight - cellLeft;
       const Index pieces = refined ? 4U : 2U;
       for (Index piece = 0U; piece < pieces; ++piece) {
-        const Wide left = cellLeft + width * static_cast<Wide>(piece) / pieces;
-        const Wide right =
+        const Wide segmentStart =
+            cellLeft + width * static_cast<Wide>(piece) / pieces;
+        const Wide segmentStop =
             cellLeft + width * static_cast<Wide>(piece + 1U) / pieces;
         const Index segmentPower = singular && piece == 0U ? power : 1U;
         const Wide target =
             tolerance / (16.0L * static_cast<Wide>(fullCells) * pieces);
-        auto integral =
-            integrateSegment(cellLeft, left, right, segmentPower, target);
-        if (!integral)
+        auto integral = integrateSegment(
+            {cellLeft, segmentStart, segmentStop, segmentPower, target});
+        if (!integral) {
           return Result<Wide>::failure(
               integral.status().code(),
               std::string(integral.status().message()));
+        }
         if (integral.value().termination != Termination::converged) {
           return Result<Wide>::failure(
               ErrorCode::NoConvergence,
@@ -1896,14 +1997,16 @@ Result<Scalar> poissonTranslatedEntropy(const probability::Distribution& law,
   };
   const Wide errorBefore = estimatedError;
   auto coarse = runMesh(false);
-  if (!coarse)
+  if (!coarse) {
     return Result<Scalar>::failure(coarse.status().code(),
                                    std::string(coarse.status().message()));
+  }
   const Wide coarseError = estimatedError - errorBefore;
   auto fine = runMesh(true);
-  if (!fine)
+  if (!fine) {
     return Result<Scalar>::failure(fine.status().code(),
                                    std::string(fine.status().message()));
+  }
   const Wide fineError = estimatedError - errorBefore - coarseError;
   const Wide discrepancy = std::abs(fine.value() - coarse.value());
   const Wide totalError =
@@ -1931,9 +2034,10 @@ Result<Scalar> transformedIntegral(const probability::Distribution& p,
                                    "entropy integration policy is invalid");
   }
   auto bounds = fullSupportBounds(p, support, policy);
-  if (!bounds)
+  if (!bounds) {
     return Result<Scalar>::failure(bounds.status().code(),
                                    std::string(bounds.status().message()));
+  }
   if (q != nullptr) {
     auto qBounds = fullSupportBounds(*q, support, policy);
     if (!qBounds && q->family() == p.family() &&
@@ -1986,9 +2090,10 @@ Result<Scalar> transformedIntegral(const probability::Distribution& p,
                                      "support transformation exceeded range");
     }
     auto pValue = probability::evaluate(p, x, policy);
-    if (!pValue)
+    if (!pValue) {
       return Result<Scalar>::failure(pValue.status().code(),
                                      std::string(pValue.status().message()));
+    }
     if (std::isinf(pValue.value().log_density_or_mass)) {
       // A selected density representative can be infinite at an integrable
       // isolated pole. Its value at that single point does not change a
@@ -2004,9 +2109,10 @@ Result<Scalar> transformedIntegral(const probability::Distribution& p,
               pValue.value().log_density_or_mass;
     } else {
       auto qValue = probability::evaluate(*q, x, policy);
-      if (!qValue)
+      if (!qValue) {
         return Result<Scalar>::failure(qValue.status().code(),
                                        std::string(qValue.status().message()));
+      }
       if (qValue.value().density_or_mass == 0.0) {
         return Result<Scalar>::failure(
             ErrorCode::NoConvergence,
@@ -2036,9 +2142,10 @@ Result<Scalar> transformedIntegral(const probability::Distribution& p,
       ErrorCode::NoConvergence, "integral not evaluated");
   integral =
       quadratureAdaptive(integrand, {0.0, 1.0}, integrationPolicy, resources);
-  if (!integral)
+  if (!integral) {
     return Result<Scalar>::failure(integral.status().code(),
                                    std::string(integral.status().message()));
+  }
   const Wide allowed = static_cast<Wide>(policy.abs_log_error) +
                        static_cast<Wide>(policy.iteration.rel) *
                            std::abs(integral.value().value);
@@ -2058,36 +2165,42 @@ Result<Scalar> numericalEntropy(const probability::Distribution& law,
                                 ProbabilityPolicy policy) {
   bool betaGammaHandled = false;
   auto betaGamma = betaGammaEntropy(law, truncation, policy, betaGammaHandled);
-  if (betaGammaHandled)
+  if (betaGammaHandled) {
     return betaGamma;
+  }
   bool nestedHandled = false;
   auto nested =
       nestedConditionedEntropy(law, truncation, policy, nestedHandled);
-  if (nestedHandled)
+  if (nestedHandled) {
     return nested;
+  }
   bool translatedHandled = false;
   auto translated =
       poissonTranslatedEntropy(law, truncation, policy, translatedHandled);
-  if (translatedHandled)
+  if (translatedHandled) {
     return translated;
+  }
   auto bounds = fullSupportBounds(law, truncation, policy);
-  if (!bounds)
+  if (!bounds) {
     return Result<Scalar>::failure(bounds.status().code(),
                                    std::string(bounds.status().message()));
+  }
   const auto atoms = law.finiteAtoms();
   if (!atoms.locations.empty()) {
     Wide entropy = 0.0L;
     for (const Scalar mass : atoms.masses) {
-      if (mass > 0.0)
+      if (mass > 0.0) {
         entropy -= static_cast<Wide>(mass) * std::log(mass);
+      }
     }
     return Result<Scalar>::success(static_cast<Scalar>(entropy));
   }
   if (law.family() == probability::Family::bernoulli) {
     const Scalar success = law.parameters()[0U];
     Wide entropy = 0.0L;
-    if (success > 0.0)
+    if (success > 0.0) {
       entropy -= static_cast<Wide>(success) * std::log(success);
+    }
     if (success < 1.0) {
       const Scalar failure = 1.0 - success;
       entropy -= static_cast<Wide>(failure) * std::log(failure);
@@ -2141,9 +2254,10 @@ Result<Scalar> numericalKLDivergence(const probability::Distribution& p,
                                    "KL laws must use the same measure");
   }
   auto bounds = fullSupportBounds(p, support, policy);
-  if (!bounds)
+  if (!bounds) {
     return Result<Scalar>::failure(bounds.status().code(),
                                    std::string(bounds.status().message()));
+  }
   if (p.family() == probability::Family::normal &&
       q.family() == probability::Family::normal) {
     const auto a = p.parameters();
@@ -2163,8 +2277,9 @@ Result<Scalar> numericalKLDivergence(const probability::Distribution& p,
       q.family() == probability::Family::bernoulli) {
     const Scalar successP = p.parameters()[0U];
     const Scalar successQ = q.parameters()[0U];
-    if (successP == successQ)
+    if (successP == successQ) {
       return Result<Scalar>::success(0.0);
+    }
     if ((successP > 0.0 && successQ == 0.0) ||
         (successP < 1.0 && successQ == 1.0)) {
       return Result<Scalar>::success(std::numeric_limits<Scalar>::infinity());
@@ -2184,16 +2299,18 @@ Result<Scalar> numericalKLDivergence(const probability::Distribution& p,
     auto qSnapshot = probability::detail::DistributionEngine::snapshot(
         q, {probabilityWorkspaceElements, probabilityWorkspaceBytes,
             policy.iteration.max_evaluations});
-    if (!qSnapshot)
+    if (!qSnapshot) {
       return Result<Scalar>::failure(qSnapshot.status().code(),
                                      std::string(qSnapshot.status().message()));
+    }
     bool uniformComponents = !qSnapshot.value().components.empty();
     std::vector<std::pair<Wide, Wide>> intervals;
     for (Index i = 0U; i < qSnapshot.value().components.size(); ++i) {
       const auto& component = qSnapshot.value().components[i];
       if (i < qSnapshot.value().weights.size() &&
-          qSnapshot.value().weights[i] == 0.0)
+          qSnapshot.value().weights[i] == 0.0) {
         continue;
+      }
       if (component.family != probability::Family::uniform ||
           component.parameters.size() < 2U) {
         uniformComponents = false;
@@ -2209,8 +2326,9 @@ Result<Scalar> numericalKLDivergence(const probability::Distribution& p,
       for (const auto& [rawLower, rawUpper] : intervals) {
         const Wide lower = std::max<Wide>(rawLower, pParameters[0U]);
         const Wide upper = std::min<Wide>(rawUpper, pParameters[1U]);
-        if (upper <= coveredUntil)
+        if (upper <= coveredUntil) {
           continue;
+        }
         if (lower > coveredUntil) {
           return Result<Scalar>::success(
               std::numeric_limits<Scalar>::infinity());
@@ -2227,12 +2345,14 @@ Result<Scalar> numericalKLDivergence(const probability::Distribution& p,
     Wide divergence = 0.0L;
     for (Index i = 0U; i < atoms.locations.size(); ++i) {
       const Scalar massP = atoms.masses[i];
-      if (massP == 0.0)
+      if (massP == 0.0) {
         continue;
+      }
       auto valueQ = probability::evaluate(q, atoms.locations[i], policy);
-      if (!valueQ)
+      if (!valueQ) {
         return Result<Scalar>::failure(valueQ.status().code(),
                                        std::string(valueQ.status().message()));
+      }
       const Scalar massQ = valueQ.value().density_or_mass;
       if (massQ == 0.0) {
         return Result<Scalar>::success(std::numeric_limits<Scalar>::infinity());
@@ -2251,26 +2371,30 @@ Result<Scalar> numericalKLDivergence(const probability::Distribution& p,
   }
   auto qLower = probability::quantile(q, 0.0, policy);
   auto qUpper = probability::quantile(q, 1.0, policy);
-  if (!qLower)
+  if (!qLower) {
     return Result<Scalar>::failure(qLower.status().code(),
                                    std::string(qLower.status().message()));
-  if (!qUpper)
+  }
+  if (!qUpper) {
     return Result<Scalar>::failure(qUpper.status().code(),
                                    std::string(qUpper.status().message()));
+  }
   if (bounds.value().first < qLower.value()) {
     auto massBelow = probability::evaluate(p, qLower.value(), policy);
-    if (!massBelow)
+    if (!massBelow) {
       return Result<Scalar>::failure(massBelow.status().code(),
                                      std::string(massBelow.status().message()));
+    }
     if (massBelow.value().cdf > 0.0) {
       return Result<Scalar>::success(std::numeric_limits<Scalar>::infinity());
     }
   }
   if (bounds.value().second > qUpper.value()) {
     auto massAbove = probability::evaluate(p, qUpper.value(), policy);
-    if (!massAbove)
+    if (!massAbove) {
       return Result<Scalar>::failure(massAbove.status().code(),
                                      std::string(massAbove.status().message()));
+    }
     if (massAbove.value().survival > 0.0) {
       return Result<Scalar>::success(std::numeric_limits<Scalar>::infinity());
     }

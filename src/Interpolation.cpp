@@ -1,12 +1,17 @@
-#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Interpolation.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
 #include <vss/math/Result.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
@@ -324,14 +329,14 @@ Result<Spline> makeSpline(ConstVectorView nodes, ConstVectorView values,
       const Wide h = widths[i];
       const Wide dy = static_cast<Wide>(values.at(i + 1U)) - values.at(i);
       const Wide h2 = h * h;
-      const Wide coefficient[4]{
+      const std::array<Wide, 4U> coefficient{
           static_cast<Wide>(values.at(i)),
           dy - h2 * (2.0L * solution[i] + solution[i + 1U]) / 6.0L,
           h2 * solution[i] / 2.0L,
           h2 * (solution[i + 1U] - solution[i]) / 6.0L};
       for (Index j = 0U; j < 4U; ++j) {
         Scalar stored = 0.0;
-        if (!finiteScalar(coefficient[j], stored)) {
+        if (!finiteScalar(coefficient.at(j), stored)) {
           return Result<Spline>::failure(
               ErrorCode::NonFiniteResult,
               "spline coefficient is outside finite Scalar range");
@@ -426,7 +431,7 @@ Result<Scalar> evaluate(const Spline& spline, Scalar x,
   }
 
   const Wide y = polynomial(spline.coefficients, row, u);
-  Wide result = y;
+  Wide interpolatedValue = y;
   if ((before || after) && extrapolation == Extrapolation::linear) {
     const Wide h =
         static_cast<Wide>(spline.nodes.at(row + 1U)) - spline.nodes.at(row);
@@ -436,10 +441,10 @@ Result<Scalar> evaluate(const Spline& spline, Scalar x,
         3.0L * spline.coefficients.at(row, 3U) * u * u;
     const Wide endpointX = before ? spline.nodes.at(0U)
                                   : spline.nodes.at(spline.nodes.size() - 1U);
-    result += (derivativeU / h) * (static_cast<Wide>(x) - endpointX);
+    interpolatedValue += (derivativeU / h) * (static_cast<Wide>(x) - endpointX);
   }
   Scalar converted = 0.0;
-  if (!finiteScalar(result, converted)) {
+  if (!finiteScalar(interpolatedValue, converted)) {
     return invalidScalar(ErrorCode::NonFiniteResult,
                          "spline value is outside finite Scalar range");
   }
