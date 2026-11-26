@@ -1,7 +1,6 @@
 #include "Test.hpp"
 
 #include <array>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>

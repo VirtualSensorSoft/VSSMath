@@ -1,8 +1,20 @@
+#include "vss/math/Array.hpp"
+#include "vss/math/Core.hpp"
+#include "vss/math/Error.hpp"
+#include "vss/math/Limits.hpp"
+#include "vss/math/Result.hpp"
+#include "vss/math/VectorView.hpp"
+#include "vss/math/covariance/PropagationResult.hpp"
+#include "vss/math/statistics/Weighted.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
+#include <span>
 #include <string>
+#include <utility>
 #include <vss/math/Tolerance.hpp>
 #include <vss/math/statistics/Circular.hpp>
 
@@ -11,14 +23,20 @@ namespace {
 Result<CircularEstimate> fail(ErrorCode code, const char* message) {
   return Result<CircularEstimate>::failure(code, message);
 }
-struct Sum final {
-  Scalar value{};
-  Scalar correction{};
+class Sum final {
+public:
   void add(Scalar x) {
-    const Scalar y = x - correction, next = value + y;
-    correction = (next - value) - y;
-    value = next;
+    const Scalar y = x - correction_;
+    const Scalar next = value_ + y;
+    correction_ = (next - value_) - y;
+    value_ = next;
   }
+
+  [[nodiscard]] Scalar value() const noexcept { return value_; }
+
+private:
+  Scalar value_{};
+  Scalar correction_{};
 };
 } // namespace
 
@@ -26,14 +44,18 @@ Result<CircularEstimate> circularStatistics(ConstVectorView angles,
                                             const WeightSpec& weights,
                                             Scalar period, Limits limits) {
   const Extent n = angles.size();
-  if (n == 0U)
+  if (n == 0U) {
     return fail(ErrorCode::InvalidExtent, "circular population is empty");
-  if (limits.elements < 1U || limits.bytes < sizeof(ErrorCode))
+  }
+  if (limits.elements < 1U || limits.bytes < sizeof(ErrorCode)) {
     return fail(ErrorCode::ResourceLimit, "circular workspace exceeds limits");
-  if (!isFinite(period))
+  }
+  if (!isFinite(period)) {
     return fail(ErrorCode::NonFiniteInput, "period is non-finite");
-  if (!(period > 0.0))
+  }
+  if (!(period > 0.0)) {
     return fail(ErrorCode::InvalidDomain, "period must be positive");
+  }
   const bool unweighted = weights.rule == WeightRule::unweighted &&
                           !weights.rowWeights && !weights.componentWeights &&
                           weights.frequencyCounts.empty();
@@ -41,24 +63,31 @@ Result<CircularEstimate> circularStatistics(ConstVectorView angles,
       weights.rule == WeightRule::empirical && weights.rowWeights &&
       weights.rowWeights->size() == n && !weights.componentWeights &&
       weights.frequencyCounts.empty();
-  if (!unweighted && !rowWeighted)
+  if (!unweighted && !rowWeighted) {
     return fail(ErrorCode::InvalidDomain,
                 "circular statistics supports unit or empirical row weights");
+  }
   Scalar maxWeight = 0.0;
   for (Extent i = 0; i < n; ++i) {
-    if (!isFinite(angles.at(i)))
+    if (!isFinite(angles.at(i))) {
       return fail(ErrorCode::NonFiniteInput, "angle is non-finite");
+    }
     const Scalar w = unweighted ? 1.0 : weights.rowWeights->at(i);
-    if (!isFinite(w))
+    if (!isFinite(w)) {
       return fail(ErrorCode::NonFiniteInput, "weight is non-finite");
-    if (w < 0.0)
+    }
+    if (w < 0.0) {
       return fail(ErrorCode::InvalidDomain, "weight is negative");
+    }
     maxWeight = std::max(maxWeight, w);
   }
-  if (maxWeight == 0.0)
+  if (maxWeight == 0.0) {
     return fail(ErrorCode::InvalidDomain, "all circular weights are zero");
+  }
   constexpr Scalar tau = 6.283185307179586476925286766559005768;
-  Sum massSum, realSum, imagSum;
+  Sum massSum;
+  Sum realSum;
+  Sum imagSum;
   for (Extent i = 0; i < n; ++i) {
     const Scalar w = (unweighted ? 1.0 : weights.rowWeights->at(i)) / maxWeight;
     const Scalar phase = std::remainder(angles.at(i), period) / period * tau;
@@ -66,10 +95,13 @@ Result<CircularEstimate> circularStatistics(ConstVectorView angles,
     realSum.add(w * std::cos(phase));
     imagSum.add(w * std::sin(phase));
   }
-  const Scalar mass = massSum.value, real = realSum.value, imag = imagSum.value;
-  if (!(mass > 0.0) || !isFinite(mass) || !isFinite(real) || !isFinite(imag))
+  const Scalar mass = massSum.value();
+  const Scalar real = realSum.value();
+  const Scalar imag = imagSum.value();
+  if (!(mass > 0.0) || !isFinite(mass) || !isFinite(real) || !isFinite(imag)) {
     return fail(ErrorCode::NonFiniteResult,
                 "circular resultant is not representable");
+  }
   const Scalar resultant = std::clamp(std::hypot(real, imag) / mass, 0.0, 1.0);
   const Scalar threshold = 32.0 * std::numeric_limits<Scalar>::epsilon();
   std::optional<Scalar> direction;
@@ -78,16 +110,19 @@ Result<CircularEstimate> circularStatistics(ConstVectorView angles,
       resultant > threshold ? std::span<const ErrorCode>{}
                             : std::span<const ErrorCode>{warning},
       Limits{1U, sizeof(ErrorCode), 0U});
-  if (!warningArray)
+  if (!warningArray) {
     return fail(warningArray.status().code(),
                 "circular diagnostic allocation failed");
+  }
   if (resultant > threshold) {
     Scalar phase = std::atan2(imag, real);
-    if (phase < 0.0)
+    if (phase < 0.0) {
       phase += tau;
+    }
     direction = phase / tau * period;
-    if (*direction >= period)
+    if (*direction >= period) {
       *direction = 0.0;
+    }
   }
   Support support{.input = n,
                   .valid = n,
@@ -98,9 +133,11 @@ Result<CircularEstimate> circularStatistics(ConstVectorView angles,
                   .effective_count = std::nullopt,
                   .degrees_of_freedom = std::nullopt,
                   .squared_weight_mass = std::nullopt};
-  for (Extent i = 0; i < n; ++i)
-    if ((unweighted ? 1.0 : weights.rowWeights->at(i)) > 0.0)
+  for (Extent i = 0; i < n; ++i) {
+    if ((unweighted ? 1.0 : weights.rowWeights->at(i)) > 0.0) {
       ++support.positive;
+    }
+  }
   EstimatorDiagnostics diagnostics{.estimand = Estimand::observed,
                                    .weight = weights.rule,
                                    .center = CenterRule::estimated,
