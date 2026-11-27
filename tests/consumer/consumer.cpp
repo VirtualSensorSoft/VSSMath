@@ -47,6 +47,7 @@
 #include <vss/math/probability/Composite.hpp>
 #include <vss/math/probability/MomentBounds.hpp>
 #include <vss/math/probability/SamplingDesign.hpp>
+#include <vss/math/signal/Dependence.hpp>
 #include <vss/math/signal/Series.hpp>
 #include <vss/math/statistics/Circular.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
@@ -895,6 +896,25 @@ int main() {
                      std::abs(fitted.value().parameters.at(1U, 0U) - 2.0) <
                          1.0e-12,
                  "installed C115 series API failed")) {
+      return 1;
+    }
+  }
+
+  {
+    const Vector samples{std::array<Scalar, 3U>{0.0, 1.0, 2.0}};
+    constexpr std::array<Index, 3U> lags{0U, 1U, 2U};
+    constexpr Limits limits{64U, 1024U, 0U};
+    const auto covariance = signal::autocovariance(
+        samples.view(), lags, signal::LagNormalization::full_count, limits);
+    const auto correlation = signal::autocorrelation(
+        samples.view(), lags, signal::LagNormalization::overlap_count, limits);
+    if (!require(covariance.hasValue() && correlation.hasValue() &&
+                     std::abs(covariance.value().values().at(0U) - 2.0 / 3.0) <
+                         1.0e-12 &&
+                     correlation.value().values().at(0U) == 1.0 &&
+                     std::abs(correlation.value().values().at(2U) + 1.5) <
+                         1.0e-12,
+                 "installed finite-lag dependence API failed")) {
       return 1;
     }
   }
