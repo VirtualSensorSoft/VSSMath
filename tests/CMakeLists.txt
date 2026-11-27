@@ -64,6 +64,9 @@ vss_math_add_algorithm_test(test_error_models
 vss_math_add_algorithm_test(test_sensitivity
                              algorithms/test_sensitivity.cpp
                              math.sensitivity)
+vss_math_add_algorithm_test(test_complex_linear_algebra
+                             algorithms/test_complex_linear_algebra.cpp
+                             math.complex_linear_algebra)
 set_tests_properties(math.sensitivity PROPERTIES
                      LABELS "ci-once-per-full;ci-extended"
                      ENVIRONMENT "VSS_MATH_FULL_SENSITIVITY_ACCEPTANCE=1")

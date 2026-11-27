@@ -192,6 +192,7 @@ set(vss_expected_files
   include/vss/math/statistics/Robust.hpp
   include/vss/math/statistics/Weighted.hpp
   include/vss/math/linear/Cholesky.hpp
+  include/vss/math/linear/Complex.hpp
   include/vss/math/linear/Decomposition.hpp
   include/vss/math/linear/SolvePolicy.hpp
   include/vss/math/linear/FactorizationOptions.hpp
