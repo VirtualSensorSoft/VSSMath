@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <limits>
 #include <optional>
 #include <span>
@@ -10,6 +11,7 @@
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/linear/Complex.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace {
 
@@ -17,7 +19,6 @@ using vss::math::Complex;
 using vss::math::ErrorCode;
 using vss::math::Index;
 using vss::math::Limits;
-using vss::math::linear::ComplexMatrix;
 using vss::math::linear::ComplexMatrixView;
 using vss::math::linear::conjugateTranspose;
 using vss::math::linear::eigenHermitian;
@@ -40,8 +41,9 @@ solvePolicy(vss::math::RankPolicy rank = vss::math::RankPolicy::reject) {
 }
 
 Limits generousLimits() {
-  return {
-      .elements = 1000000U, .bytes = 128U * 1024U * 1024U, .evaluations = 0U};
+  return {.elements = 1000000U,
+          .bytes = std::size_t{128U} * 1024U * 1024U,
+          .evaluations = 0U};
 }
 
 void checkNear(Complex actual, Complex expected, double tolerance = 1.0e-13) {
@@ -206,7 +208,7 @@ void complexSolveHandlesMultipleRightHandSidesAndRankPolicy() {
   VSS_CHECK(solution.hasValue());
   if (solution) {
     for (Index i = 0U; i < expected.size(); ++i) {
-      checkNear(solution.value().values.view()[i], expected[i], 1.0e-12);
+      checkNear(solution.value().values.view()[i], expected.at(i), 1.0e-12);
     }
   }
 
@@ -329,7 +331,7 @@ void hermitianEigenUsesComplexPhaseAndChecksAdmissionSeparately() {
   const auto eigenCap =
       eigenHermitian(view(nominal, 2U, 2U, 2U, 1U), solvePolicy(),
                      {.elements = 32U,
-                      .bytes = 12U * 4U * sizeof(Complex) - 1U,
+                      .bytes = std::size_t{12U} * 4U * sizeof(Complex) - 1U,
                       .evaluations = 0U});
   VSS_CHECK(!eigenCap.hasValue());
   VSS_CHECK(eigenCap.status().code() == ErrorCode::ResourceLimit);
@@ -388,7 +390,7 @@ void complexSvdReconstructsRankOneTallAndWideMatrices() {
                          svd.value().singular.at(q) *
                          svd.value().right_adjoint.values.view()[q * 3U + j];
       }
-      checkNear(reconstructed, tall[i * 3U + j], 1.0e-10);
+      checkNear(reconstructed, tall.at(i * 3U + j), 1.0e-10);
     }
   }
 
@@ -490,7 +492,7 @@ void complexSvdReconstructsRankOneTallAndWideMatrices() {
               rotated.value().left.values.view()[i * 3U + q] *
               std::conj(rotated.value().left.values.view()[j * 3U + q]);
         }
-        checkNear(projector, expectedProjector[i * 3U + j], 1.0e-10);
+        checkNear(projector, expectedProjector.at(i * 3U + j), 1.0e-10);
       }
     }
   }
@@ -498,7 +500,7 @@ void complexSvdReconstructsRankOneTallAndWideMatrices() {
   const auto svdCap =
       factorComplexSVD(view(clustered, 3U, 3U, 3U, 1U), clusterPolicy,
                        {.elements = 64U,
-                        .bytes = 24U * 9U * sizeof(Complex) - 1U,
+                        .bytes = std::size_t{24U} * 9U * sizeof(Complex) - 1U,
                         .evaluations = 0U});
   VSS_CHECK(!svdCap.hasValue());
   VSS_CHECK(svdCap.status().code() == ErrorCode::ResourceLimit);
@@ -520,9 +522,9 @@ void complexSvdReconstructsRankOneTallAndWideMatrices() {
   VSS_CHECK(!rejectedSvd.hasValue());
   VSS_CHECK(rejectedSvd.status().code() == ErrorCode::NonFiniteInput);
 
-  std::array<Complex, 96U * 64U> conformance{};
+  std::array<Complex, std::size_t{96U} * 64U> conformance{};
   for (Index i = 0U; i < 64U; ++i) {
-    conformance[i * 64U + i] = Complex{static_cast<double>(i + 1U), 0.0};
+    conformance.at(i * 64U + i) = Complex{static_cast<double>(i + 1U), 0.0};
   }
   const auto boundedScale = factorComplexSVD(
       view(conformance, 96U, 64U, 64U, 1U), solvePolicy(), generousLimits());
@@ -536,13 +538,13 @@ void complexSvdReconstructsRankOneTallAndWideMatrices() {
 void complexAlgorithmsHandleDeterministicDenseRegimes() {
   std::array<Complex, 25U> hermitian{};
   for (Index row = 0U; row < 5U; ++row) {
-    hermitian[row * 5U + row] = {static_cast<double>(row + 1U), 0.0};
+    hermitian.at(row * 5U + row) = {static_cast<double>(row + 1U), 0.0};
     for (Index column = row + 1U; column < 5U; ++column) {
       const Complex value{0.11 *
                               static_cast<double>((row + 1U) * (column + 2U)),
                           0.07 * static_cast<double>(column - row)};
-      hermitian[row * 5U + column] = value;
-      hermitian[column * 5U + row] = std::conj(value);
+      hermitian.at(row * 5U + column) = value;
+      hermitian.at(column * 5U + row) = std::conj(value);
     }
   }
   const auto eigen = eigenHermitian(view(hermitian, 5U, 5U, 5U, 1U),
@@ -560,7 +562,7 @@ void complexAlgorithmsHandleDeterministicDenseRegimes() {
   std::array<Complex, 15U> tall{};
   for (Index row = 0U; row < 5U; ++row) {
     for (Index column = 0U; column < 3U; ++column) {
-      tall[row * 3U + column] = {
+      tall.at(row * 3U + column) = {
           0.3 * static_cast<double>((row + 1U) * (column + 2U)) +
               (row == column ? 1.0 : 0.0),
           0.17 * (static_cast<double>(row) - static_cast<double>(column))};
@@ -573,7 +575,7 @@ void complexAlgorithmsHandleDeterministicDenseRegimes() {
   std::array<Complex, 15U> wide{};
   for (Index row = 0U; row < 3U; ++row) {
     for (Index column = 0U; column < 5U; ++column) {
-      wide[row * 5U + column] = {
+      wide.at(row * 5U + column) = {
           0.2 * static_cast<double>((row + 2U) * (column + 1U)) +
               (row == column ? 0.5 : 0.0),
           0.13 *
