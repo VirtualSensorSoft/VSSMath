@@ -338,6 +338,109 @@ void crossDependenceScalesExtremeFiniteInputs() {
   }
 }
 
+void meanVarianceWithAutocorrelationMatchesReferenceCases() {
+  const Vector finiteWindow = vector({1.0, 0.5, 0.25});
+  const auto finiteWindowResult =
+      meanVarianceWithAutocorrelation(finiteWindow.view(), 3U);
+  VSS_CHECK(finiteWindowResult);
+  VSS_CHECK(std::abs(finiteWindowResult.value() - (11.0 / 18.0)) < 1.0e-12);
+
+  const Vector nf07 = vector({4.0, 2.0, 1.0, 0.5, 0.25});
+  const auto nf07Result = meanVarianceWithAutocorrelation(nf07.view(), 5U);
+  VSS_CHECK(nf07Result);
+  VSS_CHECK(std::abs(nf07Result.value() - 1.78) < 1.0e-12);
+
+  const Vector independent = vector({4.0, 0.0, 0.0, 0.0, 0.0});
+  const auto independentResult =
+      meanVarianceWithAutocorrelation(independent.view(), 5U);
+  VSS_CHECK(independentResult);
+  VSS_CHECK(std::abs(independentResult.value() - 0.8) < 1.0e-12);
+
+  const Vector single = vector({2.5});
+  const auto singleResult = meanVarianceWithAutocorrelation(single.view(), 1U);
+  VSS_CHECK(singleResult && singleResult.value() == 2.5);
+
+  const Vector trailingNonFinite =
+      vector({1.0, 0.5, 0.25, std::numeric_limits<Scalar>::quiet_NaN()});
+  const auto ignoresExtra =
+      meanVarianceWithAutocorrelation(trailingNonFinite.view(), 3U);
+  VSS_CHECK(ignoresExtra &&
+            std::abs(ignoresExtra.value() - (11.0 / 18.0)) < 1.0e-12);
+}
+
+void meanVarianceWithAutocorrelationHandlesCancellationAndZero() {
+  const Vector exactZero = vector({1.0, -0.5, -0.5});
+  const auto zeroResult = meanVarianceWithAutocorrelation(exactZero.view(), 3U);
+  VSS_CHECK(zeroResult && zeroResult.value() == 0.0);
+  VSS_CHECK(!std::signbit(zeroResult.value()));
+
+  const Vector nearZero = vector({1.0, -0.5, std::nextafter(-0.5, 0.0)});
+  const auto nearZeroResult =
+      meanVarianceWithAutocorrelation(nearZero.view(), 3U);
+  const Scalar expected = (2.0 * (nearZero.at(2U) + 0.5)) / 9.0;
+  VSS_CHECK(nearZeroResult && expected > 0.0);
+  VSS_CHECK(std::abs(nearZeroResult.value() / expected - 1.0) < 1.0e-12);
+}
+
+void meanVarianceWithAutocorrelationRejectsInvalidInputs() {
+  const Vector empty{};
+  const auto zeroCount = meanVarianceWithAutocorrelation(empty.view(), 0U);
+  VSS_CHECK(!zeroCount &&
+            zeroCount.status().code() == ErrorCode::InsufficientSamples);
+  const auto emptyInput = meanVarianceWithAutocorrelation(empty.view(), 1U);
+  VSS_CHECK(!emptyInput &&
+            emptyInput.status().code() == ErrorCode::InsufficientSamples);
+
+  const Vector tooShort = vector({1.0, 0.5});
+  const auto shortInput = meanVarianceWithAutocorrelation(tooShort.view(), 3U);
+  VSS_CHECK(!shortInput &&
+            shortInput.status().code() == ErrorCode::InsufficientSamples);
+
+  const Vector nonFinite = vector({1.0, std::numeric_limits<Scalar>::infinity()});
+  const auto nonFiniteInput =
+      meanVarianceWithAutocorrelation(nonFinite.view(), 2U);
+  VSS_CHECK(!nonFiniteInput &&
+            nonFiniteInput.status().code() == ErrorCode::NonFiniteInput);
+
+  const Vector negativeZeroLag = vector({-1.0});
+  const auto negativeVariance =
+      meanVarianceWithAutocorrelation(negativeZeroLag.view(), 1U);
+  VSS_CHECK(!negativeVariance &&
+            negativeVariance.status().code() == ErrorCode::InvalidDomain);
+
+  const Vector zeroCovariance = vector({0.0, 0.0});
+  const auto allZero = meanVarianceWithAutocorrelation(zeroCovariance.view(), 2U);
+  VSS_CHECK(allZero && allZero.value() == 0.0);
+
+  const Vector inconsistentZero = vector({0.0, 0.25});
+  const auto nonzeroAfterZero =
+      meanVarianceWithAutocorrelation(inconsistentZero.view(), 2U);
+  VSS_CHECK(!nonzeroAfterZero &&
+            nonzeroAfterZero.status().code() ==
+                ErrorCode::NotPositiveSemidefinite);
+
+  const Vector outOfBounds = vector({1.0, -1.25});
+  const auto invalidCovariance =
+      meanVarianceWithAutocorrelation(outOfBounds.view(), 2U);
+  VSS_CHECK(!invalidCovariance &&
+            invalidCovariance.status().code() ==
+                ErrorCode::NotPositiveSemidefinite);
+
+  const Vector negativeContraction = vector({1.0, -0.9, -0.9});
+  const auto negativeResult =
+      meanVarianceWithAutocorrelation(negativeContraction.view(), 3U);
+  VSS_CHECK(!negativeResult &&
+            negativeResult.status().code() ==
+                ErrorCode::NotPositiveSemidefinite);
+
+  const Vector unrepresentable = vector(
+      {std::numeric_limits<Scalar>::denorm_min(), 0.0});
+  const auto underflow =
+      meanVarianceWithAutocorrelation(unrepresentable.view(), 2U);
+  VSS_CHECK(!underflow &&
+            underflow.status().code() == ErrorCode::NonFiniteResult);
+}
+
 void partialAutocorrelationMatchesLevinsonDurbinOracles() {
   const Vector ar1 = vector({1.0, 0.5, 0.25});
   const auto ar1Result =
@@ -513,6 +616,9 @@ int main() try {
   crossDependencePreservesSignedLagOrientationAndCounts();
   crossDependenceRejectsMismatchesAndUnusableLags();
   crossDependenceScalesExtremeFiniteInputs();
+  meanVarianceWithAutocorrelationMatchesReferenceCases();
+  meanVarianceWithAutocorrelationHandlesCancellationAndZero();
+  meanVarianceWithAutocorrelationRejectsInvalidInputs();
   partialAutocorrelationMatchesLevinsonDurbinOracles();
   partialAutocorrelationRejectsInvalidAndUnstableInputs();
   return 0;
