@@ -164,6 +164,173 @@ void dependenceHandlesZeroVarianceAndUnrepresentableCovariance() {
             finiteCorrelation.value().values().at(1U) == -1.0);
 }
 
+void crossDependencePreservesSignedLagOrientationAndCounts() {
+  const Vector x = vector({1.0, 0.0, 0.0});
+  const Vector y = vector({0.0, 1.0, 0.0});
+  const std::array<std::int64_t, 4U> lags{1, -1, 1, 0};
+  const auto result = crossCorrelation(x.view(), y.view(), lags,
+                                       LagNormalization::full_count, ample);
+  VSS_CHECK(result);
+  const std::array<std::int64_t, 4U> expectedLags{1, -1, 1, 0};
+  const std::array<Index, 4U> expectedCounts{2U, 2U, 2U, 3U};
+  const std::array<Scalar, 4U> expectedValues{-1.0 / 6.0, 5.0 / 6.0, -1.0 / 6.0,
+                                              -0.5};
+  VSS_CHECK(std::ranges::equal(result.value().lags(), expectedLags));
+  VSS_CHECK(std::ranges::equal(result.value().counts(), expectedCounts));
+  for (Index i = 0U; i < expectedValues.size(); ++i) {
+    VSS_CHECK(std::abs(result.value().values().at(i) - expectedValues.at(i)) <
+              1.0e-12);
+  }
+
+  const std::array<std::int64_t, 3U> signedLags{2, 0, -2};
+  const Vector scaleY = vector({0.0, 2.0, 4.0});
+  const auto covariance =
+      crossCovariance(vector({0.0, 1.0, 2.0}).view(), scaleY.view(), signedLags,
+                      LagNormalization::full_count, ample);
+  VSS_CHECK(covariance);
+  const std::array<Scalar, 3U> expectedCovariance{-2.0 / 3.0, 4.0 / 3.0,
+                                                  -2.0 / 3.0};
+  for (Index i = 0U; i < expectedCovariance.size(); ++i) {
+    VSS_CHECK(std::abs(covariance.value().values().at(i) -
+                       expectedCovariance.at(i)) < 1.0e-12);
+  }
+  const auto overlapCovariance =
+      crossCovariance(vector({0.0, 1.0, 2.0}).view(), scaleY.view(), signedLags,
+                      LagNormalization::overlap_count, ample);
+  VSS_CHECK(overlapCovariance);
+  const std::array<Scalar, 3U> expectedOverlapCovariance{-2.0, 4.0 / 3.0, -2.0};
+  for (Index i = 0U; i < expectedOverlapCovariance.size(); ++i) {
+    VSS_CHECK(std::abs(overlapCovariance.value().values().at(i) -
+                       expectedOverlapCovariance.at(i)) < 1.0e-12);
+  }
+
+  const Vector base = vector({0.0, 1.0, 2.0});
+  const Vector doubled = vector({0.0, 2.0, 4.0});
+  const std::array<std::int64_t, 1U> zeroLag{0};
+  const auto perfectlyCorrelated =
+      crossCorrelation(base.view(), doubled.view(), zeroLag,
+                       LagNormalization::full_count, ample);
+  VSS_CHECK(perfectlyCorrelated &&
+            std::abs(perfectlyCorrelated.value().values().at(0U) - 1.0) <
+                1.0e-12);
+
+  const std::array<std::int64_t, 5U> allLags{-2, -1, 0, 1, 2};
+  const std::array<std::int64_t, 5U> reverseLags{2, 1, 0, -1, -2};
+  const auto xy = crossCorrelation(base.view(), doubled.view(), allLags,
+                                   LagNormalization::full_count, ample);
+  const auto yx = crossCorrelation(doubled.view(), base.view(), reverseLags,
+                                   LagNormalization::full_count, ample);
+  VSS_CHECK(xy && yx);
+  for (Index i = 0U; i < allLags.size(); ++i) {
+    VSS_CHECK(std::abs(xy.value().values().at(i) -
+                       yx.value().values().at(allLags.size() - 1U - i)) <
+              1.0e-12);
+  }
+  const auto xyCovariance =
+      crossCovariance(base.view(), doubled.view(), allLags,
+                      LagNormalization::full_count, ample);
+  const auto yxCovariance =
+      crossCovariance(doubled.view(), base.view(), reverseLags,
+                      LagNormalization::full_count, ample);
+  VSS_CHECK(xyCovariance && yxCovariance);
+  for (Index i = 0U; i < allLags.size(); ++i) {
+    VSS_CHECK(std::abs(xyCovariance.value().values().at(i) -
+                       yxCovariance.value().values().at(allLags.size() - 1U -
+                                                        i)) < 1.0e-12);
+  }
+
+  constexpr Scalar largeOffset = 1.0e16;
+  const Vector offsetX =
+      vector({largeOffset, largeOffset + 2.0, largeOffset + 4.0});
+  const Vector offsetY =
+      vector({-largeOffset, -largeOffset + 4.0, -largeOffset + 8.0});
+  const auto offsetCovariance =
+      crossCovariance(offsetX.view(), offsetY.view(), zeroLag,
+                      LagNormalization::full_count, ample);
+  VSS_CHECK(offsetCovariance &&
+            std::abs(offsetCovariance.value().values().at(0U) - 16.0 / 3.0) <
+                1.0e-12);
+}
+
+void crossDependenceRejectsMismatchesAndUnusableLags() {
+  const Vector x = vector({0.0, 1.0, 2.0});
+  const Vector y = vector({0.0, 1.0});
+  const std::array<std::int64_t, 1U> lag{0};
+  const auto mismatched = crossCovariance(x.view(), y.view(), lag,
+                                          LagNormalization::full_count, ample);
+  VSS_CHECK(!mismatched &&
+            mismatched.status().code() == ErrorCode::DimensionMismatch);
+
+  const Vector empty;
+  const auto noSamples = crossCovariance(empty.view(), empty.view(), lag,
+                                         LagNormalization::full_count, ample);
+  VSS_CHECK(!noSamples &&
+            noSamples.status().code() == ErrorCode::InsufficientSamples);
+
+  const std::array<std::int64_t, 2U> invalidLags{3, -3};
+  const auto outside = crossCovariance(x.view(), x.view(), invalidLags,
+                                       LagNormalization::full_count, ample);
+  VSS_CHECK(!outside && outside.status().code() == ErrorCode::IndexOutOfRange);
+  const std::array<std::int64_t, 1U> minimumLag{
+      std::numeric_limits<std::int64_t>::min()};
+  const auto minimumOutside = crossCovariance(
+      x.view(), x.view(), minimumLag, LagNormalization::full_count, ample);
+  VSS_CHECK(!minimumOutside &&
+            minimumOutside.status().code() == ErrorCode::IndexOutOfRange);
+
+  const Vector nonFinite =
+      vector({0.0, std::numeric_limits<Scalar>::quiet_NaN(), 2.0});
+  const auto invalidSamples = crossCorrelation(
+      x.view(), nonFinite.view(), lag, LagNormalization::full_count, ample);
+  VSS_CHECK(!invalidSamples &&
+            invalidSamples.status().code() == ErrorCode::NonFiniteInput);
+
+  const Vector constant = vector({4.0, 4.0, 4.0});
+  const auto zeroVariance = crossCorrelation(
+      x.view(), constant.view(), lag, LagNormalization::full_count, ample);
+  VSS_CHECK(!zeroVariance &&
+            zeroVariance.status().code() == ErrorCode::InvalidDomain);
+
+  const auto invalidPolicy = crossCovariance(
+      x.view(), x.view(), lag, invalidEnumValue<LagNormalization>(), ample);
+  VSS_CHECK(!invalidPolicy &&
+            invalidPolicy.status().code() == ErrorCode::InvalidDomain);
+
+  const auto limitedElements =
+      crossCovariance(x.view(), x.view(), lag, LagNormalization::full_count,
+                      {.elements = 2U, .bytes = 1U << 20U, .evaluations = 0U});
+  VSS_CHECK(!limitedElements &&
+            limitedElements.status().code() == ErrorCode::ResourceLimit);
+  const auto limitedBytes =
+      crossCovariance(x.view(), x.view(), lag, LagNormalization::full_count,
+                      {.elements = 4096U,
+                       .bytes = (3U * sizeof(std::int64_t)) - 1U,
+                       .evaluations = 0U});
+  VSS_CHECK(!limitedBytes &&
+            limitedBytes.status().code() == ErrorCode::ResourceLimit);
+}
+
+void crossDependenceScalesExtremeFiniteInputs() {
+  const Scalar maximum = std::numeric_limits<Scalar>::max();
+  const Vector x = vector({-maximum, maximum});
+  const Vector y = vector({maximum, -maximum});
+  const std::array<std::int64_t, 3U> lags{0, 1, -1};
+  const auto covariance =
+      crossCovariance(x.view(), y.view(), std::array<std::int64_t, 1U>{0},
+                      LagNormalization::full_count, ample);
+  VSS_CHECK(!covariance &&
+            covariance.status().code() == ErrorCode::NonFiniteResult);
+
+  const auto correlation = crossCorrelation(
+      x.view(), y.view(), lags, LagNormalization::full_count, ample);
+  VSS_CHECK(correlation);
+  const std::array<Scalar, 3U> expected{-1.0, 0.5, 0.5};
+  for (Index i = 0U; i < expected.size(); ++i) {
+    VSS_CHECK(std::abs(correlation.value().values().at(i) - expected.at(i)) <
+              1.0e-12);
+  }
+}
+
 } // namespace
 
 int main() try {
@@ -171,6 +338,9 @@ int main() try {
   autocorrelationUsesFullVarianceAndAllowsOverlapAboveOne();
   dependenceRejectsInvalidInputsAndResourceRequests();
   dependenceHandlesZeroVarianceAndUnrepresentableCovariance();
+  crossDependencePreservesSignedLagOrientationAndCounts();
+  crossDependenceRejectsMismatchesAndUnusableLags();
+  crossDependenceScalesExtremeFiniteInputs();
   return 0;
 } catch (const std::exception& error) {
   std::cerr << error.what() << '\n';

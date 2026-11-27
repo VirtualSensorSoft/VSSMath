@@ -47,6 +47,10 @@ private:
   [[nodiscard]] static Result<LagSeries>
   compute(ConstVectorView samples, std::span<const Index> lags,
           LagNormalization normalization, Limits limits, bool correlation);
+  [[nodiscard]] static Result<LagSeries>
+  computeCross(ConstVectorView x, ConstVectorView y,
+               std::span<const std::int64_t> lags,
+               LagNormalization normalization, Limits limits, bool correlation);
 
   LagSeries(std::vector<std::int64_t> lags, Vector values,
             std::vector<Index> counts)
@@ -65,6 +69,15 @@ private:
                                            std::span<const Index> lags,
                                            LagNormalization normalization,
                                            Limits limits);
+  friend Result<LagSeries> crossCovariance(ConstVectorView x, ConstVectorView y,
+                                           std::span<const std::int64_t> lags,
+                                           LagNormalization normalization,
+                                           Limits limits);
+  friend Result<LagSeries> crossCorrelation(ConstVectorView x,
+                                            ConstVectorView y,
+                                            std::span<const std::int64_t> lags,
+                                            LagNormalization normalization,
+                                            Limits limits);
 };
 
 /// @brief Computes finite-lag autocovariance around the complete-sample mean.
@@ -107,6 +120,64 @@ private:
                                                 std::span<const Index> lags,
                                                 LagNormalization normalization,
                                                 Limits limits);
+
+/// @brief Computes finite-lag cross-covariance for two aligned sequences.
+/// @details Both complete sequences are centered by their own full-sample
+///          means. Positive lag `k` pairs `x[t+k]` with `y[t]`; negative lag
+///          `-k` pairs `x[t]` with `y[t+k]`. The matched products are divided
+///          by N or by N-|k| according to `normalization`. Sequences must have
+///          equal length and equal cadence. Requested signed-lag order and
+///          repetitions are preserved. Work is O(N+N·L), storage O(L), and
+///          result storage is checked against both configured limits.
+/// @param x First complete finite sequence.
+/// @param y Second complete finite sequence with the same extent and cadence.
+/// @param lags Signed sample-index lags, each satisfying `|k| < N`.
+/// @param normalization Full-count or overlap-count divisor policy.
+/// @param limits Simultaneous output element and byte ceilings.
+/// @return Owned lag/value/count data, or a diagnostic failure without a
+///         partially published result.
+/// @retval ErrorCode::DimensionMismatch The sequence extents differ.
+/// @retval ErrorCode::InsufficientSamples Either sequence is empty.
+/// @retval ErrorCode::IndexOutOfRange A signed lag has no matched pair.
+/// @retval ErrorCode::InvalidDomain The normalization policy is unsupported.
+/// @retval ErrorCode::NonFiniteInput Either sequence contains a non-finite
+///         sample.
+/// @retval ErrorCode::ResourceLimit Result storage exceeds configured limits.
+/// @retval ErrorCode::NonFiniteResult A covariance result is not representable.
+[[nodiscard]] Result<LagSeries>
+crossCovariance(ConstVectorView x, ConstVectorView y,
+                std::span<const std::int64_t> lags,
+                LagNormalization normalization, Limits limits);
+
+/// @brief Computes cross-covariance normalized by both full-sample variances.
+/// @details Uses the same signed-lag orientation and numerator normalization
+///          as @ref crossCovariance, divided by
+///          `sqrt(gamma_x(0)*gamma_y(0))`, where both lag-zero variances use
+///          divisor N. With overlap-count normalization, the result can exceed
+///          unit magnitude. Zero variance in either complete sequence is
+///          InvalidDomain. Work is O(N+N·L), storage O(L).
+/// @param x First complete finite sequence.
+/// @param y Second complete finite sequence with the same extent and cadence.
+/// @param lags Signed sample-index lags, each satisfying `|k| < N`.
+/// @param normalization Selects the numerator divisor only; the denominator
+///        always uses the full-sample variances.
+/// @param limits Simultaneous output element and byte ceilings.
+/// @return Owned lag/value/count data, or a diagnostic failure without a
+///         partially published result.
+/// @retval ErrorCode::DimensionMismatch The sequence extents differ.
+/// @retval ErrorCode::InsufficientSamples Either sequence is empty.
+/// @retval ErrorCode::IndexOutOfRange A signed lag has no matched sample pair.
+/// @retval ErrorCode::InvalidDomain The normalization policy is unsupported,
+///         or either full-sample variance is zero.
+/// @retval ErrorCode::NonFiniteInput Either sequence contains a non-finite
+///         sample.
+/// @retval ErrorCode::ResourceLimit Result storage exceeds configured limits.
+/// @retval ErrorCode::NonFiniteResult A correlation result is not
+/// representable.
+[[nodiscard]] Result<LagSeries>
+crossCorrelation(ConstVectorView x, ConstVectorView y,
+                 std::span<const std::int64_t> lags,
+                 LagNormalization normalization, Limits limits);
 
 } // namespace vss::math::signal
 

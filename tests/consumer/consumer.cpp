@@ -920,6 +920,24 @@ int main() {
   }
 
   {
+    const Vector first{std::array<Scalar, 3U>{1.0, 0.0, 0.0}};
+    const Vector second{std::array<Scalar, 3U>{0.0, 1.0, 0.0}};
+    constexpr std::array<std::int64_t, 2U> signedLags{1, -1};
+    constexpr Limits limits{64U, 1024U, 0U};
+    const auto correlation =
+        signal::crossCorrelation(first.view(), second.view(), signedLags,
+                                 signal::LagNormalization::full_count, limits);
+    if (!require(correlation.hasValue() &&
+                     std::abs(correlation.value().values().at(0U) + 1.0 / 6.0) <
+                         1.0e-12 &&
+                     std::abs(correlation.value().values().at(1U) - 5.0 / 6.0) <
+                         1.0e-12,
+                 "installed signed cross-correlation API failed")) {
+      return 1;
+    }
+  }
+
+  {
     const std::array<Complex, 4U> values{
         {{2.0, 0.0}, {0.0, 1.0}, {0.0, -1.0}, {2.0, 0.0}}};
     const linear::ComplexMatrixView matrix{values, 2U, 2U, 2U, 1U};
