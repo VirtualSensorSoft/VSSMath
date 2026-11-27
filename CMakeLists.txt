@@ -42,6 +42,7 @@ add_library(vss_math STATIC
   src/statistics/Circular.cpp
   src/ODE.cpp
   src/Functions.cpp
+  src/signal/Series.cpp
   src/ScientificExtras.cpp
   src/FirstMoment.cpp
   src/FourthMoment.cpp
