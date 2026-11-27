@@ -367,7 +367,7 @@ Result<LagSeries> LagSeries::computeCross(ConstVectorView x, ConstVectorView y,
       ++scaleExponentY;
     }
     for (Index output = 0U; output < lags.size(); ++output) {
-      const Index magnitude = static_cast<Index>(lagMagnitude(lags[output]));
+      const auto magnitude = static_cast<Index>(lagMagnitude(lags[output]));
       const Index count = counts[output];
       CompensatedSum products;
       for (Index t = 0U; t < count; ++t) {
@@ -400,7 +400,7 @@ Result<LagSeries> LagSeries::computeCross(ConstVectorView x, ConstVectorView y,
         value = std::scalbn(sumFraction * scaleFractionX * scaleFractionY,
                             static_cast<int>(exponent));
       }
-      const Scalar result = static_cast<Scalar>(value);
+      const auto result = static_cast<Scalar>(value);
       if (!std::isfinite(result)) {
         return fail<LagSeries>(ErrorCode::NonFiniteResult,
                                "cross-dependence result is not representable");
