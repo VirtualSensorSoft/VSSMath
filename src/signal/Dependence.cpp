@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -76,6 +78,231 @@ bool checkedMultiply(Index left, Index right, Index& product) noexcept {
   }
   product = left * right;
   return true;
+}
+
+// A finite binary64 value is an integer multiple of 2^-1074. The covariance
+// bound makes the absolute weighted numerator smaller than gamma[0] * n^2;
+// for a 64-bit Index this needs fewer than 2226 bits. Seventy 32-bit words
+// therefore hold each exact sign accumulator without dynamic allocation.
+constexpr std::size_t exactDyadicWordCount = 70U;
+using ExactDyadicMagnitude = std::array<std::uint32_t, exactDyadicWordCount>;
+
+static_assert(
+    std::numeric_limits<Index>::digits <= 64,
+    "exact autocovariance accumulation supports at most 64-bit indices");
+static_assert(sizeof(Scalar) == sizeof(std::uint64_t) &&
+                  std::numeric_limits<Scalar>::is_iec559 &&
+                  std::numeric_limits<Scalar>::digits == 53,
+              "exact autocovariance accumulation requires binary64 Scalar");
+
+bool addMagnitudeWord(ExactDyadicMagnitude& magnitude, std::size_t position,
+                      std::uint32_t word) noexcept {
+  while (word != 0U) {
+    if (position >= magnitude.size()) {
+      return false;
+    }
+    const std::uint64_t total =
+        static_cast<std::uint64_t>(magnitude.at(position)) + word;
+    magnitude.at(position) = static_cast<std::uint32_t>(total);
+    word = static_cast<std::uint32_t>(total >> 32U);
+    ++position;
+  }
+  return true;
+}
+
+bool addExactDyadicTerm(ExactDyadicMagnitude& magnitude, Scalar value,
+                        std::uint64_t weightLow,
+                        std::uint32_t weightHigh) noexcept {
+  if (value == 0.0 || (weightLow == 0U && weightHigh == 0U)) {
+    return true;
+  }
+
+  const auto bits = std::bit_cast<std::uint64_t>(value);
+  const auto exponentField = static_cast<unsigned>((bits >> 52U) & 0x7ffU);
+  std::uint64_t significand = bits & ((std::uint64_t{1U} << 52U) - 1U);
+  std::size_t binaryShift = 0U;
+  if (exponentField != 0U) {
+    significand |= std::uint64_t{1U} << 52U;
+    binaryShift = static_cast<std::size_t>(exponentField - 1U);
+  }
+
+  const std::array<std::uint32_t, 2U> significandWords{
+      static_cast<std::uint32_t>(significand),
+      static_cast<std::uint32_t>(significand >> 32U)};
+  const std::array<std::uint32_t, 3U> weightWords{
+      static_cast<std::uint32_t>(weightLow),
+      static_cast<std::uint32_t>(weightLow >> 32U), weightHigh};
+  std::array<std::uint32_t, 5U> product{};
+  for (std::size_t i = 0U; i < significandWords.size(); ++i) {
+    std::uint64_t carry = 0U;
+    for (std::size_t j = 0U; j < weightWords.size(); ++j) {
+      const std::size_t position = i + j;
+      const std::uint64_t partial =
+          static_cast<std::uint64_t>(significandWords.at(i)) *
+              weightWords.at(j) +
+          product.at(position) + carry;
+      product.at(position) = static_cast<std::uint32_t>(partial);
+      carry = partial >> 32U;
+    }
+    std::size_t position = i + weightWords.size();
+    while (carry != 0U) {
+      if (position >= product.size()) {
+        return false;
+      }
+      const std::uint64_t partial = product.at(position) + carry;
+      product.at(position) = static_cast<std::uint32_t>(partial);
+      carry = partial >> 32U;
+      ++position;
+    }
+  }
+
+  const std::size_t baseWord = binaryShift / 32U;
+  const auto bitShift = static_cast<unsigned>(binaryShift % 32U);
+  for (std::size_t i = 0U; i < product.size(); ++i) {
+    const std::uint32_t word = product.at(i);
+    if (word == 0U) {
+      continue;
+    }
+    const std::uint32_t low =
+        bitShift == 0U ? word : static_cast<std::uint32_t>(word << bitShift);
+    if (!addMagnitudeWord(magnitude, baseWord + i, low)) {
+      return false;
+    }
+    if (bitShift != 0U) {
+      const std::uint32_t high = word >> (32U - bitShift);
+      if (!addMagnitudeWord(magnitude, baseWord + i + 1U, high)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+int compareMagnitudes(const ExactDyadicMagnitude& left,
+                      const ExactDyadicMagnitude& right) noexcept {
+  for (std::size_t i = left.size(); i > 0U; --i) {
+    if (left.at(i - 1U) > right.at(i - 1U)) {
+      return 1;
+    }
+    if (left.at(i - 1U) < right.at(i - 1U)) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+bool subtractMagnitudes(const ExactDyadicMagnitude& larger,
+                        const ExactDyadicMagnitude& smaller,
+                        ExactDyadicMagnitude& difference) noexcept {
+  std::uint64_t borrow = 0U;
+  for (std::size_t i = 0U; i < larger.size(); ++i) {
+    const std::uint64_t minuend = larger.at(i);
+    const std::uint64_t subtrahend =
+        static_cast<std::uint64_t>(smaller.at(i)) + borrow;
+    difference.at(i) = static_cast<std::uint32_t>(minuend - subtrahend);
+    borrow = minuend < subtrahend ? 1U : 0U;
+  }
+  return borrow == 0U;
+}
+
+bool magnitudeBit(const ExactDyadicMagnitude& magnitude,
+                  std::size_t bit) noexcept {
+  constexpr std::size_t bitsPerWord = 32U;
+  const std::size_t word = bit / bitsPerWord;
+  const auto offset = static_cast<unsigned>(bit % bitsPerWord);
+  return ((magnitude.at(word) >> offset) & 1U) != 0U;
+}
+
+bool anyMagnitudeBitsBelow(const ExactDyadicMagnitude& magnitude,
+                           std::size_t bit) noexcept {
+  constexpr std::size_t bitsPerWord = 32U;
+  const std::size_t fullWords = bit / bitsPerWord;
+  for (std::size_t i = 0U; i < fullWords; ++i) {
+    if (magnitude.at(i) != 0U) {
+      return true;
+    }
+  }
+  const auto remainingBits = static_cast<unsigned>(bit % bitsPerWord);
+  if (remainingBits == 0U) {
+    return false;
+  }
+  const std::uint32_t mask = (std::uint32_t{1U} << remainingBits) - 1U;
+  return (magnitude.at(fullWords) & mask) != 0U;
+}
+
+bool exactVarianceToScalar(const ExactDyadicMagnitude& magnitude, Index count,
+                           Scalar& result) noexcept {
+  std::size_t highestWord = magnitude.size();
+  while (highestWord > 0U && magnitude.at(highestWord - 1U) == 0U) {
+    --highestWord;
+  }
+  if (highestWord == 0U) {
+    result = 0.0;
+    return true;
+  }
+
+  const std::uint32_t topWord = magnitude.at(highestWord - 1U);
+  const std::size_t bitLength =
+      (highestWord - 1U) * 32U +
+      static_cast<std::size_t>(32 - std::countl_zero(topWord));
+  const std::size_t wideDigits =
+      static_cast<std::size_t>(std::min(std::numeric_limits<Wide>::digits, 64));
+  const std::size_t retainedBits = std::min(bitLength, wideDigits);
+  std::uint64_t leadingBits = 0U;
+  for (std::size_t bit = bitLength; bit > bitLength - retainedBits; --bit) {
+    leadingBits = (leadingBits << 1U) |
+                  static_cast<std::uint64_t>(magnitudeBit(magnitude, bit - 1U));
+  }
+
+  std::size_t roundedBitLength = bitLength;
+  Wide fraction = std::scalbn(static_cast<Wide>(leadingBits),
+                              -static_cast<int>(retainedBits));
+  if (bitLength > retainedBits) {
+    const std::size_t guardPosition = bitLength - retainedBits - 1U;
+    const bool guard = magnitudeBit(magnitude, guardPosition);
+    const bool sticky = anyMagnitudeBitsBelow(magnitude, guardPosition);
+    if (guard && (sticky || (leadingBits & 1U) != 0U)) {
+      if (retainedBits == 64U &&
+          leadingBits == std::numeric_limits<std::uint64_t>::max()) {
+        fraction = 0.5L;
+        ++roundedBitLength;
+      } else {
+        ++leadingBits;
+        fraction = std::scalbn(static_cast<Wide>(leadingBits),
+                               -static_cast<int>(retainedBits));
+        if (fraction >= 1.0L) {
+          fraction = 0.5L;
+          ++roundedBitLength;
+        }
+      }
+    }
+  }
+
+  int countExponent = 0;
+  const Wide countFraction =
+      std::frexp(static_cast<Wide>(count), &countExponent);
+  const Wide quotientFraction = fraction / (countFraction * countFraction);
+  int quotientAdjustment = 0;
+  const Wide normalized = std::frexp(quotientFraction, &quotientAdjustment);
+  constexpr std::int64_t binary64Scale = 1074;
+  const std::int64_t exponent = static_cast<std::int64_t>(roundedBitLength) -
+                                binary64Scale - (2LL * countExponent) +
+                                quotientAdjustment;
+  if (exponent > std::numeric_limits<Scalar>::max_exponent ||
+      exponent < std::numeric_limits<int>::min() ||
+      exponent > std::numeric_limits<int>::max()) {
+    return false;
+  }
+
+  const auto scalarFraction = static_cast<Scalar>(normalized);
+  if (exponent == std::numeric_limits<Scalar>::max_exponent &&
+      scalarFraction >= 1.0) {
+    // Input validation proves |variance| <= gamma[0] <= Scalar::max().
+    result = std::numeric_limits<Scalar>::max();
+    return true;
+  }
+  result = std::scalbn(scalarFraction, static_cast<int>(exponent));
+  return std::isfinite(result) && result != 0.0;
 }
 
 Result<Index> outputBytes(Index count) {
@@ -637,6 +864,101 @@ Result<Vector> partialAutocorrelation(ConstVectorView autocovariance,
         ErrorCode::ResourceLimit,
         "partial-autocorrelation storage exceeds container limits");
   }
+}
+
+Result<Scalar> meanVarianceWithAutocorrelation(ConstVectorView autocovariance,
+                                               Index count) {
+  if (count == 0U || count > autocovariance.size()) {
+    return fail<Scalar>(ErrorCode::InsufficientSamples,
+                        "autocovariance must contain all requested lags");
+  }
+
+  const Scalar gammaZero = autocovariance.at(0U);
+  if (!std::isfinite(gammaZero)) {
+    return fail<Scalar>(ErrorCode::NonFiniteInput,
+                        "used autocovariance entries must be finite");
+  }
+  if (gammaZero < 0.0) {
+    return fail<Scalar>(ErrorCode::InvalidDomain,
+                        "lag-zero autocovariance must be nonnegative");
+  }
+
+  ExactDyadicMagnitude positive{};
+  ExactDyadicMagnitude negative{};
+  const auto count64 = static_cast<std::uint64_t>(count);
+  for (Index lag = 0U; lag < count; ++lag) {
+    const Scalar value = autocovariance.at(lag);
+    if (!std::isfinite(value)) {
+      return fail<Scalar>(ErrorCode::NonFiniteInput,
+                          "used autocovariance entries must be finite");
+    }
+    if (lag != 0U && std::abs(value) > gammaZero) {
+      return fail<Scalar>(
+          ErrorCode::NotPositiveSemidefinite,
+          "autocovariance violates the bound abs(gamma[k]) <= gamma[0]");
+    }
+
+    std::uint64_t weightLow = count64;
+    std::uint32_t weightHigh = 0U;
+    if (lag != 0U) {
+      const auto remaining = static_cast<std::uint64_t>(count - lag);
+      weightLow = remaining << 1U;
+      weightHigh = static_cast<std::uint32_t>(remaining >> 63U);
+    }
+    auto& accumulator = std::signbit(value) ? negative : positive;
+    if (!addExactDyadicTerm(accumulator, value, weightLow, weightHigh)) {
+      return fail<Scalar>(
+          ErrorCode::NonFiniteResult,
+          "exact autocovariance contraction exceeded fixed precision storage");
+    }
+  }
+
+  const int sign = compareMagnitudes(positive, negative);
+  if (sign == 0) {
+    return Result<Scalar>::success(0.0);
+  }
+  if (sign < 0) {
+    return fail<Scalar>(ErrorCode::NotPositiveSemidefinite,
+                        "autocovariance contraction gives a negative variance");
+  }
+
+  ExactDyadicMagnitude numerator{};
+  if (!subtractMagnitudes(positive, negative, numerator)) {
+    return fail<Scalar>(
+        ErrorCode::NonFiniteResult,
+        "exact autocovariance contraction could not be resolved");
+  }
+  Scalar exactVariance = 0.0;
+  if (!exactVarianceToScalar(numerator, count, exactVariance)) {
+    return fail<Scalar>(ErrorCode::NonFiniteResult,
+                        "exact mean variance is not representable as Scalar");
+  }
+
+  // Normalize by gamma[0] before accumulation so intermediate terms stay
+  // bounded by count² even when covariance values approach Scalar::max().
+  CompensatedSum scaledContraction;
+  scaledContraction.add(static_cast<Wide>(count));
+  for (Index lag = 1U; lag < count; ++lag) {
+    const Wide weight = 2.0L * static_cast<Wide>(count - lag);
+    const Wide normalizedLag = static_cast<Wide>(autocovariance.at(lag)) /
+                               static_cast<Wide>(gammaZero);
+    scaledContraction.add(weight * normalizedLag);
+  }
+  const Wide countWide = static_cast<Wide>(count);
+  const Wide candidate = static_cast<Wide>(gammaZero) *
+                         (scaledContraction.value() / countWide / countWide);
+  const Wide exactWide = static_cast<Wide>(exactVariance);
+  const Wide agreement =
+      8.0L * static_cast<Wide>(std::numeric_limits<Scalar>::epsilon()) *
+      exactWide;
+  if (std::isfinite(candidate) && candidate > 0.0L &&
+      std::abs(candidate - exactWide) <= agreement) {
+    const auto roundedCandidate = static_cast<Scalar>(candidate);
+    if (std::isfinite(roundedCandidate) && roundedCandidate > 0.0) {
+      return Result<Scalar>::success(roundedCandidate);
+    }
+  }
+  return Result<Scalar>::success(exactVariance);
 }
 
 } // namespace vss::math::signal

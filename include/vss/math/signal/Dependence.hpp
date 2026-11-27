@@ -219,6 +219,33 @@ crossCorrelation(ConstVectorView x, ConstVectorView y,
 partialAutocorrelation(ConstVectorView autocovariance, Index order,
                        SolvePolicy policy, Limits limits);
 
+/// @brief Computes the variance of an equal-weight mean from autocovariance.
+/// @details Uses the first `count` lags of a declared stationary
+///          autocovariance model:
+///          `(count*gamma[0] + 2*sum((count-k)*gamma[k])) / count²`.
+///          Requires nonnegative `gamma[0]`, zero lags when it is zero, and
+///          `abs(gamma[k]) <= gamma[0]`. Full Toeplitz positive
+///          semidefiniteness is a caller premise; a negative contracted
+///          variance is rejected. A scaled compensated sum provides the
+///          ordinary evaluation, with fixed-storage exact dyadic accumulation
+///          preserving sign and zero under cancellation. Work is O(count), with
+///          O(1) auxiliary storage.
+/// @param autocovariance Autocovariance values beginning at lag zero.
+/// @param count Number of observations in the equal-weight mean; must be
+///        positive and no larger than the supplied number of lags.
+/// @return Finite variance, or an error when the covariance input or result is
+///         unusable.
+/// @retval ErrorCode::InsufficientSamples Count is zero or the input has fewer
+///         than `count` lags.
+/// @retval ErrorCode::NonFiniteInput A used autocovariance value is nonfinite.
+/// @retval ErrorCode::InvalidDomain Lag-zero covariance is negative.
+/// @retval ErrorCode::NotPositiveSemidefinite A lag violates the covariance
+///         bound or the exact contraction is negative.
+/// @retval ErrorCode::NonFiniteResult The positive exact variance rounds to no
+///         finite nonzero `Scalar` value.
+[[nodiscard]] Result<Scalar>
+meanVarianceWithAutocorrelation(ConstVectorView autocovariance, Index count);
+
 } // namespace vss::math::signal
 
 #endif // VSS_MATH_SIGNAL_DEPENDENCE_HPP
