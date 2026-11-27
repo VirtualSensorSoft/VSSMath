@@ -1312,7 +1312,7 @@ Result<ComplexMatrix> solveComplex(ComplexMatrixView a, ComplexMatrixView b,
     }
     // The minimum-norm solution for a zero operator is zero. The supported
     // subspace policy accepts only a zero right-hand side.
-    Dense zero(nrhs, Complex{});
+    const Dense zero(nrhs, Complex{});
     for (const Complex value : copyDense(b)) {
       if (value != Complex{} && policy.rank == RankPolicy::supported_subspace) {
         return fail<ComplexMatrix>(
