@@ -2,11 +2,16 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <iostream>
 #include <limits>
 #include <span>
 #include <utility>
 #include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
 #include <vss/math/Tensor.hpp>
 #include <vss/math/TensorDecomposition.hpp>
 #include <vss/math/TensorLimits.hpp>
@@ -19,6 +24,14 @@ using namespace vss::math;
 
 constexpr Limits ample{
     .elements = 1'000'000, .bytes = 64'000'000, .evaluations = 0};
+
+std::span<const Scalar> tensorValues(const Tensor& tensor) {
+  return {tensor.data(), tensor.size()};
+}
+
+std::span<Scalar> tensorValues(Tensor& tensor) {
+  return {tensor.data(), tensor.size()};
+}
 
 SolvePolicy policy() {
   SolvePolicy result{};
@@ -40,7 +53,7 @@ Tensor makeTensor(std::span<const Extent> extents,
   VSS_CHECK(tensor.value().size() == values.size());
   auto result = std::move(tensor).value();
   for (Extent i = 0; i < values.size(); ++i) {
-    result.data()[i] = values[i];
+    tensorValues(result)[i] = values[i];
   }
   return result;
 }
@@ -53,11 +66,12 @@ void checkTensor(const Tensor& actual, std::span<const Extent> shape,
     VSS_CHECK(actual.shape().extent(axis) == shape[axis]);
   }
   for (Extent i = 0; i < values.size(); ++i) {
-    if (std::abs(actual.data()[i] - values[i]) > tolerance) {
-      std::cerr << "tensor mismatch at " << i << ": got " << actual.data()[i]
-                << ", expected " << values[i] << '\n';
+    if (std::abs(tensorValues(actual)[i] - values[i]) > tolerance) {
+      std::cerr << "tensor mismatch at " << i << ": got "
+                << tensorValues(actual)[i] << ", expected " << values[i]
+                << '\n';
     }
-    VSS_CHECK(std::abs(actual.data()[i] - values[i]) <= tolerance);
+    VSS_CHECK(std::abs(tensorValues(actual)[i] - values[i]) <= tolerance);
   }
 }
 
@@ -82,8 +96,9 @@ void fullRankRectangularRoundTrip() {
 
 void fullRankAboveThinSvdExtent() {
   std::array<Scalar, 20> values{};
-  for (Index i = 0; i < values.size(); ++i) {
-    values[i] = static_cast<Scalar>(i) - 7.0;
+  const auto valueView = std::span<Scalar>{values};
+  for (Index i = 0; i < valueView.size(); ++i) {
+    valueView[i] = static_cast<Scalar>(i) - 7.0;
   }
   const auto input = makeTensor(std::array<Extent, 3>{5, 2, 2}, values);
   const auto factors =
@@ -117,12 +132,13 @@ void modePermutationRoundTrip() {
       makeTensor(std::array<Extent, 3>{2, 3, 2},
                  std::array<Scalar, 12>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
   std::array<Scalar, 12> permuted_values{};
+  auto permuted_view = std::span<Scalar>{permuted_values};
   for (Index first = 0; first < 2; ++first) {
     for (Index second = 0; second < 2; ++second) {
       for (Index third = 0; third < 3; ++third) {
-        const Index output = (first * 2 + second) * 3 + third;
-        const Index source = (second * 3 + third) * 2 + first;
-        permuted_values[output] = input.data()[source];
+        const Index output = ((first * 2 + second) * 3) + third;
+        const Index source = ((second * 3 + third) * 2) + first;
+        permuted_view[output] = tensorValues(input)[source];
       }
     }
   }
@@ -147,7 +163,8 @@ void truncatedOrthogonalComponentsAndRepeatedSpectrum() {
   VSS_CHECK(rebuilt.hasValue());
   Scalar squared_error = 0;
   for (Extent i = 0; i < orthogonal.size(); ++i) {
-    const Scalar difference = orthogonal.data()[i] - rebuilt.value().data()[i];
+    const Scalar difference =
+        tensorValues(orthogonal)[i] - tensorValues(rebuilt.value())[i];
     squared_error = std::fma(difference, difference, squared_error);
   }
   VSS_CHECK(std::abs(std::sqrt(squared_error) - 3.0) < 1e-10);
@@ -169,7 +186,7 @@ void truncatedOrthogonalComponentsAndRepeatedSpectrum() {
   Scalar tied_error_squared = 0;
   for (Extent i = 0; i < repeated.size(); ++i) {
     const Scalar difference =
-        repeated.data()[i] - tied_rebuilt.value().data()[i];
+        tensorValues(repeated)[i] - tensorValues(tied_rebuilt.value())[i];
     tied_error_squared = std::fma(difference, difference, tied_error_squared);
   }
   VSS_CHECK(std::sqrt(tied_error_squared) <= std::sqrt(3.0) + 1e-10);
@@ -184,7 +201,7 @@ void scalarEmptyAndInvalidInputs() {
   VSS_CHECK(scalar_factors.value().axes.view().empty());
   const auto scalar_rebuilt = reconstructTucker(scalar_factors.value(), ample);
   VSS_CHECK(scalar_rebuilt.hasValue());
-  VSS_CHECK(scalar_rebuilt.value().data()[0] == -2.5);
+  VSS_CHECK(tensorValues(scalar_rebuilt.value())[0] == -2.5);
   VSS_CHECK(scalar_factors.value().residual_norm == 0.0);
 
   const auto empty =
@@ -211,7 +228,7 @@ void scalarEmptyAndInvalidInputs() {
                 .status()
                 .code() == ErrorCode::IndexOutOfRange);
   auto nonfinite = nonempty;
-  nonfinite.data()[0] = std::numeric_limits<Scalar>::infinity();
+  tensorValues(nonfinite)[0] = std::numeric_limits<Scalar>::infinity();
   VSS_CHECK(tuckerHOSVD(nonfinite, std::array<Extent, 2>{1, 1}, policy(), ample)
                 .status()
                 .code() == ErrorCode::NonFiniteInput);
@@ -241,7 +258,7 @@ void scalarEmptyAndInvalidInputs() {
 
   std::array<Matrix, 2> nonfinite_axes{valid.value().axes.view()[0],
                                        valid.value().axes.view()[1]};
-  nonfinite_axes[0].data()[0] = std::numeric_limits<Scalar>::infinity();
+  nonfinite_axes[0].at(0U, 0U) = std::numeric_limits<Scalar>::infinity();
   const auto nonfinite_array = Array<Matrix>::copy(nonfinite_axes, ample);
   VSS_CHECK(nonfinite_array.hasValue());
   const TuckerFactors nonfinite_factor{.core = valid.value().core,
@@ -253,9 +270,10 @@ void scalarEmptyAndInvalidInputs() {
 }
 
 void exactPeakElementAndByteCaps() {
-  std::array<Scalar, 16 * 16 * 16> values{};
+  std::array<Scalar, 4096> values{};
+  const auto valueView = std::span<Scalar>{values};
   for (Index i = 0; i < 16; ++i) {
-    values[i * 273] = static_cast<Scalar>(i + 1);
+    valueView[i * 273] = static_cast<Scalar>(i + 1);
   }
   const auto input = makeTensor(std::array<Extent, 3>{16, 16, 16}, values);
   const auto ranks = std::array<Extent, 3>{8, 8, 8};
@@ -267,7 +285,7 @@ void exactPeakElementAndByteCaps() {
   std::size_t low = 0;
   std::size_t high = 1'000'000;
   while (low < high) {
-    const auto middle = low + (high - low) / 2;
+    const auto middle = low + ((high - low) / 2);
     const auto attempt = succeedsWithElements(middle);
     if (attempt.hasValue()) {
       high = middle;
@@ -290,7 +308,7 @@ void exactPeakElementAndByteCaps() {
   low = 0;
   high = 64'000'000;
   while (low < high) {
-    const auto middle = low + (high - low) / 2;
+    const auto middle = low + ((high - low) / 2);
     const auto attempt = succeedsWithBytes(middle);
     if (attempt.hasValue()) {
       high = middle;

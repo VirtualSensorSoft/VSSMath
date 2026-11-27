@@ -7,21 +7,43 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <vss/math/Array.hpp>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/MatrixView.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Tensor.hpp>
 #include <vss/math/TensorDecomposition.hpp>
 #include <vss/math/TensorLimits.hpp>
 #include <vss/math/linear/Decomposition.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math {
 namespace {
 
 using Wide = long double;
 
+std::span<const Scalar> values(const Tensor& tensor) {
+  return {tensor.data(), tensor.size()};
+}
+
+std::span<Scalar> values(Tensor& tensor) {
+  return {tensor.data(), tensor.size()};
+}
+
 struct Footprint final {
-  std::size_t elements{};
-  std::size_t bytes{};
-  bool valid{true};
+public:
+  [[nodiscard]] static Footprint invalid() {
+    Footprint result;
+    result.valid_ = false;
+    return result;
+  }
+
+  [[nodiscard]] std::size_t elements() const noexcept { return elements_; }
+  [[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
+  [[nodiscard]] bool valid() const noexcept { return valid_; }
+  void invalidate() noexcept { valid_ = false; }
 
   template <class T> void add(std::size_t count) { add(count, sizeof(T)); }
 
@@ -29,18 +51,45 @@ struct Footprint final {
     if (width != 0 && count > static_cast<std::size_t>(
                                   std::numeric_limits<std::ptrdiff_t>::max()) /
                                   width) {
-      valid = false;
+      valid_ = false;
       return;
     }
-    if (!valid || count > std::numeric_limits<std::size_t>::max() - elements ||
+    if (!valid_ ||
+        count > std::numeric_limits<std::size_t>::max() - elements_ ||
         (width != 0 &&
-         count > (std::numeric_limits<std::size_t>::max() - bytes) / width)) {
-      valid = false;
+         count > (std::numeric_limits<std::size_t>::max() - bytes_) / width)) {
+      valid_ = false;
       return;
     }
-    elements += count;
-    bytes += count * width;
+    elements_ += count;
+    bytes_ += count * width;
   }
+
+  void merge(const Footprint& other) {
+    if (!other.valid() ||
+        other.elements() >
+            std::numeric_limits<std::size_t>::max() - elements_ ||
+        other.bytes() > std::numeric_limits<std::size_t>::max() - bytes_) {
+      valid_ = false;
+      return;
+    }
+    elements_ += other.elements();
+    bytes_ += other.bytes();
+  }
+
+  void maximizeWith(const Footprint& other) {
+    if (!other.valid()) {
+      invalidate();
+      return;
+    }
+    elements_ = std::max(elements_, other.elements());
+    bytes_ = std::max(bytes_, other.bytes());
+  }
+
+private:
+  std::size_t elements_{};
+  std::size_t bytes_{};
+  bool valid_{true};
 };
 
 bool multiply(std::size_t first, std::size_t second, std::size_t& result) {
@@ -63,20 +112,19 @@ bool addProduct(Footprint& footprint, std::size_t first, std::size_t second,
                 std::size_t width) {
   std::size_t count{};
   if (!multiply(first, second, count)) {
-    footprint.valid = false;
+    footprint.invalidate();
     return false;
   }
   footprint.add(count, width);
-  return footprint.valid;
+  return footprint.valid();
 }
 
 void takePeak(Footprint& peak, const Footprint& candidate) {
-  if (!candidate.valid) {
-    peak.valid = false;
+  if (!candidate.valid()) {
+    peak.invalidate();
     return;
   }
-  peak.elements = std::max(peak.elements, candidate.elements);
-  peak.bytes = std::max(peak.bytes, candidate.bytes);
+  peak.maximizeWith(candidate);
 }
 
 Footprint svdPeak(Index rows, Index columns) {
@@ -86,7 +134,7 @@ Footprint svdPeak(Index rows, Index columns) {
   std::size_t tallThin{};
   std::size_t thinSquared{};
   if (!multiply(tall, thin, tallThin) || !multiply(thin, thin, thinSquared)) {
-    result.valid = false;
+    result.invalidate();
     return result;
   }
   // This mirrors the existing SVD preflight: work and left Wide matrices,
@@ -105,26 +153,13 @@ Footprint svdPeak(Index rows, Index columns) {
 }
 
 bool fits(const Footprint& footprint, const Limits& limits) {
-  return footprint.valid && footprint.elements <= limits.elements &&
-         footprint.bytes <= limits.bytes;
+  return footprint.valid() && footprint.elements() <= limits.elements &&
+         footprint.bytes() <= limits.bytes;
 }
 
 bool addAll(Footprint& target, const Footprint& other) {
-  if (!other.valid) {
-    target.valid = false;
-    return false;
-  }
-  target.add(other.elements, 1);
-  // Correct the bytes accumulated above, retaining the exact typed byte count.
-  if (target.valid) {
-    target.bytes -= other.elements;
-    if (other.bytes > std::numeric_limits<std::size_t>::max() - target.bytes) {
-      target.valid = false;
-    } else {
-      target.bytes += other.bytes;
-    }
-  }
-  return target.valid;
+  target.merge(other);
+  return target.valid();
 }
 
 Footprint factorPayload(std::span<const Extent> extents,
@@ -174,7 +209,7 @@ Footprint reconstructionPeak(std::span<const Extent> outputShape,
   std::vector<Extent> current(ranks.begin(), ranks.end());
   std::size_t currentCount{};
   if (!tensorElementCount(current, currentCount)) {
-    peak.valid = false;
+    peak.invalidate();
     return peak;
   }
   for (Index axis = 0; axis < rank; ++axis) {
@@ -182,7 +217,7 @@ Footprint reconstructionPeak(std::span<const Extent> outputShape,
     next[axis] = outputShape[axis];
     std::size_t nextCount{};
     if (!tensorElementCount(next, nextCount)) {
-      peak.valid = false;
+      peak.invalidate();
       return peak;
     }
     Footprint live;
@@ -212,21 +247,21 @@ Footprint hosvdPeak(std::span<const Extent> extents,
   std::size_t coreCount{};
   if (!tensorElementCount(extents, dataCount) ||
       !coreElementCount(ranks, coreCount)) {
-    return Footprint{.valid = false};
+    return Footprint::invalid();
   }
   const auto allFactors = factorPayload(extents, ranks, rank);
-  if (!allFactors.valid) {
-    return Footprint{.valid = false};
+  if (!allFactors.valid()) {
+    return Footprint::invalid();
   }
 
   Footprint peak;
   std::size_t priorFactorElements{};
   for (Index axis = 0; axis < rank && dataCount != 0; ++axis) {
-    std::size_t modeColumns = dataCount / extents[axis];
+    const std::size_t modeColumns = dataCount / extents[axis];
     std::size_t newFactor{};
     if (!multiply(extents[axis], ranks[axis], newFactor) ||
         !addChecked(priorFactorElements, newFactor, priorFactorElements)) {
-      return Footprint{.valid = false};
+      return Footprint::invalid();
     }
     Footprint live;
     live.add(dataCount, sizeof(Scalar));           // unfolding
@@ -249,7 +284,7 @@ Footprint hosvdPeak(std::span<const Extent> extents,
     std::size_t narrowSquared{};
     if (!multiply(tall, narrow, tallNarrow) ||
         !multiply(narrow, narrow, narrowSquared)) {
-      return Footprint{.valid = false};
+      return Footprint::invalid();
     }
     outputOnly.add(tallNarrow, sizeof(Scalar));
     outputOnly.add(narrowSquared, sizeof(Scalar));
@@ -268,20 +303,18 @@ Footprint hosvdPeak(std::span<const Extent> extents,
     next[axis] = ranks[axis];
     std::size_t nextCount{};
     if (!tensorElementCount(next, nextCount)) {
-      return Footprint{.valid = false};
+      return Footprint::invalid();
     }
     std::size_t liveCount{};
     if (!addChecked(axis == 0 ? 0 : currentCount, nextCount, liveCount)) {
-      return Footprint{.valid = false};
+      return Footprint::invalid();
     }
     coreContractionPeak = std::max(coreContractionPeak, liveCount);
     current = std::move(next);
     currentCount = nextCount;
   }
   Footprint coreLive;
-  coreLive.add(allFactors.elements, sizeof(Scalar));
-  coreLive.bytes -= allFactors.elements * sizeof(Scalar);
-  coreLive.bytes += allFactors.bytes;
+  addAll(coreLive, allFactors);
   coreLive.add(rank, sizeof(Matrix));
   coreLive.add(coreContractionPeak, sizeof(Scalar));
   addShapeAndCoordinates(coreLive, rank, 5);
@@ -290,7 +323,7 @@ Footprint hosvdPeak(std::span<const Extent> extents,
   // Packaging Array<Matrix> copies the axis matrices while the source vector
   // is still alive. Include both matrix payloads and both handle arrays.
   Footprint packageLive;
-  addProduct(packageLive, allFactors.elements, 2, sizeof(Scalar));
+  addProduct(packageLive, allFactors.elements(), 2, sizeof(Scalar));
   addProduct(packageLive, rank, 2, sizeof(Matrix));
   packageLive.add(coreCount, sizeof(Scalar));
   addProduct(packageLive, rank, 2, sizeof(Extent)); // core and output shapes
@@ -298,11 +331,9 @@ Footprint hosvdPeak(std::span<const Extent> extents,
 
   // The final factors remain owned while reconstructTucker materializes the
   // approximation and its contraction intermediates for the residual.
-  Footprint reconstruction = reconstructionPeak(extents, ranks, false);
+  const Footprint reconstruction = reconstructionPeak(extents, ranks, false);
   Footprint residualLive;
-  residualLive.add(allFactors.elements, sizeof(Scalar));
-  residualLive.bytes -= allFactors.elements * sizeof(Scalar);
-  residualLive.bytes += allFactors.bytes;
+  addAll(residualLive, allFactors);
   residualLive.add(rank, sizeof(Matrix));
   residualLive.add(coreCount, sizeof(Scalar));
   addProduct(residualLive, rank, 2, sizeof(Extent)); // factor and core shapes
@@ -317,9 +348,7 @@ Footprint hosvdPeak(std::span<const Extent> extents,
   }
   if (dataCount == 0) {
     Footprint emptyLive;
-    emptyLive.add(allFactors.elements, sizeof(Scalar));
-    emptyLive.bytes -= allFactors.elements * sizeof(Scalar);
-    emptyLive.bytes += allFactors.bytes;
+    addAll(emptyLive, allFactors);
     addProduct(emptyLive, rank, 2, sizeof(Matrix));
     addProduct(emptyLive, rank, 3, sizeof(Extent));
     emptyLive.add(rank, sizeof(Index));
@@ -355,8 +384,8 @@ Status validateRanks(const Tensor& input, std::span<const Extent> ranks) {
 }
 
 Status validateFinite(const Tensor& tensor) {
-  for (Extent i = 0; i < tensor.size(); ++i) {
-    if (!std::isfinite(tensor.data()[i])) {
+  for (const Scalar value : values(tensor)) {
+    if (!std::isfinite(value)) {
       return Status::failure(ErrorCode::NonFiniteInput,
                              "Tucker input contains a non-finite value");
     }
@@ -368,7 +397,7 @@ Index rowMajorOffset(std::span<const Extent> extents,
                      std::span<const Index> coordinates) {
   Index offset = 0;
   for (Index axis = 0; axis < extents.size(); ++axis) {
-    offset = offset * extents[axis] + coordinates[axis];
+    offset = (offset * extents[axis]) + coordinates[axis];
   }
   return offset;
 }
@@ -392,7 +421,7 @@ Result<Tensor> expandFactors(const Tensor& core,
       return Result<Tensor>::failure(shape.status().code(),
                                      std::string{shape.status().message()});
     }
-    return Tensor::create(shape.value(), core.data()[0],
+    return Tensor::create(shape.value(), values(core).front(),
                           TensorLimits{static_cast<Extent>(limits.elements)});
   }
   std::vector<Extent> currentExtents(core.shape().extents().begin(),
@@ -419,6 +448,7 @@ Result<Tensor> expandFactors(const Tensor& core,
       source = &*current;
       continue;
     }
+    const auto sourceValues = values(*source);
     currentExtents[axis] = outputExtents[axis];
     const auto shape = TensorShape::create(currentExtents);
     if (!shape.hasValue()) {
@@ -438,22 +468,26 @@ Result<Tensor> expandFactors(const Tensor& core,
         coordinates[axis] = component;
         sum = std::fma(
             static_cast<Wide>(axes[axis].at(outputCoordinate, component)),
-            static_cast<Wide>(source->data()[rowMajorOffset(
+            static_cast<Wide>(sourceValues[rowMajorOffset(
                 source->shape().extents(), coordinates)]),
             sum);
       }
-      const Scalar converted = static_cast<Scalar>(sum);
+      auto converted = static_cast<Scalar>(sum);
       if (!std::isfinite(converted)) {
         return Result<Tensor>::failure(ErrorCode::NonFiniteResult,
                                        "Tucker reconstruction is non-finite");
       }
-      next.value().data()[output] = converted;
+      values(next.value())[output] = converted;
       coordinates[axis] = outputCoordinate;
     }
     current.emplace(std::move(next).value());
     source = &*current;
   }
-  return Result<Tensor>::success(std::move(*current));
+  if (!current.has_value()) {
+    return Result<Tensor>::failure(ErrorCode::InvalidDomain,
+                                   "Tucker reconstruction produced no data");
+  }
+  return Result<Tensor>::success(std::move(current.value()));
 }
 
 bool completeOrthonormalColumns(Matrix& factor, Index firstColumn) {
@@ -464,7 +498,7 @@ bool completeOrthonormalColumns(Matrix& factor, Index firstColumn) {
                          std::sqrt(static_cast<Wide>(rows));
   Index filled = firstColumn;
   for (Index basis = 0; basis < rows && filled < columns; ++basis) {
-    std::fill(candidate.begin(), candidate.end(), 0);
+    std::ranges::fill(candidate, Wide{0});
     candidate[basis] = 1;
     for (int pass = 0; pass < 2; ++pass) {
       for (Index column = 0; column < filled; ++column) {
@@ -497,17 +531,19 @@ bool completeOrthonormalColumns(Matrix& factor, Index firstColumn) {
 
 Scalar frobeniusDifference(const Tensor& first, const Tensor& second,
                            bool& representable) {
+  const auto firstValues = values(first);
+  const auto secondValues = values(second);
   Wide scale = 0;
   Wide sumSquares = 1;
   for (Extent i = 0; i < first.size(); ++i) {
     const Wide magnitude =
-        std::abs(static_cast<Wide>(first.data()[i]) - second.data()[i]);
+        std::abs(static_cast<Wide>(firstValues[i]) - secondValues[i]);
     if (magnitude == 0) {
       continue;
     }
     if (scale < magnitude) {
       const Wide ratio = scale / magnitude;
-      sumSquares = 1 + sumSquares * ratio * ratio;
+      sumSquares = 1 + (sumSquares * ratio * ratio);
       scale = magnitude;
     } else {
       const Wide ratio = magnitude / scale;
@@ -515,7 +551,7 @@ Scalar frobeniusDifference(const Tensor& first, const Tensor& second,
     }
   }
   const Wide norm = scale == 0 ? 0 : scale * std::sqrt(sumSquares);
-  const Scalar result = static_cast<Scalar>(norm);
+  const auto result = static_cast<Scalar>(norm);
   representable = std::isfinite(result);
   return result;
 }
@@ -562,16 +598,18 @@ Result<Tensor> reconstructTucker(const TuckerFactors& factors, Limits limits) {
           "Nonempty tensor axis has zero Tucker rank");
     }
     ranks[axis] = modeRank;
-    for (Extent i = 0; i < matrix.size(); ++i) {
-      if (!std::isfinite(matrix.data()[i])) {
-        return Result<Tensor>::failure(
-            ErrorCode::NonFiniteInput,
-            "Tucker factor contains a non-finite value");
+    for (Index row = 0; row < matrix.rows(); ++row) {
+      for (Index column = 0; column < matrix.columns(); ++column) {
+        if (!std::isfinite(matrix.at(row, column))) {
+          return Result<Tensor>::failure(
+              ErrorCode::NonFiniteInput,
+              "Tucker factor contains a non-finite value");
+        }
       }
     }
   }
-  for (Extent i = 0; i < factors.core.size(); ++i) {
-    if (!std::isfinite(factors.core.data()[i])) {
+  for (const Scalar value : values(factors.core)) {
+    if (!std::isfinite(value)) {
       return Result<Tensor>::failure(ErrorCode::NonFiniteInput,
                                      "Tucker core contains a non-finite value");
     }
@@ -621,6 +659,7 @@ Result<TuckerFactors> tuckerHOSVD(const Tensor& input,
   }
   const auto extents = input.shape().extents();
   const auto rank = extents.size();
+  const auto inputValues = values(input);
   const Footprint peak = hosvdPeak(extents, ranks);
   if (!fits(peak, limits)) {
     return Result<TuckerFactors>::failure(
@@ -656,7 +695,7 @@ Result<TuckerFactors> tuckerHOSVD(const Tensor& input,
       for (Index row = 0; row < rows; ++row) {
         coordinates[mode] = row;
         unfolding.at(row, column) =
-            input.data()[rowMajorOffset(extents, coordinates)];
+            inputValues[rowMajorOffset(extents, coordinates)];
       }
     }
     std::size_t priorFactors = 0;
@@ -669,8 +708,8 @@ Result<TuckerFactors> tuckerHOSVD(const Tensor& input,
     external.add(priorFactors + newFactorSize, sizeof(Scalar));
     external.add(rank, sizeof(Matrix));
     external.add(rank, sizeof(Index));
-    const Limits svdLimits{.elements = limits.elements - external.elements,
-                           .bytes = limits.bytes - external.bytes,
+    const Limits svdLimits{.elements = limits.elements - external.elements(),
+                           .bytes = limits.bytes - external.bytes(),
                            .evaluations = limits.evaluations};
     Matrix axisFactor(rows, ranks[mode]);
     const auto decomposition =
@@ -713,7 +752,9 @@ Result<TuckerFactors> tuckerHOSVD(const Tensor& input,
       return Result<TuckerFactors>::failure(
           next.status().code(), std::string{next.status().message()});
     }
-    for (Index output = 0; output < next.value().size(); ++output) {
+    const auto previousValues = values(*source);
+    auto nextValues = values(next.value());
+    for (Index output = 0; output < nextValues.size(); ++output) {
       decodeCoordinates(output, nextExtents, coordinates);
       const Index outputCoordinate = coordinates[mode];
       Wide sum = 0;
@@ -722,15 +763,15 @@ Result<TuckerFactors> tuckerHOSVD(const Tensor& input,
         sum = std::fma(
             static_cast<Wide>(axes[mode].at(component, outputCoordinate)),
             static_cast<Wide>(
-                source->data()[rowMajorOffset(currentExtents, coordinates)]),
+                previousValues[rowMajorOffset(currentExtents, coordinates)]),
             sum);
       }
-      const Scalar converted = static_cast<Scalar>(sum);
+      auto converted = static_cast<Scalar>(sum);
       if (!std::isfinite(converted)) {
         return Result<TuckerFactors>::failure(
             ErrorCode::NonFiniteResult, "Tucker core projection is non-finite");
       }
-      next.value().data()[output] = converted;
+      nextValues[output] = converted;
       coordinates[mode] = outputCoordinate;
     }
     current.emplace(std::move(next).value());
@@ -738,8 +779,8 @@ Result<TuckerFactors> tuckerHOSVD(const Tensor& input,
     currentExtents = std::move(nextExtents);
   }
   if (rank == 0) {
-    const auto scalarCore =
-        Tensor::create(input.shape(), input.data()[0],
+    auto scalarCore =
+        Tensor::create(input.shape(), inputValues[0],
                        TensorLimits{static_cast<Extent>(limits.elements)});
     if (!scalarCore.hasValue()) {
       return Result<TuckerFactors>::failure(
@@ -762,19 +803,23 @@ Result<TuckerFactors> tuckerHOSVD(const Tensor& input,
     }
     current.emplace(std::move(emptyCore).value());
   }
+  if (!current.has_value()) {
+    return Result<TuckerFactors>::failure(
+        ErrorCode::InvalidDomain, "Tucker decomposition produced no core");
+  }
 
-  const auto storedAxes = Array<Matrix>::copy(axes, limits);
+  auto storedAxes = Array<Matrix>::copy(axes, limits);
   if (!storedAxes.hasValue()) {
     return Result<TuckerFactors>::failure(
         storedAxes.status().code(), std::string{storedAxes.status().message()});
   }
-  const auto originalShape = TensorShape::create(extents);
+  auto originalShape = TensorShape::create(extents);
   if (!originalShape.hasValue()) {
     return Result<TuckerFactors>::failure(
         originalShape.status().code(),
         std::string{originalShape.status().message()});
   }
-  TuckerFactors result{.core = std::move(*current),
+  TuckerFactors result{.core = std::move(current.value()),
                        .axes = std::move(storedAxes).value(),
                        .shape = std::move(originalShape).value(),
                        .residual_norm = 0};
