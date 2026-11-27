@@ -938,6 +938,21 @@ int main() {
   }
 
   {
+    const Vector autocovariance{std::array<Scalar, 3U>{1.0, 0.5, 0.25}};
+    SolvePolicy policy{};
+    policy.iteration.max_iterations = 2U;
+    constexpr Limits limits{64U, 1024U, 0U};
+    const auto partial = signal::partialAutocorrelation(autocovariance.view(),
+                                                        2U, policy, limits);
+    if (!require(partial.hasValue() && partial.value().size() == 2U &&
+                     std::abs(partial.value().at(0U) - 0.5) < 1.0e-12 &&
+                     std::abs(partial.value().at(1U)) < 1.0e-12,
+                 "installed partial-autocorrelation API failed")) {
+      return 1;
+    }
+  }
+
+  {
     const std::array<Complex, 4U> values{
         {{2.0, 0.0}, {0.0, 1.0}, {0.0, -1.0}, {2.0, 0.0}}};
     const linear::ComplexMatrixView matrix{values, 2U, 2U, 2U, 1U};
