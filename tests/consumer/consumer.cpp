@@ -47,6 +47,7 @@
 #include <vss/math/probability/Composite.hpp>
 #include <vss/math/probability/MomentBounds.hpp>
 #include <vss/math/probability/SamplingDesign.hpp>
+#include <vss/math/signal/Series.hpp>
 #include <vss/math/statistics/Circular.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Dependence.hpp>
@@ -867,6 +868,33 @@ int main() {
                          1.0e-10 &&
                      std::abs(reconstructed.value().data()[3U] - 4.0) < 1.0e-10,
                  "installed Tucker/HOSVD API failed")) {
+      return 1;
+    }
+  }
+
+  {
+    const Vector times{std::array<Scalar, 3U>{0.0, 1.0, 3.0}};
+    Matrix values(3U, 1U);
+    values.at(0U, 0U) = 0.0;
+    values.at(1U, 0U) = 2.0;
+    values.at(2U, 0U) = 6.0;
+    const SeriesView series{times.view(), values.view(), {}, std::nullopt};
+    constexpr Limits limits{4096U, 1U << 20U, 0U};
+    const auto integral = cumulativeIntegral(series, limits);
+    const WeightSpec unit{.rule = WeightRule::unweighted,
+                          .rowWeights = std::nullopt,
+                          .componentWeights = std::nullopt,
+                          .frequencyCounts = {}};
+    SolvePolicy policy{};
+    policy.iteration.max_iterations = 64U;
+    policy.rank = RankPolicy::minimum_norm;
+    const auto fitted = trend(series, 1U, unit, policy, limits);
+    if (!require(integral.hasValue() && integral.value().at(2U) == 9.0 &&
+                     fitted.hasValue() &&
+                     std::abs(fitted.value().parameters.at(0U, 0U)) < 1.0e-12 &&
+                     std::abs(fitted.value().parameters.at(1U, 0U) - 2.0) <
+                         1.0e-12,
+                 "installed C115 series API failed")) {
       return 1;
     }
   }
