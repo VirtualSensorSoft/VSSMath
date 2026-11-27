@@ -141,6 +141,7 @@ set(vss_expected_files
   include/vss/math/Tolerance.hpp
   include/vss/math/Tensor.hpp
   include/vss/math/TensorDecomposition.hpp
+  include/vss/math/signal/Series.hpp
   include/vss/math/TensorElementwise.hpp
   include/vss/math/TensorLimits.hpp
   include/vss/math/TensorOperations.hpp
