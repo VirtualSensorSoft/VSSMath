@@ -440,6 +440,97 @@ void meanVarianceWithAutocorrelationRejectsInvalidInputs() {
             underflow.status().code() == ErrorCode::NonFiniteResult);
 }
 
+void temporalEffectiveSampleSizeMatchesReferenceCases() {
+  const Vector nf07 = vector({1.0, 0.5, 0.25, 0.125, 0.0625});
+  const auto result = temporalEffectiveSampleSize(nf07.view(), 5U);
+  VSS_CHECK(result);
+  VSS_CHECK(std::abs(result.value().value - (200.0 / 89.0)) < 1.0e-14);
+  const auto& support = result.value().diagnostics.global;
+  VSS_CHECK(support.input == 5U && support.valid == 5U &&
+            support.positive == 5U);
+  VSS_CHECK(support.effective_count &&
+            *support.effective_count == result.value().value);
+  const auto& diagnostics = result.value().diagnostics;
+  VSS_CHECK(diagnostics.weight == WeightRule::dependent);
+  VSS_CHECK(diagnostics.approximation == Approximation::exact);
+  VSS_CHECK(diagnostics.estimand == Estimand::observed);
+  VSS_CHECK(!support.frequency_mass && !support.weight_mass &&
+            !support.degrees_of_freedom && !support.squared_weight_mass);
+  for (const auto& weightPower : support.normalized_weight_powers) {
+    VSS_CHECK(!weightPower);
+  }
+  VSS_CHECK(!diagnostics.numerical_error && !diagnostics.sampling_error);
+  VSS_CHECK(!result.value().error_covariance);
+
+  const Vector independent = vector({1.0, 0.0, 0.0, 0.0});
+  const auto independentResult =
+      temporalEffectiveSampleSize(independent.view(), 4U);
+  VSS_CHECK(independentResult && independentResult.value().value == 4.0);
+
+  const Vector negativeCorrelation = vector({1.0, -0.25});
+  const auto aboveCount =
+      temporalEffectiveSampleSize(negativeCorrelation.view(), 2U);
+  VSS_CHECK(aboveCount && aboveCount.value().value > 2.0);
+}
+
+void temporalEffectiveSampleSizeRejectsInvalidInputs() {
+  const Vector empty{};
+  const auto zeroCount = temporalEffectiveSampleSize(empty.view(), 0U);
+  VSS_CHECK(!zeroCount &&
+            zeroCount.status().code() == ErrorCode::InsufficientSamples);
+  const Vector tooShort = vector({1.0});
+  const auto shortInput = temporalEffectiveSampleSize(tooShort.view(), 2U);
+  VSS_CHECK(!shortInput &&
+            shortInput.status().code() == ErrorCode::InsufficientSamples);
+
+  const Vector wrongZeroLag = vector({0.5});
+  const auto wrongOrigin = temporalEffectiveSampleSize(wrongZeroLag.view(), 1U);
+  VSS_CHECK(!wrongOrigin &&
+            wrongOrigin.status().code() == ErrorCode::InvalidDomain);
+
+  const Vector exactCancellation = vector({1.0, -1.0});
+  const auto zeroContraction =
+      temporalEffectiveSampleSize(exactCancellation.view(), 2U);
+  VSS_CHECK(!zeroContraction &&
+            zeroContraction.status().code() == ErrorCode::InvalidDomain);
+  const Vector alternating = vector({1.0, -1.0, 1.0, -1.0});
+  const auto perfectCancellation =
+      temporalEffectiveSampleSize(alternating.view(), 4U);
+  VSS_CHECK(!perfectCancellation &&
+            perfectCancellation.status().code() == ErrorCode::InvalidDomain);
+  const Vector negativeContraction = vector({1.0, -1.0, -1.0});
+  const auto negativeResult =
+      temporalEffectiveSampleSize(negativeContraction.view(), 3U);
+  VSS_CHECK(!negativeResult &&
+            negativeResult.status().code() == ErrorCode::InvalidDomain);
+
+  const Vector nonFinite =
+      vector({1.0, std::numeric_limits<Scalar>::quiet_NaN()});
+  const auto nonFiniteResult =
+      temporalEffectiveSampleSize(nonFinite.view(), 2U);
+  VSS_CHECK(!nonFiniteResult &&
+            nonFiniteResult.status().code() == ErrorCode::NonFiniteInput);
+
+  const Vector outOfBounds = vector({1.0, 1.25});
+  const auto invalidCorrelation =
+      temporalEffectiveSampleSize(outOfBounds.view(), 2U);
+  VSS_CHECK(!invalidCorrelation && invalidCorrelation.status().code() ==
+                                       ErrorCode::NotPositiveSemidefinite);
+
+  const Vector unrepresentable =
+      vector({1.0, -0.5, -0.25, std::numeric_limits<Scalar>::denorm_min()});
+  const auto overflowingCount =
+      temporalEffectiveSampleSize(unrepresentable.view(), 4U);
+  VSS_CHECK(!overflowingCount &&
+            overflowingCount.status().code() == ErrorCode::NonFiniteResult);
+
+  const Vector trailingNonFinite =
+      vector({1.0, 0.0, std::numeric_limits<Scalar>::quiet_NaN()});
+  const auto ignoresExtra =
+      temporalEffectiveSampleSize(trailingNonFinite.view(), 2U);
+  VSS_CHECK(ignoresExtra && ignoresExtra.value().value == 2.0);
+}
+
 void partialAutocorrelationMatchesLevinsonDurbinOracles() {
   const Vector ar1 = vector({1.0, 0.5, 0.25});
   const auto ar1Result =
@@ -618,6 +709,8 @@ int main() try {
   meanVarianceWithAutocorrelationMatchesReferenceCases();
   meanVarianceWithAutocorrelationHandlesCancellationAndZero();
   meanVarianceWithAutocorrelationRejectsInvalidInputs();
+  temporalEffectiveSampleSizeMatchesReferenceCases();
+  temporalEffectiveSampleSizeRejectsInvalidInputs();
   partialAutocorrelationMatchesLevinsonDurbinOracles();
   partialAutocorrelationRejectsInvalidAndUnstableInputs();
   return 0;
