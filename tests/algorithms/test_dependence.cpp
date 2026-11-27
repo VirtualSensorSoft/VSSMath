@@ -360,6 +360,23 @@ void partialAutocorrelationMatchesLevinsonDurbinOracles() {
   VSS_CHECK(std::abs(ar2Result.value().at(1U) - expectedSecond) < 1.0e-12);
   VSS_CHECK(std::abs(expectedFirst - 0.6) < 1.0e-12);
 
+  // A second independent AR(3) fixture exercises the simultaneous in-place
+  // coefficient update and the third reflection coefficient.
+  const Vector ar3 = vector({1.0, 0.5, 0.1, 0.032});
+  const auto ar3Result =
+      partialAutocorrelation(ar3.view(), 3U, solvePolicy(), ample);
+  VSS_CHECK(ar3Result && ar3Result.value().size() == 3U);
+  VSS_CHECK(std::abs(ar3Result.value().at(0U) - 0.5) < 1.0e-12);
+  VSS_CHECK(std::abs(ar3Result.value().at(1U) + 0.2) < 1.0e-12);
+  VSS_CHECK(std::abs(ar3Result.value().at(2U) - 0.1) < 1.0e-12);
+
+  const Vector extremeScale = vector({1.0e300, 5.0e299, 2.5e299});
+  const auto scaledResult =
+      partialAutocorrelation(extremeScale.view(), 2U, solvePolicy(), ample);
+  VSS_CHECK(scaledResult &&
+            std::abs(scaledResult.value().at(0U) - 0.5) < 1.0e-12 &&
+            std::abs(scaledResult.value().at(1U)) < 1.0e-12);
+
   const Vector extraLag =
       vector({1.0, 0.5, 0.25, std::numeric_limits<Scalar>::quiet_NaN()});
   const auto ignoresExtra =
@@ -369,8 +386,10 @@ void partialAutocorrelationMatchesLevinsonDurbinOracles() {
             std::abs(ignoresExtra.value().at(1U)) < 1.0e-12);
 
   const Vector zeroOrderInput = vector({2.0});
+  auto zeroOrderPolicy = solvePolicy(0U);
+  zeroOrderPolicy.rank_abs = 3.0;
   const auto zeroOrder =
-      partialAutocorrelation(zeroOrderInput.view(), 0U, solvePolicy(0U), ample);
+      partialAutocorrelation(zeroOrderInput.view(), 0U, zeroOrderPolicy, ample);
   VSS_CHECK(zeroOrder && zeroOrder.value().empty());
 }
 
@@ -411,6 +430,12 @@ void partialAutocorrelationRejectsInvalidAndUnstableInputs() {
       partialAutocorrelation(singular.view(), 1U, solvePolicy(), ample);
   VSS_CHECK(!rankDeficient &&
             rankDeficient.status().code() == ErrorCode::RankDeficient);
+  auto permissiveRankPolicy = solvePolicy();
+  permissiveRankPolicy.rank = RankPolicy::minimum_norm;
+  const auto stillRankDeficient =
+      partialAutocorrelation(singular.view(), 1U, permissiveRankPolicy, ample);
+  VSS_CHECK(!stillRankDeficient &&
+            stillRankDeficient.status().code() == ErrorCode::RankDeficient);
 
   const Vector indefinite = vector({1.0, 2.0});
   const auto notPositiveSemidefinite =
@@ -418,6 +443,12 @@ void partialAutocorrelationRejectsInvalidAndUnstableInputs() {
   VSS_CHECK(!notPositiveSemidefinite &&
             notPositiveSemidefinite.status().code() ==
                 ErrorCode::NotPositiveSemidefinite);
+
+  const Vector indefiniteToeplitz = vector({1.0, 0.9, -0.9});
+  const auto negativeInnovation = partialAutocorrelation(
+      indefiniteToeplitz.view(), 2U, solvePolicy(), ample);
+  VSS_CHECK(!negativeInnovation && negativeInnovation.status().code() ==
+                                       ErrorCode::NotPositiveSemidefinite);
 
   const Vector illConditioned = vector({1.0, 0.95});
   auto conditionedPolicy = solvePolicy();
@@ -433,6 +464,13 @@ void partialAutocorrelationRejectsInvalidAndUnstableInputs() {
       illConditioned.view(), 1U, rankLimitedPolicy, ample);
   VSS_CHECK(!belowRankThreshold &&
             belowRankThreshold.status().code() == ErrorCode::RankDeficient);
+  auto relativeRankPolicy = solvePolicy();
+  relativeRankPolicy.rank_rel = 0.1;
+  const auto belowRelativeRankThreshold = partialAutocorrelation(
+      illConditioned.view(), 1U, relativeRankPolicy, ample);
+  VSS_CHECK(!belowRelativeRankThreshold &&
+            belowRelativeRankThreshold.status().code() ==
+                ErrorCode::RankDeficient);
 
   auto invalidPolicy = solvePolicy();
   invalidPolicy.rank_rel = 1.0;
@@ -440,6 +478,13 @@ void partialAutocorrelationRejectsInvalidAndUnstableInputs() {
       partialAutocorrelation(tooFew.view(), 1U, invalidPolicy, ample);
   VSS_CHECK(!rejectedPolicy &&
             rejectedPolicy.status().code() == ErrorCode::InvalidTolerance);
+
+  auto invalidRankPolicy = solvePolicy();
+  invalidRankPolicy.rank = invalidEnumValue<RankPolicy>();
+  const auto rejectedRankPolicy =
+      partialAutocorrelation(singular.view(), 1U, invalidRankPolicy, ample);
+  VSS_CHECK(!rejectedRankPolicy &&
+            rejectedRankPolicy.status().code() == ErrorCode::InvalidDomain);
 
   const Vector ar1 = vector({1.0, 0.5, 0.25});
   const auto insufficientIterations =
@@ -451,6 +496,11 @@ void partialAutocorrelationRejectsInvalidAndUnstableInputs() {
       ar1.view(), 1U, solvePolicy(),
       {.elements = 2U, .bytes = 1U << 20U, .evaluations = 0U});
   VSS_CHECK(!limited && limited.status().code() == ErrorCode::ResourceLimit);
+  const auto byteLimited =
+      partialAutocorrelation(ar1.view(), 1U, solvePolicy(),
+                             {.elements = 64U, .bytes = 1U, .evaluations = 0U});
+  VSS_CHECK(!byteLimited &&
+            byteLimited.status().code() == ErrorCode::ResourceLimit);
 }
 
 } // namespace

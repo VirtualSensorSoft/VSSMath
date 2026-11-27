@@ -9,6 +9,7 @@
 #include <vss/math/Result.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 
 namespace vss::math::signal {
 
@@ -178,6 +179,45 @@ crossCovariance(ConstVectorView x, ConstVectorView y,
 crossCorrelation(ConstVectorView x, ConstVectorView y,
                  std::span<const std::int64_t> lags,
                  LagNormalization normalization, Limits limits);
+
+/// @brief Computes partial autocorrelations from a supplied autocovariance.
+/// @details Applies the Levinson–Durbin recursion to `autocovariance[0…order]`
+///          and returns reflection coefficients in orders one through
+///          `order`. Extra entries are ignored. Order zero requires a finite,
+///          positive lag-zero covariance and returns an empty vector. Every
+///          positive-order step requires a certified positive innovation
+///          variance; an exact or policy-rank-deficient innovation returns
+///          `RankDeficient`, while a materially negative innovation returns
+///          `NotPositiveSemidefinite`. The absolute and relative rank
+///          tolerances are applied to innovation variances with lag-zero
+///          covariance as the relative scale. The reciprocal-condition floor
+///          is applied to each innovation ratio `E/gamma[0]`. Positive-order
+///          recursions are capped by `policy.iteration.max_iterations`.
+///          Work is O(order²), with O(order) scratch and output storage, all
+///          preflighted against `limits`. No partial result is returned.
+/// @param autocovariance Finite autocovariance sequence beginning at lag zero;
+///        the first `order + 1` entries are used.
+/// @param order Requested highest partial-autocorrelation order.
+/// @param policy Numerical rank, conditioning and iteration policy.
+/// @param limits Simultaneous element and byte caps for scratch and output.
+/// @return Owned reflection coefficients, or a diagnostic failure.
+/// @retval ErrorCode::InsufficientSamples The input does not contain lag zero
+///         and all requested lags.
+/// @retval ErrorCode::NonFiniteInput A used autocovariance entry is nonfinite.
+/// @retval ErrorCode::InvalidDomain Lag-zero covariance is not positive.
+/// @retval ErrorCode::InvalidTolerance A numerical tolerance is invalid.
+/// @retval ErrorCode::RankDeficient The Toeplitz extension has a zero or
+///         policy-rank-deficient innovation.
+/// @retval ErrorCode::NotPositiveSemidefinite A used lag violates the
+///         covariance bound `|gamma[k]| <= gamma[0]`, or a materially negative
+///         innovation identifies an indefinite Toeplitz extension.
+/// @retval ErrorCode::IllConditioned An innovation ratio is below the
+///         configured reciprocal-condition floor.
+/// @retval ErrorCode::NoConvergence The iteration cap is below `order`.
+/// @retval ErrorCode::ResourceLimit Scratch or result storage exceeds limits.
+[[nodiscard]] Result<Vector>
+partialAutocorrelation(ConstVectorView autocovariance, Index order,
+                       SolvePolicy policy, Limits limits);
 
 } // namespace vss::math::signal
 
