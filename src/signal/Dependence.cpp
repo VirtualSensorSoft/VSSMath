@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -16,8 +17,10 @@
 #include <vss/math/Result.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/signal/Dependence.hpp>
+#include <vss/math/statistics/Population.hpp>
 
 namespace vss::math::signal {
 namespace {
@@ -303,6 +306,82 @@ bool exactVarianceToScalar(const ExactDyadicMagnitude& magnitude, Index count,
   }
   result = std::scalbn(scalarFraction, static_cast<int>(exponent));
   return std::isfinite(result) && result != 0.0;
+}
+
+bool exactEffectiveSampleSizeToScalar(const ExactDyadicMagnitude& magnitude,
+                                      Index count, Scalar& result) noexcept {
+  std::size_t highestWord = magnitude.size();
+  while (highestWord > 0U && magnitude.at(highestWord - 1U) == 0U) {
+    --highestWord;
+  }
+  if (highestWord == 0U) {
+    return false;
+  }
+
+  const std::uint32_t topWord = magnitude.at(highestWord - 1U);
+  const std::size_t bitLength =
+      (highestWord - 1U) * 32U +
+      static_cast<std::size_t>(32 - std::countl_zero(topWord));
+  const std::size_t wideDigits =
+      static_cast<std::size_t>(std::min(std::numeric_limits<Wide>::digits, 64));
+  const std::size_t retainedBits = std::min(bitLength, wideDigits);
+  std::uint64_t leadingBits = 0U;
+  for (std::size_t bit = bitLength; bit > bitLength - retainedBits; --bit) {
+    leadingBits = (leadingBits << 1U) |
+                  static_cast<std::uint64_t>(magnitudeBit(magnitude, bit - 1U));
+  }
+
+  std::size_t roundedBitLength = bitLength;
+  Wide contractionFraction = std::scalbn(static_cast<Wide>(leadingBits),
+                                         -static_cast<int>(retainedBits));
+  if (bitLength > retainedBits) {
+    const std::size_t guardPosition = bitLength - retainedBits - 1U;
+    const bool guard = magnitudeBit(magnitude, guardPosition);
+    const bool sticky = anyMagnitudeBitsBelow(magnitude, guardPosition);
+    if (guard && (sticky || (leadingBits & 1U) != 0U)) {
+      if (retainedBits == 64U &&
+          leadingBits == std::numeric_limits<std::uint64_t>::max()) {
+        contractionFraction = 0.5L;
+        ++roundedBitLength;
+      } else {
+        ++leadingBits;
+        contractionFraction = std::scalbn(static_cast<Wide>(leadingBits),
+                                          -static_cast<int>(retainedBits));
+        if (contractionFraction >= 1.0L) {
+          contractionFraction = 0.5L;
+          ++roundedBitLength;
+        }
+      }
+    }
+  }
+
+  // The accumulator stores each binary64 input as an integer multiple of
+  // 2^-1074. Normalize the exact contraction before forming n^2/q, so neither
+  // it nor its reciprocal needs to be materialized at its raw scale.
+  int countExponent = 0;
+  const Wide countFraction =
+      std::frexp(static_cast<Wide>(count), &countExponent);
+  const Wide quotientFraction =
+      (countFraction * countFraction) / contractionFraction;
+  int quotientAdjustment = 0;
+  const Wide normalized = std::frexp(quotientFraction, &quotientAdjustment);
+  constexpr std::int64_t binary64Scale = 1074;
+  const std::int64_t exponent = 2LL * countExponent -
+                                static_cast<std::int64_t>(roundedBitLength) +
+                                binary64Scale + quotientAdjustment;
+  if (exponent < std::numeric_limits<int>::min() ||
+      exponent > std::numeric_limits<int>::max()) {
+    return false;
+  }
+
+  const Wide wideResult = std::scalbn(normalized, static_cast<int>(exponent));
+  const auto scalarResult = static_cast<Scalar>(wideResult);
+  if (!std::isfinite(wideResult) || !std::isfinite(scalarResult) ||
+      scalarResult <= 0.0) {
+    return false;
+  }
+  result = scalarResult;
+  return true;
 }
 
 Result<Index> outputBytes(Index count) {
@@ -959,6 +1038,92 @@ Result<Scalar> meanVarianceWithAutocorrelation(ConstVectorView autocovariance,
     }
   }
   return Result<Scalar>::success(exactVariance);
+}
+
+Result<statistics::Estimate<Scalar>>
+temporalEffectiveSampleSize(ConstVectorView autocorrelation, Index count) {
+  using Estimate = statistics::Estimate<Scalar>;
+  if (count == 0U || count > autocorrelation.size()) {
+    return fail<Estimate>(
+        ErrorCode::InsufficientSamples,
+        "autocorrelation must contain all requested finite-window lags");
+  }
+
+  if (!std::isfinite(autocorrelation.at(0U))) {
+    return fail<Estimate>(ErrorCode::NonFiniteInput,
+                          "used autocorrelation entries must be finite");
+  }
+  if (autocorrelation.at(0U) != 1.0) {
+    return fail<Estimate>(ErrorCode::InvalidDomain,
+                          "lag-zero autocorrelation must equal one");
+  }
+
+  ExactDyadicMagnitude positive{};
+  ExactDyadicMagnitude negative{};
+  for (Index lag = 0U; lag < count; ++lag) {
+    const Scalar value = autocorrelation.at(lag);
+    if (!std::isfinite(value)) {
+      return fail<Estimate>(ErrorCode::NonFiniteInput,
+                            "used autocorrelation entries must be finite");
+    }
+    if (lag != 0U && std::abs(value) > 1.0) {
+      return fail<Estimate>(
+          ErrorCode::NotPositiveSemidefinite,
+          "autocorrelation violates the bound abs(rho[k]) <= 1");
+    }
+
+    auto weightLow = static_cast<std::uint64_t>(count);
+    std::uint32_t weightHigh = 0U;
+    if (lag != 0U) {
+      const auto remaining = static_cast<std::uint64_t>(count - lag);
+      weightLow = remaining << 1U;
+      weightHigh = static_cast<std::uint32_t>(remaining >> 63U);
+    }
+    auto& accumulator = std::signbit(value) ? negative : positive;
+    if (!addExactDyadicTerm(accumulator, value, weightLow, weightHigh)) {
+      return fail<Estimate>(
+          ErrorCode::NonFiniteResult,
+          "exact autocorrelation contraction exceeded fixed precision storage");
+    }
+  }
+
+  const int sign = compareMagnitudes(positive, negative);
+  if (sign <= 0) {
+    return fail<Estimate>(
+        ErrorCode::InvalidDomain,
+        "effective sample size is undefined for a nonpositive variance ratio");
+  }
+
+  ExactDyadicMagnitude contraction{};
+  if (!subtractMagnitudes(positive, negative, contraction)) {
+    return fail<Estimate>(
+        ErrorCode::NonFiniteResult,
+        "exact autocorrelation contraction could not be resolved");
+  }
+  Scalar effectiveCount = 0.0;
+  if (!exactEffectiveSampleSizeToScalar(contraction, count, effectiveCount)) {
+    return fail<Estimate>(
+        ErrorCode::NonFiniteResult,
+        "effective sample size is not representable as Scalar");
+  }
+
+  EstimatorDiagnostics diagnostics{};
+  diagnostics.estimand = Estimand::observed;
+  diagnostics.weight = WeightRule::dependent;
+  diagnostics.center = CenterRule::known;
+  diagnostics.approximation = Approximation::exact;
+  diagnostics.global.input = count;
+  diagnostics.global.valid = count;
+  diagnostics.global.positive = count;
+  diagnostics.global.effective_count = effectiveCount;
+  diagnostics.algorithm =
+      "finite_window_stationary_correlation_effective_count";
+  diagnostics.premises =
+      "stationary autocorrelation model; rho[0] == 1; positive-semidefinite "
+      "Toeplitz sequence is a caller premise";
+
+  return Result<Estimate>::success(
+      Estimate{effectiveCount, std::move(diagnostics), std::nullopt});
 }
 
 } // namespace vss::math::signal

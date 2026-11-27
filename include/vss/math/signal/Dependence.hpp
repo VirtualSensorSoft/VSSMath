@@ -10,6 +10,7 @@
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
+#include <vss/math/statistics/Population.hpp>
 
 namespace vss::math::signal {
 
@@ -245,6 +246,28 @@ partialAutocorrelation(ConstVectorView autocovariance, Index order,
 ///         finite nonzero `Scalar` value.
 [[nodiscard]] Result<Scalar>
 meanVarianceWithAutocorrelation(ConstVectorView autocovariance, Index count);
+
+/// @brief Estimates effective sample count from a stationary correlation
+///        sequence over a finite observation window.
+/// @details Computes n^2/q, where q = n*rho[0] +
+///          2*sum((n-k)*rho[k], k=1..n-1). This is the reciprocal finite-
+///          window variance ratio for the equal-weight sample mean. rho[0]
+///          must equal one and each used lag must satisfy |rho[k]| <= 1;
+///          positive-semidefiniteness of the full stationary Toeplitz model is
+///          a caller premise. Negative correlations may produce a result > n.
+///          Fixed-storage exact dyadic accumulation determines sign and zero
+///          under cancellation. Work is O(n), auxiliary storage O(1).
+/// @param autocorrelation Correlations beginning at lag zero; only the first
+///        count values are read.
+/// @param count Positive count no greater than the number of supplied lags.
+/// @return Effective sample count with dependent-support diagnostics.
+/// @retval ErrorCode::InsufficientSamples Count is zero or exceeds the view.
+/// @retval ErrorCode::NonFiniteInput A used correlation is nonfinite.
+/// @retval ErrorCode::InvalidDomain rho[0] is not one or q is nonpositive.
+/// @retval ErrorCode::NotPositiveSemidefinite A lag violates the unit bound.
+/// @retval ErrorCode::NonFiniteResult The positive result is unrepresentable.
+[[nodiscard]] Result<statistics::Estimate<Scalar>>
+temporalEffectiveSampleSize(ConstVectorView autocorrelation, Index count);
 
 } // namespace vss::math::signal
 
