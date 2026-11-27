@@ -13,6 +13,7 @@
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/signal/Dependence.hpp>
 
 namespace {
@@ -31,6 +32,12 @@ template <class Enum> Enum invalidEnumValue() {
 
 Vector vector(std::initializer_list<Scalar> values) {
   return Vector(std::span<const Scalar>{values.begin(), values.size()});
+}
+
+SolvePolicy solvePolicy(Index maximumIterations = 64U) {
+  SolvePolicy result{};
+  result.iteration.max_iterations = maximumIterations;
+  return result;
 }
 
 void autocovariancePreservesLagOrderAndNormalization() {
@@ -331,6 +338,121 @@ void crossDependenceScalesExtremeFiniteInputs() {
   }
 }
 
+void partialAutocorrelationMatchesLevinsonDurbinOracles() {
+  const Vector ar1 = vector({1.0, 0.5, 0.25});
+  const auto ar1Result =
+      partialAutocorrelation(ar1.view(), 2U, solvePolicy(), ample);
+  VSS_CHECK(ar1Result && ar1Result.value().size() == 2U);
+  VSS_CHECK(std::abs(ar1Result.value().at(0U) - 0.5) < 1.0e-12);
+  VSS_CHECK(std::abs(ar1Result.value().at(1U)) < 1.0e-12);
+
+  // These normalized autocovariances come from an AR(2) with coefficients
+  // (0.6, -0.2): gamma1/gamma0=0.5 and gamma2/gamma0=0.1. Independently solve
+  // its order-two Yule-Walker system by the closed-form 2x2 determinant.
+  const Vector ar2 = vector({1.0, 0.5, 0.1});
+  const Scalar determinant = 1.0 - 0.5 * 0.5;
+  const Scalar expectedSecond = (0.1 - 0.5 * 0.5) / determinant;
+  const Scalar expectedFirst = 0.5 * (1.0 - expectedSecond);
+  const auto ar2Result =
+      partialAutocorrelation(ar2.view(), 2U, solvePolicy(), ample);
+  VSS_CHECK(ar2Result && ar2Result.value().size() == 2U);
+  VSS_CHECK(std::abs(ar2Result.value().at(0U) - 0.5) < 1.0e-12);
+  VSS_CHECK(std::abs(ar2Result.value().at(1U) - expectedSecond) < 1.0e-12);
+  VSS_CHECK(std::abs(expectedFirst - 0.6) < 1.0e-12);
+
+  const Vector extraLag =
+      vector({1.0, 0.5, 0.25, std::numeric_limits<Scalar>::quiet_NaN()});
+  const auto ignoresExtra =
+      partialAutocorrelation(extraLag.view(), 2U, solvePolicy(), ample);
+  VSS_CHECK(ignoresExtra &&
+            std::abs(ignoresExtra.value().at(0U) - 0.5) < 1.0e-12 &&
+            std::abs(ignoresExtra.value().at(1U)) < 1.0e-12);
+
+  const Vector zeroOrderInput = vector({2.0});
+  const auto zeroOrder =
+      partialAutocorrelation(zeroOrderInput.view(), 0U, solvePolicy(0U), ample);
+  VSS_CHECK(zeroOrder && zeroOrder.value().empty());
+}
+
+void partialAutocorrelationRejectsInvalidAndUnstableInputs() {
+  const Vector empty;
+  const auto noLagZero =
+      partialAutocorrelation(empty.view(), 0U, solvePolicy(), ample);
+  VSS_CHECK(!noLagZero &&
+            noLagZero.status().code() == ErrorCode::InsufficientSamples);
+
+  const Vector tooFew = vector({1.0, 0.5});
+  const auto insufficient =
+      partialAutocorrelation(tooFew.view(), 2U, solvePolicy(), ample);
+  VSS_CHECK(!insufficient &&
+            insufficient.status().code() == ErrorCode::InsufficientSamples);
+
+  const Vector nonFinite =
+      vector({1.0, 0.5, std::numeric_limits<Scalar>::infinity()});
+  const auto invalidValue =
+      partialAutocorrelation(nonFinite.view(), 2U, solvePolicy(), ample);
+  VSS_CHECK(!invalidValue &&
+            invalidValue.status().code() == ErrorCode::NonFiniteInput);
+
+  const Vector zeroVariance = vector({0.0, 0.0});
+  const auto invalidVariance =
+      partialAutocorrelation(zeroVariance.view(), 1U, solvePolicy(), ample);
+  VSS_CHECK(!invalidVariance &&
+            invalidVariance.status().code() == ErrorCode::InvalidDomain);
+  const Vector negativeVariance = vector({-1.0, 0.0});
+  const auto invalidNegativeVariance =
+      partialAutocorrelation(negativeVariance.view(), 1U, solvePolicy(), ample);
+  VSS_CHECK(!invalidNegativeVariance &&
+            invalidNegativeVariance.status().code() ==
+                ErrorCode::InvalidDomain);
+
+  const Vector singular = vector({1.0, 1.0});
+  const auto rankDeficient =
+      partialAutocorrelation(singular.view(), 1U, solvePolicy(), ample);
+  VSS_CHECK(!rankDeficient &&
+            rankDeficient.status().code() == ErrorCode::RankDeficient);
+
+  const Vector indefinite = vector({1.0, 2.0});
+  const auto notPositiveSemidefinite =
+      partialAutocorrelation(indefinite.view(), 1U, solvePolicy(), ample);
+  VSS_CHECK(!notPositiveSemidefinite &&
+            notPositiveSemidefinite.status().code() ==
+                ErrorCode::NotPositiveSemidefinite);
+
+  const Vector illConditioned = vector({1.0, 0.95});
+  auto conditionedPolicy = solvePolicy();
+  conditionedPolicy.reciprocal_condition_floor = 0.1;
+  const auto belowConditionFloor = partialAutocorrelation(
+      illConditioned.view(), 1U, conditionedPolicy, ample);
+  VSS_CHECK(!belowConditionFloor &&
+            belowConditionFloor.status().code() == ErrorCode::IllConditioned);
+
+  auto rankLimitedPolicy = solvePolicy();
+  rankLimitedPolicy.rank_abs = 0.1;
+  const auto belowRankThreshold = partialAutocorrelation(
+      illConditioned.view(), 1U, rankLimitedPolicy, ample);
+  VSS_CHECK(!belowRankThreshold &&
+            belowRankThreshold.status().code() == ErrorCode::RankDeficient);
+
+  auto invalidPolicy = solvePolicy();
+  invalidPolicy.rank_rel = 1.0;
+  const auto rejectedPolicy =
+      partialAutocorrelation(tooFew.view(), 1U, invalidPolicy, ample);
+  VSS_CHECK(!rejectedPolicy &&
+            rejectedPolicy.status().code() == ErrorCode::InvalidTolerance);
+
+  const Vector ar1 = vector({1.0, 0.5, 0.25});
+  const auto insufficientIterations =
+      partialAutocorrelation(ar1.view(), 2U, solvePolicy(1U), ample);
+  VSS_CHECK(!insufficientIterations &&
+            insufficientIterations.status().code() == ErrorCode::NoConvergence);
+
+  const auto limited = partialAutocorrelation(
+      ar1.view(), 1U, solvePolicy(),
+      {.elements = 2U, .bytes = 1U << 20U, .evaluations = 0U});
+  VSS_CHECK(!limited && limited.status().code() == ErrorCode::ResourceLimit);
+}
+
 } // namespace
 
 int main() try {
@@ -341,6 +463,8 @@ int main() try {
   crossDependencePreservesSignedLagOrientationAndCounts();
   crossDependenceRejectsMismatchesAndUnusableLags();
   crossDependenceScalesExtremeFiniteInputs();
+  partialAutocorrelationMatchesLevinsonDurbinOracles();
+  partialAutocorrelationRejectsInvalidAndUnstableInputs();
   return 0;
 } catch (const std::exception& error) {
   std::cerr << error.what() << '\n';
