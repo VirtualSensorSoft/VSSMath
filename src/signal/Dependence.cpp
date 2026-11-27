@@ -117,7 +117,7 @@ bool addExactDyadicTerm(ExactDyadicMagnitude& magnitude, Scalar value,
     return true;
   }
 
-  const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+  const auto bits = std::bit_cast<std::uint64_t>(value);
   const auto exponentField = static_cast<unsigned>((bits >> 52U) & 0x7ffU);
   std::uint64_t significand = bits & ((std::uint64_t{1U} << 52U) - 1U);
   std::size_t binaryShift = 0U;
@@ -157,7 +157,7 @@ bool addExactDyadicTerm(ExactDyadicMagnitude& magnitude, Scalar value,
   }
 
   const std::size_t baseWord = binaryShift / 32U;
-  const unsigned bitShift = static_cast<unsigned>(binaryShift % 32U);
+  const auto bitShift = static_cast<unsigned>(binaryShift % 32U);
   for (std::size_t i = 0U; i < product.size(); ++i) {
     const std::uint32_t word = product.at(i);
     if (word == 0U) {
@@ -209,7 +209,7 @@ bool magnitudeBit(const ExactDyadicMagnitude& magnitude,
                   std::size_t bit) noexcept {
   constexpr std::size_t bitsPerWord = 32U;
   const std::size_t word = bit / bitsPerWord;
-  const unsigned offset = static_cast<unsigned>(bit % bitsPerWord);
+  const auto offset = static_cast<unsigned>(bit % bitsPerWord);
   return ((magnitude.at(word) >> offset) & 1U) != 0U;
 }
 
@@ -222,7 +222,7 @@ bool anyMagnitudeBitsBelow(const ExactDyadicMagnitude& magnitude,
       return true;
     }
   }
-  const unsigned remainingBits = static_cast<unsigned>(bit % bitsPerWord);
+  const auto remainingBits = static_cast<unsigned>(bit % bitsPerWord);
   if (remainingBits == 0U) {
     return false;
   }
@@ -294,7 +294,7 @@ bool exactVarianceToScalar(const ExactDyadicMagnitude& magnitude, Index count,
     return false;
   }
 
-  const Scalar scalarFraction = static_cast<Scalar>(normalized);
+  const auto scalarFraction = static_cast<Scalar>(normalized);
   if (exponent == std::numeric_limits<Scalar>::max_exponent &&
       scalarFraction >= 1.0) {
     // Input validation proves |variance| <= gamma[0] <= Scalar::max().
@@ -885,7 +885,7 @@ Result<Scalar> meanVarianceWithAutocorrelation(ConstVectorView autocovariance,
 
   ExactDyadicMagnitude positive{};
   ExactDyadicMagnitude negative{};
-  const std::uint64_t count64 = static_cast<std::uint64_t>(count);
+  const auto count64 = static_cast<std::uint64_t>(count);
   for (Index lag = 0U; lag < count; ++lag) {
     const Scalar value = autocovariance.at(lag);
     if (!std::isfinite(value)) {
@@ -901,7 +901,7 @@ Result<Scalar> meanVarianceWithAutocorrelation(ConstVectorView autocovariance,
     std::uint64_t weightLow = count64;
     std::uint32_t weightHigh = 0U;
     if (lag != 0U) {
-      const std::uint64_t remaining = static_cast<std::uint64_t>(count - lag);
+      const auto remaining = static_cast<std::uint64_t>(count - lag);
       weightLow = remaining << 1U;
       weightHigh = static_cast<std::uint32_t>(remaining >> 63U);
     }
@@ -953,7 +953,7 @@ Result<Scalar> meanVarianceWithAutocorrelation(ConstVectorView autocovariance,
       exactWide;
   if (std::isfinite(candidate) && candidate > 0.0L &&
       std::abs(candidate - exactWide) <= agreement) {
-    const Scalar roundedCandidate = static_cast<Scalar>(candidate);
+    const auto roundedCandidate = static_cast<Scalar>(candidate);
     if (std::isfinite(roundedCandidate) && roundedCandidate > 0.0) {
       return Result<Scalar>::success(roundedCandidate);
     }
