@@ -396,7 +396,8 @@ void meanVarianceWithAutocorrelationRejectsInvalidInputs() {
   VSS_CHECK(!shortInput &&
             shortInput.status().code() == ErrorCode::InsufficientSamples);
 
-  const Vector nonFinite = vector({1.0, std::numeric_limits<Scalar>::infinity()});
+  const Vector nonFinite =
+      vector({1.0, std::numeric_limits<Scalar>::infinity()});
   const auto nonFiniteInput =
       meanVarianceWithAutocorrelation(nonFinite.view(), 2U);
   VSS_CHECK(!nonFiniteInput &&
@@ -409,32 +410,30 @@ void meanVarianceWithAutocorrelationRejectsInvalidInputs() {
             negativeVariance.status().code() == ErrorCode::InvalidDomain);
 
   const Vector zeroCovariance = vector({0.0, 0.0});
-  const auto allZero = meanVarianceWithAutocorrelation(zeroCovariance.view(), 2U);
+  const auto allZero =
+      meanVarianceWithAutocorrelation(zeroCovariance.view(), 2U);
   VSS_CHECK(allZero && allZero.value() == 0.0);
 
   const Vector inconsistentZero = vector({0.0, 0.25});
   const auto nonzeroAfterZero =
       meanVarianceWithAutocorrelation(inconsistentZero.view(), 2U);
-  VSS_CHECK(!nonzeroAfterZero &&
-            nonzeroAfterZero.status().code() ==
-                ErrorCode::NotPositiveSemidefinite);
+  VSS_CHECK(!nonzeroAfterZero && nonzeroAfterZero.status().code() ==
+                                     ErrorCode::NotPositiveSemidefinite);
 
   const Vector outOfBounds = vector({1.0, -1.25});
   const auto invalidCovariance =
       meanVarianceWithAutocorrelation(outOfBounds.view(), 2U);
-  VSS_CHECK(!invalidCovariance &&
-            invalidCovariance.status().code() ==
-                ErrorCode::NotPositiveSemidefinite);
+  VSS_CHECK(!invalidCovariance && invalidCovariance.status().code() ==
+                                      ErrorCode::NotPositiveSemidefinite);
 
   const Vector negativeContraction = vector({1.0, -0.9, -0.9});
   const auto negativeResult =
       meanVarianceWithAutocorrelation(negativeContraction.view(), 3U);
-  VSS_CHECK(!negativeResult &&
-            negativeResult.status().code() ==
-                ErrorCode::NotPositiveSemidefinite);
+  VSS_CHECK(!negativeResult && negativeResult.status().code() ==
+                                   ErrorCode::NotPositiveSemidefinite);
 
-  const Vector unrepresentable = vector(
-      {std::numeric_limits<Scalar>::denorm_min(), 0.0});
+  const Vector unrepresentable =
+      vector({std::numeric_limits<Scalar>::denorm_min(), 0.0});
   const auto underflow =
       meanVarianceWithAutocorrelation(unrepresentable.view(), 2U);
   VSS_CHECK(!underflow &&
