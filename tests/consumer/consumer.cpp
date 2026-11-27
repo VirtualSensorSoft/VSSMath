@@ -24,6 +24,7 @@
 #include <vss/math/Result.hpp>
 #include <vss/math/SampleView.hpp>
 #include <vss/math/Tensor.hpp>
+#include <vss/math/TensorDecomposition.hpp>
 #include <vss/math/TensorElementwise.hpp>
 #include <vss/math/TensorOperations.hpp>
 #include <vss/math/TensorShape.hpp>
@@ -839,6 +840,36 @@ bool verifyInstalledGeometryAndAffineContracts() {
 
 int main() {
   using namespace vss::math;
+
+  {
+    const auto shape = TensorShape::create(std::array<Extent, 2U>{2U, 2U});
+    auto input = Tensor::create(shape.value(), 0.0, TensorLimits{4U});
+    input.value().data()[0U] = 1.0;
+    input.value().data()[1U] = 2.0;
+    input.value().data()[2U] = 3.0;
+    input.value().data()[3U] = 4.0;
+    SolvePolicy policy{};
+    policy.rank_abs = 1.0e-14;
+    policy.rank_rel = 1.0e-12;
+    policy.iteration.max_iterations = 64U;
+    const Limits limits{1024U, 65536U, 0U};
+    const auto factors = tuckerHOSVD(
+        input.value(), std::array<Extent, 2U>{2U, 2U}, policy, limits);
+    const auto reconstructed =
+        factors.hasValue()
+            ? reconstructTucker(factors.value(), limits)
+            : Result<Tensor>::failure(ErrorCode::InvalidDomain,
+                                      "installed HOSVD setup failed");
+    if (!require(factors.hasValue() && reconstructed.hasValue() &&
+                     reconstructed.value().shape().extent(0U) == 2U &&
+                     reconstructed.value().shape().extent(1U) == 2U &&
+                     std::abs(reconstructed.value().data()[0U] - 1.0) <
+                         1.0e-10 &&
+                     std::abs(reconstructed.value().data()[3U] - 4.0) < 1.0e-10,
+                 "installed Tucker/HOSVD API failed")) {
+      return 1;
+    }
+  }
 
   {
     const std::array<Complex, 4U> values{

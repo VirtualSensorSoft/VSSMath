@@ -63,6 +63,7 @@ add_library(vss_math STATIC
   src/PackedSymmetric.cpp
   src/TensorOperations.cpp
   src/TensorElementwise.cpp
+  src/TensorDecomposition.cpp
   src/covariance/Covariance.cpp
   src/covariance/Propagation.cpp
   src/covariance/Budget.cpp
