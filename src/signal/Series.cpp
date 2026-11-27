@@ -4,6 +4,7 @@
 #include <limits>
 #include <new>
 #include <numeric>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -181,10 +182,11 @@ private:
 };
 
 bool cadenceMatches(const SeriesView& series) {
-  if (!series.uniformStep().has_value()) {
+  const std::optional<Scalar> declaredStep = series.uniformStep();
+  if (!declaredStep.has_value()) {
     return true;
   }
-  const Scalar step = *series.uniformStep();
+  const Scalar step = declaredStep.value();
   if (!std::isfinite(step) || step <= 0.0) {
     return false;
   }
