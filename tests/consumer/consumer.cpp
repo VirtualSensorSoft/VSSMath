@@ -953,6 +953,17 @@ int main() {
   }
 
   {
+    const Vector autocovariance{std::array<Scalar, 3U>{1.0, 0.5, 0.25}};
+    const auto variance =
+        signal::meanVarianceWithAutocorrelation(autocovariance.view(), 3U);
+    if (!require(variance.hasValue() &&
+                     std::abs(variance.value() - (11.0 / 18.0)) < 1.0e-12,
+                 "installed mean-variance-with-autocorrelation API failed")) {
+      return 1;
+    }
+  }
+
+  {
     const std::array<Complex, 4U> values{
         {{2.0, 0.0}, {0.0, 1.0}, {0.0, -1.0}, {2.0, 0.0}}};
     const linear::ComplexMatrixView matrix{values, 2U, 2U, 2U, 1U};
