@@ -13,6 +13,7 @@
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Vector.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/signal/Dependence.hpp>
 
