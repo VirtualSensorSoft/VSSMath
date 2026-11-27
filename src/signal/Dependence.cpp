@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -16,8 +17,10 @@
 #include <vss/math/Result.hpp>
 #include <vss/math/Vector.hpp>
 #include <vss/math/VectorView.hpp>
+#include <vss/math/covariance/PropagationResult.hpp>
 #include <vss/math/linear/SolvePolicy.hpp>
 #include <vss/math/signal/Dependence.hpp>
+#include <vss/math/statistics/Population.hpp>
 
 namespace vss::math::signal {
 namespace {
@@ -372,7 +375,7 @@ bool exactEffectiveSampleSizeToScalar(const ExactDyadicMagnitude& magnitude,
   }
 
   const Wide wideResult = std::scalbn(normalized, static_cast<int>(exponent));
-  const Scalar scalarResult = static_cast<Scalar>(wideResult);
+  const auto scalarResult = static_cast<Scalar>(wideResult);
   if (!std::isfinite(wideResult) || !std::isfinite(scalarResult) ||
       scalarResult <= 0.0) {
     return false;
@@ -1069,7 +1072,7 @@ temporalEffectiveSampleSize(ConstVectorView autocorrelation, Index count) {
           "autocorrelation violates the bound abs(rho[k]) <= 1");
     }
 
-    std::uint64_t weightLow = static_cast<std::uint64_t>(count);
+    auto weightLow = static_cast<std::uint64_t>(count);
     std::uint32_t weightHigh = 0U;
     if (lag != 0U) {
       const auto remaining = static_cast<std::uint64_t>(count - lag);
