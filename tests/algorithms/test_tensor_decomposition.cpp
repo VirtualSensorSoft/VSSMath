@@ -47,8 +47,7 @@ Tensor makeTensor(std::span<const Extent> extents,
                   std::span<const Scalar> values) {
   const auto shape = TensorShape::create(extents);
   VSS_CHECK(shape.hasValue());
-  const auto tensor =
-      Tensor::create(shape.value(), 0.0, TensorLimits{values.size()});
+  auto tensor = Tensor::create(shape.value(), 0.0, TensorLimits{values.size()});
   VSS_CHECK(tensor.hasValue());
   VSS_CHECK(tensor.value().size() == values.size());
   auto result = std::move(tensor).value();
