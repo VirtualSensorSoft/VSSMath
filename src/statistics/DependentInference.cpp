@@ -314,9 +314,9 @@ Result<covariance::CovarianceResult> neweyWest(const SampleView& scores,
             "Newey-West covariance is not representable as a finite matrix");
       }
       estimate.at(row, column) = result;
-      // Exact symmetric mirror of the upper-triangle value.
-      // NOLINTNEXTLINE(readability-suspicious-call-argument)
-      estimate.at(column, row) = result;
+      estimate.at( // NOLINT(readability-suspicious-call-argument): symmetric
+                   // coordinate mirror
+          column, row) = result;
     }
   }
 
