@@ -45,6 +45,7 @@ add_library(vss_math STATIC
   src/signal/Dependence.cpp
   src/signal/LaggedMoments.cpp
   src/signal/Series.cpp
+  src/signal/Smoothing.cpp
   src/ScientificExtras.cpp
   src/FirstMoment.cpp
   src/FourthMoment.cpp

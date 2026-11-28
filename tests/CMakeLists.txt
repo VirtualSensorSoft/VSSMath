@@ -113,6 +113,8 @@ vss_math_add_algorithm_test(test_dependence algorithms/test_dependence.cpp
 vss_math_add_algorithm_test(test_lagged_moments
                              algorithms/test_lagged_moments.cpp
                              math.signal.lagged_moments)
+vss_math_add_algorithm_test(test_smoothing algorithms/test_smoothing.cpp
+                             math.signal.smoothing)
 vss_math_add_algorithm_test(test_scientific_extras
                              algorithms/test_scientific_extras.cpp
                              math.scientific_extras)
