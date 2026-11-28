@@ -54,6 +54,7 @@
 #include <vss/math/statistics/Circular.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Dependence.hpp>
+#include <vss/math/statistics/DependentInference.hpp>
 #include <vss/math/statistics/Descriptive.hpp>
 #include <vss/math/statistics/Empirical.hpp>
 #include <vss/math/statistics/Missing.hpp>
@@ -2085,6 +2086,21 @@ int main() {
                    std::abs(installedPartial.value().covariance.at(0U, 1U) -
                             1.0 / 3.0) < 1.0e-12,
                "installed correlation APIs failed")) {
+    return 1;
+  }
+
+  Matrix scoreRows(3U, 1U);
+  scoreRows.at(0U, 0U) = 1.0;
+  scoreRows.at(1U, 0U) = 0.0;
+  scoreRows.at(2U, 0U) = -1.0;
+  const SampleView scoreSample{
+      .rows = scoreRows.view(), .observation_shape = {}, .valid = {}};
+  const auto longRun = statistics::neweyWest(
+      scoreSample, 1U, CenterRule::estimated, Limits{4096U, 262144U, 0U});
+  if (!require(longRun.hasValue() &&
+                   std::abs(longRun.value().covariance.at(0U, 0U) - 2.0 / 3.0) <
+                       1.0e-12,
+               "installed C101 Newey-West API failed")) {
     return 1;
   }
 

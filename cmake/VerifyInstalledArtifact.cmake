@@ -179,6 +179,7 @@ set(vss_expected_files
   include/vss/math/ProbabilityPolicy.hpp
   include/vss/math/statistics/Descriptive.hpp
   include/vss/math/statistics/Bootstrap.hpp
+  include/vss/math/statistics/DependentInference.hpp
   include/vss/math/statistics/Circular.hpp
   include/vss/math/statistics/Cumulants.hpp
   include/vss/math/statistics/Dependence.hpp
