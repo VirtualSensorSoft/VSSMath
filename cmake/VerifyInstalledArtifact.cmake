@@ -145,6 +145,7 @@ set(vss_expected_files
   include/vss/math/signal/LaggedMoments.hpp
   include/vss/math/signal/Series.hpp
   include/vss/math/signal/Smoothing.hpp
+  include/vss/math/signal/TemporalUtilities.hpp
   include/vss/math/TensorElementwise.hpp
   include/vss/math/TensorLimits.hpp
   include/vss/math/TensorOperations.hpp
