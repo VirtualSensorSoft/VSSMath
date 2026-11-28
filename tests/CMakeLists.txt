@@ -108,6 +108,9 @@ vss_math_add_algorithm_test(test_functions algorithms/test_functions.cpp
                              math.functions)
 vss_math_add_algorithm_test(test_series algorithms/test_series.cpp
                              math.series)
+vss_math_add_algorithm_test(test_temporal_utilities
+                             algorithms/test_temporal_utilities.cpp
+                             math.temporal_utilities)
 vss_math_add_algorithm_test(test_dependence algorithms/test_dependence.cpp
                              math.dependence)
 vss_math_add_algorithm_test(test_lagged_moments

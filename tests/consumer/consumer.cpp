@@ -51,6 +51,7 @@
 #include <vss/math/signal/LaggedMoments.hpp>
 #include <vss/math/signal/Series.hpp>
 #include <vss/math/signal/Smoothing.hpp>
+#include <vss/math/signal/TemporalUtilities.hpp>
 #include <vss/math/statistics/Circular.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Dependence.hpp>
@@ -845,6 +846,17 @@ bool verifyInstalledGeometryAndAffineContracts() {
 
 int main() {
   using namespace vss::math;
+
+  {
+    const Vector input(std::array{1.0, 2.0, 3.0});
+    const auto prefixes =
+        signal::cumulativeSum(input.view(), Limits{64U, 1024U, 0U});
+    if (!require(prefixes.hasValue() && prefixes.value().size() == 3U &&
+                     prefixes.value().at(2U) == 6.0,
+                 "installed temporal utilities API failed")) {
+      return 1;
+    }
+  }
 
   {
     const auto shape = TensorShape::create(std::array<Extent, 2U>{2U, 2U});
