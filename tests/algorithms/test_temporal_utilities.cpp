@@ -146,6 +146,7 @@ void alignSeriesPreservesSourceMasksAndExactKnots() {
   const auto& result = aligned.value().sources().front();
   VSS_CHECK(result.times().size() == 3U && result.rows().rows() == 3U &&
             result.valid().size() == 3U);
+  VSS_CHECK(!result.uniformStep().has_value());
   VSS_CHECK(result.valid()[0U] == 1U && result.valid()[1U] == 0U &&
             result.valid()[2U] == 1U);
   VSS_CHECK(result.rows().at(1U, 0U) == 0.0 &&

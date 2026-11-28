@@ -40,7 +40,7 @@ public:
   }
   /// @brief Returns no cadence because target times need not be uniform.
   [[nodiscard]] std::optional<Scalar> uniformStep() const noexcept {
-    return std::nullopt;
+    return uniformStep_;
   }
 
 private:
@@ -52,6 +52,7 @@ private:
   Vector times_;
   Matrix rows_;
   std::vector<std::uint8_t> valid_;
+  std::optional<Scalar> uniformStep_;
 
   friend class AlignedSeries;
   friend struct detail::AlignedSeriesBuilder;
