@@ -43,6 +43,7 @@ add_library(vss_math STATIC
   src/ODE.cpp
   src/Functions.cpp
   src/signal/Dependence.cpp
+  src/signal/LaggedMoments.cpp
   src/signal/Series.cpp
   src/ScientificExtras.cpp
   src/FirstMoment.cpp
