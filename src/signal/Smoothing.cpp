@@ -4,7 +4,13 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <utility>
+#include <vss/math/Core.hpp>
+#include <vss/math/Error.hpp>
+#include <vss/math/Limits.hpp>
 #include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
 #include <vss/math/linear/QR.hpp>
 #include <vss/math/linear/TriangularSolve.hpp>
 #include <vss/math/signal/Smoothing.hpp>
@@ -57,7 +63,7 @@ bool normalize(BinaryScale& scale) noexcept {
 bool derivativeScale(Index derivative, Scalar coordinateScale, Scalar step,
                      BinaryScale& result) noexcept {
   for (Index order = 0U; order < derivative; ++order) {
-    const Scalar factorialTerm = static_cast<Scalar>(order + 1U);
+    const auto factorialTerm = static_cast<Scalar>(order + 1U);
     int factorialExponent = 0;
     const Scalar factorialFraction =
         std::frexp(factorialTerm, &factorialExponent);
@@ -112,8 +118,7 @@ bool scaledProduct(Scalar sum, Scalar maxWeight, Scalar maxSample,
     return false;
   }
 
-  if (exponent > std::numeric_limits<Scalar>::max_exponent ||
-      exponent > std::numeric_limits<int>::max()) {
+  if (exponent > std::numeric_limits<Scalar>::max_exponent) {
     return false;
   }
   if (exponent < std::numeric_limits<Scalar>::min_exponent -
