@@ -48,6 +48,7 @@
 #include <vss/math/probability/MomentBounds.hpp>
 #include <vss/math/probability/SamplingDesign.hpp>
 #include <vss/math/signal/Dependence.hpp>
+#include <vss/math/signal/LaggedMoments.hpp>
 #include <vss/math/signal/Series.hpp>
 #include <vss/math/statistics/Circular.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
@@ -896,6 +897,40 @@ int main() {
                      std::abs(fitted.value().parameters.at(1U, 0U) - 2.0) <
                          1.0e-12,
                  "installed C115 series API failed")) {
+      return 1;
+    }
+  }
+
+  {
+    const Vector times{std::array<Scalar, 4U>{0.0, 1.0, 2.0, 3.0}};
+    Matrix first(4U, 1U);
+    Matrix second(4U, 1U);
+    for (Index row = 0U; row < 4U; ++row) {
+      first.at(row, 0U) = static_cast<Scalar>(row + 1U);
+      second.at(row, 0U) = static_cast<Scalar>(row) - 1.0;
+    }
+    const SeriesView x{times.view(), first.view(), {}, 1.0};
+    const SeriesView y{times.view(), second.view(), {}, 1.0};
+    constexpr std::array<std::int64_t, 1U> lags{0};
+    constexpr std::array<Index, 2U> pair{0U, 1U};
+    const std::array<IndexList, 1U> components{IndexList{pair}};
+    const std::array<IndexList, 1U> selected{IndexList{pair}};
+    const statistics::MomentRequest request{
+        .orders = 0b0010U,
+        .representation = statistics::MomentRepresentation::selected,
+        .selected = selected,
+        .contraction = std::nullopt};
+    const signal::LagMomentSpec spec{.lags = lags,
+                                     .components = components,
+                                     .center = CenterRule::estimated,
+                                     .request = request};
+    constexpr Limits limits{4096U, 1U << 20U, 0U};
+    const auto moments = signal::laggedHigherMoments(x, y, spec, limits);
+    if (!require(moments.hasValue() &&
+                     moments.value().diagnostics.global.valid == 4U &&
+                     std::abs(moments.value().terms.view()[0U].values.at(0U) -
+                              1.25) < 1.0e-12,
+                 "installed C082 lagged-moment API failed")) {
       return 1;
     }
   }
