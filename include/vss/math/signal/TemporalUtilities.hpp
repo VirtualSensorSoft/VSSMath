@@ -19,6 +19,12 @@ namespace vss::math::signal {
 
 class AlignedSeries;
 
+/// @cond INTERNAL
+namespace detail {
+struct AlignedSeriesBuilder;
+} // namespace detail
+/// @endcond
+
 /// @brief Owns one source's data interpolated onto a common time grid.
 /// @details Invalid rows have a zero-filled value row and a zero validity
 ///          byte. Times and values are owned; no input storage is borrowed.
@@ -48,9 +54,7 @@ private:
   std::vector<std::uint8_t> valid_;
 
   friend class AlignedSeries;
-  friend Result<AlignedSeries> alignSeries(std::span<const SeriesView>,
-                                           ConstVectorView,
-                                           const InterpolateSpec&, Limits);
+  friend struct detail::AlignedSeriesBuilder;
 };
 
 /// @brief Owns one target grid and each input series aligned to that grid.
@@ -75,9 +79,7 @@ private:
   Vector targetTimes_;
   std::vector<AlignedSourceSeries> sources_;
 
-  friend Result<AlignedSeries> alignSeries(std::span<const SeriesView>,
-                                           ConstVectorView,
-                                           const InterpolateSpec&, Limits);
+  friend struct detail::AlignedSeriesBuilder;
 };
 
 /// @brief Peak association and truncated integrated correlation time.

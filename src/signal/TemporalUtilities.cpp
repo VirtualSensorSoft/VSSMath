@@ -2,13 +2,24 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
+#include <vss/math/Interpolation.hpp>
+#include <vss/math/Limits.hpp>
+#include <vss/math/Matrix.hpp>
+#include <vss/math/Result.hpp>
+#include <vss/math/Vector.hpp>
+#include <vss/math/VectorView.hpp>
+#include <vss/math/signal/Dependence.hpp>
+#include <vss/math/signal/Series.hpp>
 #include <vss/math/signal/TemporalUtilities.hpp>
 
 namespace vss::math::signal {
@@ -44,6 +55,14 @@ constexpr std::size_t dyadicWords =
     32U;
 using Magnitude = std::array<std::uint32_t, dyadicWords>;
 
+using MutableMagnitudeView = std::span<std::uint32_t, dyadicWords>;
+using ConstMagnitudeView = std::span<const std::uint32_t, dyadicWords>;
+
+MutableMagnitudeView view(Magnitude& magnitude) noexcept { return magnitude; }
+ConstMagnitudeView view(const Magnitude& magnitude) noexcept {
+  return magnitude;
+}
+
 static_assert(std::numeric_limits<Index>::digits <= 64,
               "dyadic prefix sums support at most 64-bit Index");
 static_assert(sizeof(Scalar) == sizeof(std::uint64_t) &&
@@ -58,8 +77,8 @@ bool addWord(Magnitude& magnitude, std::size_t position,
       return false;
     }
     const std::uint64_t total =
-        static_cast<std::uint64_t>(magnitude[position]) + word;
-    magnitude[position] = static_cast<std::uint32_t>(total);
+        static_cast<std::uint64_t>(view(magnitude)[position]) + word;
+    view(magnitude)[position] = static_cast<std::uint32_t>(total);
     word = static_cast<std::uint32_t>(total >> 32U);
     ++position;
   }
@@ -73,19 +92,20 @@ bool addShifted(Magnitude& magnitude, std::uint64_t significand,
   const std::array<std::uint32_t, 2U> words{
       static_cast<std::uint32_t>(significand),
       static_cast<std::uint32_t>(significand >> 32U)};
+  const std::span<const std::uint32_t, 2U> wordView{words};
   for (std::size_t i = 0U; i < words.size(); ++i) {
-    if (words[i] == 0U) {
+    if (wordView[i] == 0U) {
       continue;
     }
     const std::uint32_t low =
-        offset == 0U ? words[i]
-                     : static_cast<std::uint32_t>(words[i] << offset);
+        offset == 0U ? wordView[i]
+                     : static_cast<std::uint32_t>(wordView[i] << offset);
     if (!addWord(magnitude, base + i, low)) {
       return false;
     }
     if (offset != 0U &&
         !addWord(magnitude, base + i + 1U,
-                 static_cast<std::uint32_t>(words[i] >> (32U - offset)))) {
+                 static_cast<std::uint32_t>(wordView[i] >> (32U - offset)))) {
       return false;
     }
   }
@@ -93,9 +113,11 @@ bool addShifted(Magnitude& magnitude, std::uint64_t significand,
 }
 
 int compare(const Magnitude& left, const Magnitude& right) noexcept {
+  const ConstMagnitudeView leftView = view(left);
+  const ConstMagnitudeView rightView = view(right);
   for (std::size_t i = left.size(); i > 0U; --i) {
-    if (left[i - 1U] != right[i - 1U]) {
-      return left[i - 1U] > right[i - 1U] ? 1 : -1;
+    if (leftView[i - 1U] != rightView[i - 1U]) {
+      return leftView[i - 1U] > rightView[i - 1U] ? 1 : -1;
     }
   }
   return 0;
@@ -103,24 +125,28 @@ int compare(const Magnitude& left, const Magnitude& right) noexcept {
 
 bool subtract(const Magnitude& larger, const Magnitude& smaller,
               Magnitude& result) noexcept {
+  const ConstMagnitudeView largerView = view(larger);
+  const ConstMagnitudeView smallerView = view(smaller);
+  const MutableMagnitudeView resultView = view(result);
   std::uint64_t borrow = 0U;
   for (std::size_t i = 0U; i < larger.size(); ++i) {
-    const std::uint64_t a = larger[i];
-    const std::uint64_t b = static_cast<std::uint64_t>(smaller[i]) + borrow;
-    result[i] = static_cast<std::uint32_t>(a - b);
+    const std::uint64_t a = largerView[i];
+    const std::uint64_t b = static_cast<std::uint64_t>(smallerView[i]) + borrow;
+    resultView[i] = static_cast<std::uint32_t>(a - b);
     borrow = a < b ? 1U : 0U;
   }
   return borrow == 0U;
 }
 
 bool bit(const Magnitude& magnitude, std::size_t position) noexcept {
-  return ((magnitude[position / 32U] >> (position % 32U)) & 1U) != 0U;
+  return ((view(magnitude)[position / 32U] >> (position % 32U)) & 1U) != 0U;
 }
 
 bool anyBelow(const Magnitude& magnitude, std::size_t position) noexcept {
   const std::size_t complete = position / 32U;
+  const ConstMagnitudeView magnitudeView = view(magnitude);
   for (std::size_t i = 0U; i < complete; ++i) {
-    if (magnitude[i] != 0U) {
+    if (magnitudeView[i] != 0U) {
       return true;
     }
   }
@@ -129,14 +155,15 @@ bool anyBelow(const Magnitude& magnitude, std::size_t position) noexcept {
     return false;
   }
   const std::uint32_t mask = (std::uint32_t{1U} << remainder) - 1U;
-  return (magnitude[complete] & mask) != 0U;
+  return (magnitudeView[complete] & mask) != 0U;
 }
 
 std::size_t highestBit(const Magnitude& magnitude) noexcept {
+  const ConstMagnitudeView magnitudeView = view(magnitude);
   for (std::size_t i = magnitude.size(); i > 0U; --i) {
-    if (magnitude[i - 1U] != 0U) {
-      return (i - 1U) * 32U +
-             static_cast<std::size_t>(31 - std::countl_zero(magnitude[i - 1U]));
+    if (magnitudeView[i - 1U] != 0U) {
+      return (i - 1U) * 32U + static_cast<std::size_t>(
+                                  31 - std::countl_zero(magnitudeView[i - 1U]));
     }
   }
   return 0U;
@@ -148,7 +175,7 @@ public:
     if (value == 0.0) {
       return true;
     }
-    const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+    const auto bits = std::bit_cast<std::uint64_t>(value);
     const auto exponent = static_cast<unsigned>((bits >> 52U) & 0x7ffU);
     std::uint64_t significand = bits & ((std::uint64_t{1U} << 52U) - 1U);
     std::size_t shift = 0U;
@@ -273,13 +300,14 @@ bool validExtrapolation(Extrapolation value) noexcept {
          value == Extrapolation::linear;
 }
 
-bool representable(Wide value, Scalar& result) noexcept {
-  if (!std::isfinite(value) ||
-      std::abs(value) > static_cast<Wide>(std::numeric_limits<Scalar>::max())) {
+bool representable(Wide candidate, Scalar& roundedOutput) noexcept {
+  if (!std::isfinite(candidate) ||
+      std::abs(candidate) >
+          static_cast<Wide>(std::numeric_limits<Scalar>::max())) {
     return false;
   }
-  result = static_cast<Scalar>(value);
-  return std::isfinite(result);
+  roundedOutput = static_cast<Scalar>(candidate);
+  return std::isfinite(roundedOutput);
 }
 
 bool interpolationFraction(Scalar value, Scalar left, Scalar right,
@@ -300,7 +328,7 @@ bool interpolationFraction(Scalar value, Scalar left, Scalar right,
   return std::isfinite(fraction);
 }
 
-ErrorCode validateSource(const SeriesView& source) noexcept {
+ErrorCode validateSource(const SeriesView& source) {
   const Index count = source.times().size();
   if (source.rows().rows() != count || source.rows().columns() == 0U ||
       (!source.valid().empty() && source.valid().size() != count)) {
@@ -342,6 +370,22 @@ bool copyKnot(const SeriesView& source, Index row, Matrix& output,
 
 } // namespace
 
+namespace detail {
+struct AlignedSeriesBuilder final {
+  [[nodiscard]] static AlignedSourceSeries
+  source(Vector times, Matrix rows, std::vector<std::uint8_t> valid) noexcept {
+    return AlignedSourceSeries(std::move(times), std::move(rows),
+                               std::move(valid));
+  }
+
+  [[nodiscard]] static AlignedSeries
+  aligned(Vector targetTimes,
+          std::vector<AlignedSourceSeries> sources) noexcept {
+    return AlignedSeries(std::move(targetTimes), std::move(sources));
+  }
+};
+} // namespace detail
+
 Result<Vector> cumulativeSum(ConstVectorView values, Limits limits) {
   const Index count = values.size();
   if (count > limits.elements || count > limits.bytes / sizeof(Scalar)) {
@@ -378,7 +422,7 @@ Result<Vector> cumulativeSum(ConstVectorView values, Limits limits) {
       if (std::isfinite(estimate) &&
           std::abs(estimate) <=
               static_cast<Wide>(std::numeric_limits<Scalar>::max())) {
-        const Scalar fast = static_cast<Scalar>(estimate);
+        const auto fast = static_cast<Scalar>(estimate);
         result.at(i) = fast == rounded ? fast : rounded;
       } else {
         result.at(i) = rounded;
@@ -394,7 +438,7 @@ Result<Vector> cumulativeSum(ConstVectorView values, Limits limits) {
   }
 }
 
-Result<LagSummary> summarizeLags(const LagSeries& values, Scalar sampleStep,
+Result<LagSummary> summarizeLags(const LagSeries& values, Scalar sample_step,
                                  Index cutoff, Limits limits) {
   const auto lags = values.lags();
   const auto correlations = values.values();
@@ -403,11 +447,11 @@ Result<LagSummary> summarizeLags(const LagSeries& values, Scalar sampleStep,
     return failure<LagSummary>(ErrorCode::DimensionMismatch,
                                "lag, value and count extents must match");
   }
-  if (!std::isfinite(sampleStep)) {
+  if (!std::isfinite(sample_step)) {
     return failure<LagSummary>(ErrorCode::NonFiniteInput,
                                "sample step must be finite");
   }
-  if (sampleStep <= 0.0) {
+  if (sample_step <= 0.0) {
     return failure<LagSummary>(ErrorCode::InvalidDomain,
                                "sample step must be positive");
   }
@@ -470,7 +514,7 @@ Result<LagSummary> summarizeLags(const LagSeries& values, Scalar sampleStep,
                                      "zero-lag autocorrelation must equal one");
         }
       } else if (lag > 0 && static_cast<std::uint64_t>(lag) <= cutoff) {
-        const Index slot = static_cast<Index>(lag);
+        const auto slot = static_cast<Index>(lag);
         if (seen[slot] != 0U) {
           return failure<LagSummary>(ErrorCode::InvalidDomain,
                                      "required positive lags must be unique");
@@ -518,7 +562,7 @@ Result<LagSummary> summarizeLags(const LagSeries& values, Scalar sampleStep,
       }
       int stepExponent = 0;
       const Wide stepFraction =
-          std::frexp(static_cast<Wide>(sampleStep), &stepExponent);
+          std::frexp(static_cast<Wide>(sample_step), &stepExponent);
       int adjustment = 0;
       const Wide productFraction =
           std::frexp(fraction * stepFraction, &adjustment);
@@ -538,7 +582,7 @@ Result<LagSummary> summarizeLags(const LagSeries& values, Scalar sampleStep,
     }
     const Wide estimate = compensated.value();
     if (std::isfinite(estimate) && estimate >= 0.0L) {
-      const Wide fastTime = estimate * static_cast<Wide>(sampleStep);
+      const Wide fastTime = estimate * static_cast<Wide>(sample_step);
       Scalar fastRounded = 0.0;
       if (representable(fastTime, fastRounded) && fastRounded == time) {
         time = fastRounded;
@@ -590,7 +634,7 @@ Result<AlignedSeries> alignSeries(std::span<const SeriesView> inputs,
   Index elements = targetCount;
   Index validityBytes = 0U;
   Index sourceBytes = 0U;
-  Index cursorBytes = inputs.empty() ? 0U : sizeof(Index);
+  const Index cursorBytes = inputs.empty() ? 0U : sizeof(Index);
   for (const SeriesView& source : inputs) {
     Index cells = 0U;
     Index timeAndData = 0U;
@@ -723,27 +767,31 @@ Result<AlignedSeries> alignSeries(std::span<const SeriesView> inputs,
                 static_cast<Wide>(low) +
                 fraction * (static_cast<Wide>(high) - static_cast<Wide>(low));
           }
-          Scalar value = 0.0;
-          if (!representable(interpolated, value)) {
+          Scalar roundedValue = 0.0;
+          if (!representable(interpolated, roundedValue)) {
             return failure<AlignedSeries>(
                 ErrorCode::NonFiniteResult,
                 "interpolated value is not representable");
           }
-          rows.at(targetRow, channel) = value;
+          rows.at(targetRow, channel) = roundedValue;
         }
         valid[targetRow] = 1U;
       }
-      outputs.emplace_back(AlignedSourceSeries(
+      outputs.emplace_back(detail::AlignedSeriesBuilder::source(
           std::move(times), std::move(rows), std::move(valid)));
     }
-    return Result<AlignedSeries>::success(
-        AlignedSeries(std::move(targetCopy), std::move(outputs)));
+    return Result<AlignedSeries>::success(detail::AlignedSeriesBuilder::aligned(
+        std::move(targetCopy), std::move(outputs)));
   } catch (const std::bad_alloc&) {
     return failure<AlignedSeries>(ErrorCode::ResourceLimit,
                                   "aligned series allocation failed");
   } catch (const std::length_error&) {
     return failure<AlignedSeries>(ErrorCode::ResourceLimit,
                                   "aligned series extent is not allocatable");
+  } catch (const std::out_of_range&) {
+    return failure<AlignedSeries>(
+        ErrorCode::InvalidDomain,
+        "aligned series indexing exceeded a validated input extent");
   }
 }
 
