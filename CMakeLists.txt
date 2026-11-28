@@ -101,6 +101,7 @@ add_library(vss_math STATIC
   src/statistics/RatioEstimate.cpp
   src/statistics/EstimatorDiagnostics.cpp
   src/statistics/Bootstrap.cpp
+  src/statistics/DependentInference.cpp
   src/statistics/Summary.cpp
   src/statistics/Population.cpp
   src/statistics/Weighted.cpp

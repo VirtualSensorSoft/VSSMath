@@ -156,6 +156,9 @@ vss_math_add_algorithm_test(test_estimator_diagnostics
 vss_math_add_algorithm_test(test_bootstrap_statistics
                              algorithms/test_bootstrap_statistics.cpp
                              math.bootstrap_statistics)
+vss_math_add_algorithm_test(test_dependent_inference
+                             algorithms/test_dependent_inference.cpp
+                             math.dependent_inference)
 vss_math_add_algorithm_test(test_quantile_state
                              algorithms/test_quantile_state.cpp
                              math.quantile_state)
