@@ -57,10 +57,11 @@ ErrorCode validateGrid(const SeriesView& series) {
       (!series.valid().empty() && series.valid().size() != count)) {
     return ErrorCode::DimensionMismatch;
   }
-  if (!series.uniformStep().has_value()) {
+  const auto uniformStep = series.uniformStep();
+  if (!uniformStep.has_value()) {
     return ErrorCode::InvalidDomain;
   }
-  const Scalar step = series.uniformStep().value();
+  const Scalar step = uniformStep.value();
   if (!std::isfinite(step) || step <= 0.0) {
     return ErrorCode::InvalidDomain;
   }
