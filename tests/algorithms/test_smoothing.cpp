@@ -2,8 +2,11 @@
 
 #include <array>
 #include <cmath>
+#include <exception>
+#include <iostream>
 #include <limits>
 #include <span>
+#include <vss/math/Core.hpp>
 #include <vss/math/Error.hpp>
 #include <vss/math/Limits.hpp>
 #include <vss/math/Vector.hpp>
@@ -25,7 +28,7 @@ void quadraticSmoothingAndDerivativeReproducePolynomial() {
   const auto derivative = savitzkyGolay(x.view(), 3U, 2U, 1U, 0.5, ample);
   VSS_CHECK(smoothed && derivative);
   for (Index i = 0U; i < samples.size(); ++i) {
-    VSS_CHECK(std::abs(smoothed.value().at(i) - samples[i]) < 1.0e-11);
+    VSS_CHECK(std::abs(smoothed.value().at(i) - samples.at(i)) < 1.0e-11);
     VSS_CHECK(std::abs(derivative.value().at(i) -
                        4.0 * static_cast<Scalar>(i)) < 1.0e-10);
   }
@@ -49,7 +52,7 @@ void singletonWindowIsIdentity() {
   const auto result = savitzkyGolay(x.view(), 1U, 0U, 0U, 2.0, ample);
   VSS_CHECK(result && result.value().size() == samples.size());
   for (Index i = 0U; i < samples.size(); ++i) {
-    VSS_CHECK(result.value().at(i) == samples[i]);
+    VSS_CHECK(result.value().at(i) == samples.at(i));
   }
 }
 
@@ -93,7 +96,7 @@ void invalidFiniteParametersAndInsufficientSamplesAreDistinct() {
 void numericallyRankDeficientDesignIsRejected() {
   std::array<Scalar, 21U> samples{};
   for (Index i = 0U; i < samples.size(); ++i) {
-    samples[i] = static_cast<Scalar>(i);
+    samples.at(i) = static_cast<Scalar>(i);
   }
   const Vector x = vector(samples);
   const auto result = savitzkyGolay(x.view(), 21U, 20U, 0U, 1.0, ample);
