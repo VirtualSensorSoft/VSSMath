@@ -50,6 +50,7 @@
 #include <vss/math/signal/Dependence.hpp>
 #include <vss/math/signal/LaggedMoments.hpp>
 #include <vss/math/signal/Series.hpp>
+#include <vss/math/signal/Smoothing.hpp>
 #include <vss/math/statistics/Circular.hpp>
 #include <vss/math/statistics/Cumulants.hpp>
 #include <vss/math/statistics/Dependence.hpp>
@@ -870,6 +871,21 @@ int main() {
                          1.0e-10 &&
                      std::abs(reconstructed.value().data()[3U] - 4.0) < 1.0e-10,
                  "installed Tucker/HOSVD API failed")) {
+      return 1;
+    }
+  }
+
+  {
+    const Vector samples{std::array<Scalar, 5U>{0.0, 1.0, 4.0, 9.0, 16.0}};
+    constexpr Limits limits{64U, 1U << 16U, 0U};
+    const auto smooth =
+        signal::savitzkyGolay(samples.view(), 3U, 2U, 0U, 0.5, limits);
+    const auto slope =
+        signal::savitzkyGolay(samples.view(), 3U, 2U, 1U, 0.5, limits);
+    if (!require(smooth.hasValue() && slope.hasValue() &&
+                     std::abs(smooth.value().at(4U) - 16.0) < 1.0e-11 &&
+                     std::abs(slope.value().at(4U) - 16.0) < 1.0e-10,
+                 "installed C085 Savitzky-Golay API failed")) {
       return 1;
     }
   }
